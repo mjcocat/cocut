@@ -260,6 +260,9 @@ enum ReelComposer {
     }
 
     private struct Loaded {
+        /// Held on purpose: an AVAssetTrack only weakly references its asset, and inserting a
+        /// track whose asset has been freed fails with -11800 / -12780.
+        let asset: AVURLAsset
         let segment: ReelSegment
         /// The exact range to take from the source, clamped to the video track.
         let source: CMTimeRange
@@ -305,7 +308,7 @@ enum ReelComposer {
             let source = CMTimeRange(start: start, end: end)
             let fixed = ReelSegment(url: segment.url, start: start.seconds, duration: source.duration.seconds,
                                     title: segment.title, isCard: segment.isCard)
-            loaded.append(Loaded(segment: fixed, source: source, video: video, audio: audio, audioRange: audioRange,
+            loaded.append(Loaded(asset: asset, segment: fixed, source: source, video: video, audio: audio, audioRange: audioRange,
                                  transform: aspectFit(natural: natural, preferred: preferred, into: renderSize)))
         }
         guard !loaded.isEmpty else { throw ExportError.noClips }

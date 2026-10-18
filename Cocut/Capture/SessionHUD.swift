@@ -103,7 +103,7 @@ struct SessionHUDView: View {
             }
 
             KeyHints()
-            Text("Click the video once so the keys reach the player.")
+            Text("Click the video once so the keys reach the player. *Hudl's film-study player only.")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
         }
@@ -154,10 +154,10 @@ struct KeyHints: View {
             }
             GridRow {
                 site("Hudl")
-                hint(["C"], "play/pause")
-                hint(["Z", "B"], "−2s / +5s")
-                hint(["X", "V"], "frame")
-                hint(["D", "F"], "prev/next clip")
+                hint(["Space"], "play/pause")
+                hint(["Z", "B"], "−2s / +5s*")
+                hint(["X", "V"], "frame*")
+                hint(["⏯"], "any site")
             }
         }
         .font(.system(size: 11))

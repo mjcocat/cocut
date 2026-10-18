@@ -114,7 +114,8 @@ private struct ShortcutsSettings: View {
             }
             Section("Video players (click the video first)") {
                 LabeledContent("YouTube", value: "Space play/pause · ← → 5s · J L 10s · , . frame · F fullscreen")
-                LabeledContent("Hudl", value: "C play/pause · Z B −2s/+5s · X V frame · D F clip · \\ fullscreen")
+                LabeledContent("Hudl", value: "Space play/pause · film-study player: C play/pause, Z B −2s/+5s, X V frame, D F clip")
+                LabeledContent("Any site", value: "⏯ (F8) plays or pauses the browser's video without clicking it")
             }
         }
         .formStyle(.grouped)

@@ -49,7 +49,8 @@ The floating control tucks into the top-right corner and stays out of the record
 Tips:
 - Click the video once, then use the keyboard. Moving the mouse over the video makes the player's controls appear in the clip.
   - **YouTube:** Space or K to play/pause, ← → to skip 5s, J L to skip 10s, , . to step frames.
-  - **Hudl:** C to play/pause, Z/B to skip −2s/+5s, X/V to step frames, D/F for the previous or next clip.
+  - **Hudl:** Space to play/pause. Hudl's film-study player also has C (play/pause), Z/B (skip −2s/+5s), X/V (step frames), and D/F (previous or next clip).
+  - **Any site:** the ⏯ (F8) key plays and pauses the browser's video without clicking it.
 - Clips include the video's sound. Turn that off with the speaker button in the selector or **Record › Record Sound**.
 - Bursts shorter than two seconds, like hover animations, scrubbing, or page flicker, are ignored. Cocut also keeps your display from dimming while a session is running.
 - Turn **Record when video plays** off to record immediately until you press **⌥⌘R**.
