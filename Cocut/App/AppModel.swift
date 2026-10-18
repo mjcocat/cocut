@@ -76,6 +76,7 @@ final class AppModel {
         hotKey = GlobalHotKey(keyCode: kVK_ANSI_R, modifiers: cmdKey | optionKey, id: 1) { [weak self] in
             Task { @MainActor in await self?.toggleRecording() }
         }
+        updater.checkForFailedInstall()
         updater.checkInBackgroundIfDue()
     }
 

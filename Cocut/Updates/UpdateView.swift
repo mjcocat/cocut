@@ -30,6 +30,19 @@ struct UpdateView: View {
                 status(icon: nil, title: "Installing Cocut \(release.version)…",
                        detail: "Cocut will reopen in a moment.")
 
+            case .blocked(let path):
+                status(icon: "lock.shield.fill", tint: .orange,
+                       title: "macOS blocked the update",
+                       detail: "Cocut downloaded the new version but isn't allowed to replace itself yet. Turn on Cocut in System Settings › Privacy & Security › App Management, then choose Check for Updates again. Or drag the downloaded Cocut into Applications yourself.")
+                HStack {
+                    Button("Show Download") { updater.revealDownloadedApp(path) }
+                    Spacer()
+                    Button("Close") { updater.dismiss() }
+                    Button("Open App Management") { updater.openAppManagementSettings() }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                }
+
             case .failed(let message):
                 status(icon: "exclamationmark.triangle.fill", tint: .orange,
                        title: "Update problem", detail: message)

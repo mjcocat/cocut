@@ -21,6 +21,8 @@ final class Updater {
         case downloading(Release)
         case installing(Release)
         case failed(String)
+        /// macOS refused to let Cocut replace itself (App Management). Holds the downloaded app's path.
+        case blocked(String)
     }
 
     static let repo = "mjcocat/cocut"
@@ -190,30 +192,76 @@ final class Updater {
         }
     }
 
+    /// Runs detached after Cocut quits: swaps the bundle, records the result, reopens Cocut.
+    /// Arguments: pid, new app path, target app path, log file, failure-marker file.
     private static let installerScript = """
-    pid="$1"; new="$2"; target="$3"
+    pid="$1"; new="$2"; target="$3"; log="$4"; marker="$5"
+    say() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) INSTALLER $*" >> "$log"; }
+    say "waiting for Cocut ($pid) to quit"
     for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
     kill -9 "$pid" 2>/dev/null
     rm -rf "$target.old"
-    if mv "$target" "$target.old" && mv "$new" "$target"; then
+    if err=$(mv "$target" "$target.old" 2>&1) && err=$(mv "$new" "$target" 2>&1); then
       rm -rf "$target.old"
+      rm -f "$marker"
+      say "installed new version at $target"
     else
+      say "swap failed: $err"
       [ -d "$target" ] || mv "$target.old" "$target"
+      printf '%s' "$new" > "$marker"
     fi
     xattr -dr com.apple.quarantine "$target" 2>/dev/null
     open "$target"
     """
 
+    /// Written by the installer when the swap fails; read on the next launch.
+    static let failureMarker: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Cocut", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appending(path: "update-failed")
+    }()
+
     private func launchInstaller(newApp: URL, target: URL) throws {
+        // nohup + & detaches the installer so it outlives Cocut.
+        let wrapper = "nohup /bin/sh -c \"$1\" cocut-installer \"$2\" \"$3\" \"$4\" \"$5\" \"$6\" >/dev/null 2>&1 &"
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = ["-c", Self.installerScript, "cocut-installer",
+        task.arguments = ["-c", wrapper, "cocut-wrapper", Self.installerScript,
                           String(ProcessInfo.processInfo.processIdentifier),
                           newApp.path(percentEncoded: false),
-                          target.path(percentEncoded: false)]
+                          target.path(percentEncoded: false),
+                          Log.fileURL.path(percentEncoded: false),
+                          Self.failureMarker.path(percentEncoded: false)]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         try task.run()
+        task.waitUntilExit()
+    }
+
+    /// Called at launch: if the last update couldn't be swapped in, explain and offer fixes.
+    func checkForFailedInstall() {
+        let marker = Self.failureMarker
+        guard let path = try? String(contentsOf: marker, encoding: .utf8) else { return }
+        try? FileManager.default.removeItem(at: marker)
+        Log.error("Previous update could not replace the app")
+        state = .blocked(path)
+        isPresentingSheet = true
+    }
+
+    func openAppManagementSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func revealDownloadedApp(_ path: String) {
+        let url = URL(fileURLWithPath: path)
+        if FileManager.default.fileExists(atPath: path) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            NSWorkspace.shared.open(URL(string: "https://github.com/\(Self.repo)/releases/latest")!)
+        }
     }
 
     nonisolated private static func runAndWait(_ tool: String, _ arguments: [String]) throws {
