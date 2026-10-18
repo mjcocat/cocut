@@ -15,7 +15,7 @@ A native macOS app for building athlete highlight reels: record plays from YouTu
 curl -fsSL https://raw.githubusercontent.com/mjcocat/cocut/main/scripts/install.sh | bash
 ```
 
-This installs the latest release into `/Applications`. After that, Cocut updates itself: choose **Cocut › Check for Updates…**, or wait for its daily check.
+This installs the latest release into `/Applications`. After that, Cocut updates itself. It checks when it opens and every few hours, and offers new versions as they appear. It never interrupts a recording: an offer found mid-recording waits until you're done. **Later** snoozes an offer for a day, and **Skip This Version** ignores it. You can also choose **Cocut › Check for Updates…** at any time, or turn automatic checks off in **Settings › Updates**.
 
 ### "Apple could not verify Cocut…"
 

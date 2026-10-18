@@ -46,17 +46,60 @@ final class Updater {
     private enum Keys {
         static let lastCheck = "updaterLastCheck"
         static let skipped = "updaterSkippedVersion"
+        static let snoozedVersion = "updaterSnoozedVersion"
+        static let snoozedUntil = "updaterSnoozedUntil"
+        static let automatic = "updaterAutomaticChecks"
+    }
+
+    /// Check at launch and every few hours while Cocut is open.
+    var checksAutomatically: Bool {
+        didSet {
+            UserDefaults.standard.set(checksAutomatically, forKey: Keys.automatic)
+            scheduleChecks()
+        }
+    }
+
+    /// Asked before showing an offer on its own; while recording, the offer waits until it's idle.
+    @ObservationIgnored var isBusy: () -> Bool = { false }
+    @ObservationIgnored private var pendingOffer = false
+    @ObservationIgnored private var timer: Timer?
+
+    static let checkInterval: TimeInterval = 6 * 60 * 60
+    static let laterInterval: TimeInterval = 24 * 60 * 60
+
+    init() {
+        checksAutomatically = UserDefaults.standard.object(forKey: Keys.automatic) as? Bool ?? true
+    }
+
+    var lastChecked: Date? {
+        UserDefaults.standard.object(forKey: Keys.lastCheck) as? Date
     }
 
     // MARK: Checking
 
-    /// Called at launch; checks at most once a day and only surfaces a sheet if there's an update.
-    func checkInBackgroundIfDue() {
-        let last = UserDefaults.standard.object(forKey: Keys.lastCheck) as? Date ?? .distantPast
-        guard Date().timeIntervalSince(last) > 60 * 60 * 24 else { return }
+    /// Called once at launch: checks shortly after the app opens, then every few hours.
+    func startAutomaticChecks() {
+        scheduleChecks()
+        guard checksAutomatically else { return }
         Task {
+            try? await Task.sleep(for: .seconds(4)) // let the splash and main window settle
             await check(userInitiated: false)
         }
+    }
+
+    private func scheduleChecks() {
+        timer?.invalidate()
+        timer = nil
+        guard checksAutomatically else { return }
+        let timer = Timer(timeInterval: Self.checkInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                Task { await self.check(userInitiated: false) }
+            }
+        }
+        timer.tolerance = 600
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     func checkNow() {
@@ -64,35 +107,63 @@ final class Updater {
         Task { await check(userInitiated: true) }
     }
 
+    /// Shows an offer that was held back while Cocut was busy recording.
+    func presentPendingOfferIfIdle() {
+        guard pendingOffer, !isBusy(), case .available = state else { return }
+        pendingOffer = false
+        isPresentingSheet = true
+    }
+
     private func check(userInitiated: Bool) async {
-        if case .checking = state { return }
-        if case .downloading = state { return }
-        state = .checking
+        switch state {
+        case .checking, .downloading, .installing: return
+        default: break
+        }
+        if userInitiated { state = .checking }
         UserDefaults.standard.set(Date(), forKey: Keys.lastCheck)
 
         do {
             let release = try await fetchLatestRelease()
-            if Self.isVersion(release.version, newerThan: currentVersion) {
-                let skipped = UserDefaults.standard.string(forKey: Keys.skipped)
-                if !userInitiated, skipped == release.version {
-                    state = .idle
-                    return
-                }
-                state = .available(release)
+            guard Self.isVersion(release.version, newerThan: currentVersion) else {
+                if userInitiated { state = .upToDate }
+                else if case .available = state {} else { state = .idle }
+                return
+            }
+            state = .available(release)
+            Log.info("Update available: \(release.version)")
+
+            if userInitiated {
                 isPresentingSheet = true
-                Log.info("Update available: \(release.version)")
+                return
+            }
+            // Background check: respect "Skip This Version" and "Later".
+            let defaults = UserDefaults.standard
+            if defaults.string(forKey: Keys.skipped) == release.version { return }
+            if defaults.string(forKey: Keys.snoozedVersion) == release.version,
+               let until = defaults.object(forKey: Keys.snoozedUntil) as? Date, until > .now { return }
+            if isBusy() {
+                pendingOffer = true
             } else {
-                state = userInitiated ? .upToDate : .idle
+                isPresentingSheet = true
             }
         } catch {
             Log.error("Update check failed: \(error.localizedDescription)")
-            state = userInitiated ? .failed("Couldn't check for updates. \(error.localizedDescription)") : .idle
+            if userInitiated {
+                state = .failed("Couldn't check for updates. \(error.localizedDescription)")
+            }
         }
     }
 
     func skip(_ release: Release) {
         UserDefaults.standard.set(release.version, forKey: Keys.skipped)
         state = .idle
+        isPresentingSheet = false
+    }
+
+    /// "Later": don't offer this version again on its own for a day (the menu still shows it).
+    func later(_ release: Release) {
+        UserDefaults.standard.set(release.version, forKey: Keys.snoozedVersion)
+        UserDefaults.standard.set(Date().addingTimeInterval(Self.laterInterval), forKey: Keys.snoozedUntil)
         isPresentingSheet = false
     }
 

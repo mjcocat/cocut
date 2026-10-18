@@ -47,6 +47,8 @@ struct SettingsView: View {
                 .tabItem { Label("Recording", systemImage: "record.circle") }
             ShortcutsSettings()
                 .tabItem { Label("Shortcuts", systemImage: "keyboard") }
+            UpdateSettings(updater: model.updater)
+                .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
         }
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
@@ -130,5 +132,30 @@ private struct ShortcutsSettings: View {
         } label: {
             Text(action)
         }
+    }
+}
+
+private struct UpdateSettings: View {
+    @Bindable var updater: Updater
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Check for updates automatically", isOn: $updater.checksAutomatically)
+                Text("Cocut checks when it opens and every few hours, and offers new versions as they come out. It never interrupts a recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LabeledContent("Current version", value: updater.currentVersion)
+                if let last = updater.lastChecked {
+                    LabeledContent("Last checked", value: last.formatted(.relative(presentation: .named)))
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Check Now") { updater.checkNow() }
+            }
+        }
+        .formStyle(.grouped)
+        .padding(.vertical, 8)
     }
 }

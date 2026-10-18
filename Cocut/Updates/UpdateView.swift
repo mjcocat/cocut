@@ -88,8 +88,9 @@ struct UpdateView: View {
         HStack {
             Button("Skip This Version") { updater.skip(release) }
             Spacer()
-            Button("Later") { updater.dismiss() }
+            Button("Later") { updater.later(release) }
                 .keyboardShortcut(.cancelAction)
+                .help("Remind me tomorrow")
             Button("Install and Relaunch") { updater.install(release) }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)

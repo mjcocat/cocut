@@ -28,7 +28,10 @@ final class AppModel {
     /// Lets menu commands switch the main window's sidebar section.
     var requestedSection: SidebarItem?
 
-    private(set) var phase: RecordingPhase = .idle
+    private(set) var phase: RecordingPhase = .idle {
+        // An update found mid-recording is offered once Cocut is idle again.
+        didSet { if phase == .idle { updater.presentPendingOfferIfIdle() } }
+    }
     private(set) var elapsed: TimeInterval = 0
     /// The video stopped changing while a clip records (auto mode): the clip will save shortly.
     private(set) var isPausedInClip = false
@@ -120,7 +123,8 @@ final class AppModel {
             }
         }
         updater.checkForFailedInstall()
-        updater.checkInBackgroundIfDue()
+        updater.isBusy = { [weak self] in self?.isBusy ?? false }
+        updater.startAutomaticChecks()
     }
 
     // MARK: Permission
