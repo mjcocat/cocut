@@ -24,7 +24,7 @@ struct PlayerCardEditor: View {
                             field("Class of", $store.profile.gradYear, prompt: "2027")
                         }
                         row {
-                            field("Height", $store.profile.height, prompt: "5'10\\"")
+                            field("Height", $store.profile.height, prompt: "5'10\"")
                             field("Age", $store.profile.age)
                         }
                     }
@@ -153,7 +153,7 @@ struct PlayerCardEditor: View {
             ForEach($store.profile.stats) { $stat in
                 HStack {
                     TextField("Label", text: $stat.label, prompt: Text("Approach touch"))
-                    TextField("Value", text: $stat.value, prompt: Text("9'10\\""))
+                    TextField("Value", text: $stat.value, prompt: Text("9'10\""))
                     Button {
                         store.profile.stats.removeAll { $0.id == stat.id }
                     } label: {
