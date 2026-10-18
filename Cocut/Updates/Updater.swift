@@ -156,16 +156,23 @@ final class Updater {
             try FileManager.default.moveItem(at: downloaded, to: zip)
 
             state = .installing(release)
-            try await Self.run("/usr/bin/ditto", ["-x", "-k", zip.path(percentEncoded: false), work.path(percentEncoded: false)])
-
-            let newApp = work.appending(path: currentApp.lastPathComponent)
+            Log.info("Extracting update")
+            let newApp = try await Task.detached(priority: .userInitiated) {
+                try Self.runAndWait("/usr/bin/ditto", ["-x", "-k", zip.path(percentEncoded: false), work.path(percentEncoded: false)])
+                return work.appending(path: currentApp.lastPathComponent)
+            }.value
             try verify(newApp, expectedVersion: release.version)
 
-            // Swap bundles. replaceItemAt keeps the original location and handles the rename atomically.
-            _ = try FileManager.default.replaceItemAt(currentApp, withItemAt: newApp,
-                                                      backupItemName: nil, options: [])
-            Log.info("Installed \(release.version); relaunching")
-            relaunch(currentApp)
+            // The swap happens in a small script after Cocut has quit, so the running
+            // bundle is never replaced underneath us.
+            try launchInstaller(newApp: newApp, target: currentApp)
+            Log.info("Quitting to install \(release.version)")
+            NSApp.terminate(nil)
+            // If something holds up a normal quit, don't leave the update hanging.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                Log.error("Normal quit didn't finish; exiting for update")
+                exit(0)
+            }
         } catch {
             Log.error("Update install failed: \(error.localizedDescription)")
             state = .failed("The update couldn't be installed. \(error.localizedDescription)")
@@ -183,30 +190,42 @@ final class Updater {
         }
     }
 
-    private func relaunch(_ app: URL) {
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let path = app.path(percentEncoded: false).replacingOccurrences(of: "'", with: "'\\''")
-        let script = "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; open '\(path)'"
+    private static let installerScript = """
+    pid="$1"; new="$2"; target="$3"
+    for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
+    kill -9 "$pid" 2>/dev/null
+    rm -rf "$target.old"
+    if mv "$target" "$target.old" && mv "$new" "$target"; then
+      rm -rf "$target.old"
+    else
+      [ -d "$target" ] || mv "$target.old" "$target"
+    fi
+    xattr -dr com.apple.quarantine "$target" 2>/dev/null
+    open "$target"
+    """
+
+    private func launchInstaller(newApp: URL, target: URL) throws {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = ["-c", script]
-        try? task.run()
-        NSApp.terminate(nil)
+        task.arguments = ["-c", Self.installerScript, "cocut-installer",
+                          String(ProcessInfo.processInfo.processIdentifier),
+                          newApp.path(percentEncoded: false),
+                          target.path(percentEncoded: false)]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        try task.run()
     }
 
-    private static func run(_ tool: String, _ arguments: [String]) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: tool)
-            process.arguments = arguments
-            process.terminationHandler = { p in
-                if p.terminationStatus == 0 {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: UpdateError.toolFailed(tool, p.terminationStatus))
-                }
-            }
-            do { try process.run() } catch { continuation.resume(throwing: error) }
+    nonisolated private static func runAndWait(_ tool: String, _ arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw UpdateError.toolFailed(tool, process.terminationStatus)
         }
     }
 
