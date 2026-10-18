@@ -74,7 +74,7 @@ struct ExportView: View {
 
             if profile.isEmpty, exporter.options.includeIntro {
                 Label {
-                    Text("Your intro card has no name yet. ") + Text("Fill in the Player Card").bold() + Text(" to personalize it.")
+                    Text("Your intro card has no name yet. \(Text("Fill in the Player Card").bold()) to personalize it.")
                 } icon: {
                     Image(systemName: "person.text.rectangle").foregroundStyle(Color.accentColor)
                 }
