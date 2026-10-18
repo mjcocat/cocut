@@ -36,6 +36,7 @@ final class RecordingBorderController {
         window.level = .statusBar
         window.isReleasedWhenClosed = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        window.sharingType = .none
 
         let host = NSHostingView(rootView: RecordingBorderView(state: state))
         host.sizingOptions = []

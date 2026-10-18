@@ -57,6 +57,7 @@ final class HUDPanel: NSPanel {
         isReleasedWhenClosed = false
         becomesKeyOnlyIfNeeded = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        sharingType = .none // a second guard against showing up in screen captures
     }
 
     override var canBecomeKey: Bool { true }

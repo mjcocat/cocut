@@ -261,8 +261,11 @@ enum ReelComposer {
 
     private struct Loaded {
         let segment: ReelSegment
+        /// The exact range to take from the source, clamped to the video track.
+        let source: CMTimeRange
         let video: AVAssetTrack
         let audio: AVAssetTrack?
+        let audioRange: CMTimeRange?
         let transform: CGAffineTransform
     }
 
@@ -284,13 +287,25 @@ enum ReelComposer {
             }
             let natural = try await video.load(.naturalSize)
             let preferred = try await video.load(.preferredTransform)
-            let assetDuration = try await asset.load(.duration).seconds
-            // Clamp trims to what's actually in the file.
-            let start = min(segment.start, max(0, assetDuration - 0.1))
-            let duration = min(segment.duration, assetDuration - start)
-            let fixed = ReelSegment(url: segment.url, start: start, duration: duration,
+            let videoRange = try await video.load(.timeRange)
+            var audioRange: CMTimeRange?
+            if let audio { audioRange = try await audio.load(.timeRange) }
+
+            // Clamp the requested range to what the video track really holds. Tracks inside one
+            // file can differ slightly in length (sound starts with the first frame), and asking
+            // for time a track doesn't have makes the whole insert fail.
+            let wantedStart = time(segment.start)
+            let wantedEnd = time(segment.start + segment.duration)
+            let start = CMTimeMaximum(wantedStart, videoRange.start)
+            let end = CMTimeMinimum(wantedEnd, videoRange.end)
+            guard end > start, (end - start).seconds > 0.05 else {
+                Log.error("Skipping \(segment.url.lastPathComponent): no usable video in range")
+                continue
+            }
+            let source = CMTimeRange(start: start, end: end)
+            let fixed = ReelSegment(url: segment.url, start: start.seconds, duration: source.duration.seconds,
                                     title: segment.title, isCard: segment.isCard)
-            loaded.append(Loaded(segment: fixed, video: video, audio: audio,
+            loaded.append(Loaded(segment: fixed, source: source, video: video, audio: audio, audioRange: audioRange,
                                  transform: aspectFit(natural: natural, preferred: preferred, into: renderSize)))
         }
         guard !loaded.isEmpty else { throw ExportError.noClips }
@@ -323,14 +338,26 @@ enum ReelComposer {
         var cursor = 0.0
         for (i, item) in loaded.enumerated() {
             starts.append(cursor)
-            let source = CMTimeRange(start: time(item.segment.start), duration: time(item.segment.duration))
+            let source = item.source
             do {
                 try videoTracks[i % 2].insertTimeRange(source, of: item.video, at: time(cursor))
-                if let audio = item.audio, !audioTracks.isEmpty {
-                    try audioTracks[i % 2].insertTimeRange(source, of: audio, at: time(cursor))
-                }
             } catch {
-                throw ExportError.composition(error.localizedDescription)
+                let ns = error as NSError
+                Log.error("Video insert failed for \(item.segment.url.lastPathComponent) range \(source.start.seconds)+\(source.duration.seconds): \(ns.domain) \(ns.code) \(ns.userInfo)")
+                throw ExportError.composition("“\(item.segment.title ?? item.segment.url.lastPathComponent)” couldn't be added (\(ns.code)).")
+            }
+            // Sound is best-effort: take only the part the audio track actually covers.
+            if let audio = item.audio, let audioRange = item.audioRange, !audioTracks.isEmpty {
+                let overlap = source.intersection(audioRange)
+                if !overlap.isEmpty, overlap.duration.seconds > 0.05 {
+                    let offset = overlap.start - source.start
+                    do {
+                        try audioTracks[i % 2].insertTimeRange(overlap, of: audio, at: time(cursor) + offset)
+                    } catch {
+                        let ns = error as NSError
+                        Log.error("Audio insert failed for \(item.segment.url.lastPathComponent): \(ns.domain) \(ns.code); continuing without its sound")
+                    }
+                }
             }
             cursor += item.segment.duration - (i < n - 1 ? overlaps[i] : 0)
         }

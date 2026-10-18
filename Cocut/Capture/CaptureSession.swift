@@ -88,7 +88,10 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
 
     func start(region: CaptureRegion) async throws {
         Log.info("Starting \(mode.rawValue) capture: display \(region.displayID), rect \(region.rect)")
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        // All windows, not just on-screen ones: with a browser in fullscreen, Cocut's own windows are
+        // on another Space, and an on-screen-only query would leave Cocut out of the list — and
+        // then its floating control and outline would end up in the recording.
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let display = content.displays.first(where: { $0.displayID == region.displayID }) else {
             throw RecorderError.displayNotFound
         }
@@ -96,6 +99,9 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let ownApps = content.applications.filter { $0.processID == ownPID }
         let filter = SCContentFilter(display: display, excludingApplications: ownApps, exceptingWindows: [])
+        if ownApps.isEmpty {
+            Log.error("Cocut wasn't in the shareable app list; its windows may appear in the recording")
+        }
 
         let scale = CGFloat(filter.pointPixelScale)
         let rect = region.rect.intersection(CGRect(x: 0, y: 0, width: display.width, height: display.height))
