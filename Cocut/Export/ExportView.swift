@@ -301,7 +301,7 @@ private struct ExportClipChip: View {
                 .lineLimit(1)
                 .frame(width: 128, alignment: .leading)
         }
-        .task(id: url) { image = await ThumbnailLoader.shared.thumbnail(for: url) }
+        .task(id: url) { image = await ThumbnailLoader.shared.thumbnail(for: url, crop: clip.unitCrop) }
     }
 }
 

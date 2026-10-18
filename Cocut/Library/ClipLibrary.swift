@@ -18,6 +18,18 @@ struct Clip: Identifiable, Codable, Hashable {
     var isExcluded: Bool?
     /// Workflow tags (never shown in the exported reel).
     var tagIDs: [UUID]?
+    /// The part of the recording that's the video (pixels, top-left origin); nil shows it all.
+    var crop: CropRect?
+    /// Auto-crop has run for this clip (so it isn't repeated), or the user turned cropping off.
+    var cropChecked: Bool?
+
+    var cropRect: CGRect? { crop?.cgRect }
+    /// Crop as fractions of the frame, for thumbnails at any size.
+    var unitCrop: CGRect? {
+        guard let r = crop?.cgRect, pixelWidth > 0, pixelHeight > 0 else { return nil }
+        return CGRect(x: r.minX / CGFloat(pixelWidth), y: r.minY / CGFloat(pixelHeight),
+                      width: r.width / CGFloat(pixelWidth), height: r.height / CGFloat(pixelHeight))
+    }
 
     var isIncluded: Bool { isExcluded != true }
     var trimStartSeconds: Double { trimStart ?? 0 }
@@ -26,13 +38,32 @@ struct Clip: Identifiable, Codable, Hashable {
 
     var isTrimmed: Bool { trimStart != nil || trimEnd != nil }
     var effectiveDuration: Double { max(0, (trimEnd ?? duration) - (trimStart ?? 0)) }
-    var resolutionText: String { "\(pixelWidth)×\(pixelHeight)" }
+    var resolutionText: String {
+        if let r = crop { return "\(Int(r.width))×\(Int(r.height))" }
+        return "\(pixelWidth)×\(pixelHeight)"
+    }
     var durationText: String { Clip.format(effectiveDuration) }
 
     static func format(_ seconds: Double) -> String {
         let total = Int(seconds.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
     }
+}
+
+struct CropRect: Codable, Hashable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+
+    init(_ rect: CGRect) {
+        x = rect.minX
+        y = rect.minY
+        width = rect.width
+        height = rect.height
+    }
+
+    var cgRect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
 }
 
 /// A heading in the clip list ("Kills", "Blocks"). Clips below it, up to the next heading,
@@ -268,6 +299,29 @@ final class ClipLibrary {
         updateClip(clip.id) { c in
             c.trimStart = (start ?? 0) > 0.01 ? start : nil
             if let end, end < c.duration - 0.01 { c.trimEnd = end } else { c.trimEnd = nil }
+        }
+        save()
+    }
+
+    /// Looks for the video inside a screen recording and crops the clip to it (once per clip).
+    func autoCrop(_ clipID: Clip.ID, force: Bool = false) async -> Bool {
+        guard let clip = clip(withID: clipID), force || clip.cropChecked != true else { return false }
+        let rect = await VideoCropDetector.detect(url: url(for: clip))
+        updateClip(clipID) { c in
+            c.cropChecked = true
+            if let rect { c.crop = CropRect(rect) }
+        }
+        save()
+        if let rect {
+            Log.info("Cropped \(clip.fileName) to the video: \(Int(rect.width))x\(Int(rect.height)) at \(Int(rect.minX)),\(Int(rect.minY))")
+        }
+        return rect != nil
+    }
+
+    func removeCrop(_ clipID: Clip.ID) {
+        updateClip(clipID) { c in
+            c.crop = nil
+            c.cropChecked = true
         }
         save()
     }

@@ -588,8 +588,8 @@ private struct ClipRow: View {
         }
         .opacity(clip.isIncluded ? 1 : 0.5)
         .padding(.vertical, 5)
-        .task(id: url) {
-            image = await ThumbnailLoader.shared.thumbnail(for: url)
+        .task(id: "\(url.path)|\(String(describing: clip.unitCrop))") {
+            image = await ThumbnailLoader.shared.thumbnail(for: url, crop: clip.unitCrop)
         }
     }
 }
@@ -630,6 +630,7 @@ private struct ClipDetailPane: View {
 
     @State private var titleDraft = ""
     @State private var trimRequest = 0
+    @State private var cropMessage: String?
     @FocusState private var titleFocused: Bool
 
     private var library: ClipLibrary { model.library }
@@ -641,12 +642,13 @@ private struct ClipDetailPane: View {
                     url: library.url(for: clip),
                     trimStart: clip.trimStart,
                     trimEnd: clip.trimEnd,
+                    crop: clip.cropRect,
                     isActive: !model.isBusy,
                     trimRequest: trimRequest,
                     onTrimmed: { start, end in library.setTrim(clip, start: start, end: end) }
                 )
                 // Rebuild the player when the clip or its trim changes.
-                .id("\(clip.id)-\(clip.trimStart ?? -1)-\(clip.trimEnd ?? -1)")
+                .id("\(clip.id)-\(clip.trimStart ?? -1)-\(clip.trimEnd ?? -1)-\(String(describing: clip.crop))")
                 .background(Color.black)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -697,6 +699,11 @@ private struct ClipDetailPane: View {
                                     Button(section.title) { library.moveClips([clip.id], toSection: section.id) }
                                 }
                             }
+                            if clip.crop != nil {
+                                Button("Show the Full Recording") { library.removeCrop(clip.id) }
+                            } else {
+                                Button("Crop to the Video") { cropToVideo(clip) }
+                            }
                             Button("Show in Finder") { library.revealInFinder(clip) }
                             Divider()
                             Button("Move to Trash…", role: .destructive) { deleting = [clip] }
@@ -709,6 +716,20 @@ private struct ClipDetailPane: View {
                     }
 
                     tagBar(clip)
+
+                    if let cropMessage {
+                        Label(cropMessage, systemImage: "viewfinder")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else if clip.crop != nil {
+                        HStack(spacing: 6) {
+                            Label("Cropped to the video", systemImage: "crop")
+                                .foregroundStyle(.secondary)
+                            Button("Show Full Recording") { library.removeCrop(clip.id) }
+                                .buttonStyle(.borderless)
+                        }
+                        .font(.callout)
+                    }
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
@@ -718,6 +739,18 @@ private struct ClipDetailPane: View {
         } else {
             ContentUnavailableView("Select a Clip", systemImage: "play.rectangle",
                                    description: Text("Choose a clip on the left to watch, rename, tag or trim it."))
+        }
+    }
+
+    private func cropToVideo(_ clip: Clip) {
+        cropMessage = "Looking for the video…"
+        Task {
+            let found = await library.autoCrop(clip.id, force: true)
+            cropMessage = found ? nil : "No smaller video area found: the whole recording is changing."
+            if !found {
+                try? await Task.sleep(for: .seconds(4))
+                cropMessage = nil
+            }
         }
     }
 

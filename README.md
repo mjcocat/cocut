@@ -33,7 +33,9 @@ CI builds aren't notarized, which requires a paid Apple Developer account. The i
 5. **Press play.** The outline turns red and a clip starts. **Pause** and the clip saves about three seconds later with a soft pop. The clip itself ends right where you paused. Scrub to the next play and press play again. Each play/pause becomes its own clip.
 6. When you're done, click **Done** on the floating control next to the video. It also shows the keyboard shortcuts for the player. You can also press **⌥⌘R**, or choose **Done, Back to Cocut** from the menu bar. Cocut comes back with your new clips selected.
 
-To record a whole display, choose **Record Full Screen** (**⇧⌘F**), or click **Use Full Screen** while selecting a region.
+To record a whole display, choose **Record Full Screen** (**⇧⌘F**), or click **Use Full Screen** while selecting a region. You don't need to aim: after each clip, Cocut finds the part of the screen that moved (the video) and crops the clip to it, so the menu bar, browser, and black bars drop away. A cropped clip shows **Cropped to the video**, and **Show Full Recording** undoes it.
+
+While a clip records, the clock stops as soon as you pause and reads **Paused · saving…** until the clip is saved.
 
 ### Recording with the video in fullscreen
 

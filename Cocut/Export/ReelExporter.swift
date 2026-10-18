@@ -86,6 +86,8 @@ struct ReelSegment: Sendable {
     let duration: Double
     let title: String?
     let isCard: Bool
+    /// The clip's own crop to the video (pixels, top-left), if it has one.
+    var crop: CGRect? = nil
 }
 
 /// Builds the highlight reel: intro card, clips in order (trimmed), end card, with optional
@@ -213,7 +215,7 @@ final class ReelExporter {
                 let duration = clip.trimEndSeconds - clip.trimStartSeconds
                 guard duration > 0.1 else { continue }
                 segments.append(ReelSegment(url: url, start: clip.trimStartSeconds, duration: duration,
-                                            title: clip.title, isCard: false))
+                                            title: clip.title, isCard: false, crop: clip.cropRect))
             }
         }
         if profile.showEndCard {
@@ -331,9 +333,9 @@ enum ReelComposer {
             }
             let source = CMTimeRange(start: start, end: end)
             let fixed = ReelSegment(url: segment.url, start: start.seconds, duration: source.duration.seconds,
-                                    title: segment.title, isCard: segment.isCard)
-            var crop: CGRect?
-            if !segment.isCard, options.removeBlackBars, preferred.isIdentity {
+                                    title: segment.title, isCard: segment.isCard, crop: segment.crop)
+            var crop: CGRect? = segment.crop
+            if crop == nil, !segment.isCard, options.removeBlackBars, preferred.isIdentity {
                 crop = await contentRect(asset: asset, natural: natural, range: source)
                 if let crop {
                     Log.info("\(segment.url.lastPathComponent): cropping black bars to \(Int(crop.width))x\(Int(crop.height)) of \(Int(natural.width))x\(Int(natural.height))")

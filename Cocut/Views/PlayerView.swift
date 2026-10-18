@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import CoreImage
 import SwiftUI
 
 /// AppKit's AVPlayerView, which plays local files reliably and has a built-in trimming UI.
@@ -7,6 +8,8 @@ struct PlayerView: NSViewRepresentable {
     let url: URL
     let trimStart: Double?
     let trimEnd: Double?
+    /// Show only this part of the frame (pixels, top-left origin).
+    var crop: CGRect? = nil
     /// Pauses playback while false (e.g. while Cocut is recording).
     let isActive: Bool
     /// Bump to open AVPlayerView's trim bar.
@@ -42,6 +45,9 @@ struct PlayerView: NSViewRepresentable {
             if let trimEnd {
                 item.forwardPlaybackEndTime = CMTime(seconds: trimEnd, preferredTimescale: 600)
             }
+            if let crop {
+                item.videoComposition = Self.cropComposition(for: item.asset, crop: crop)
+            }
             let player = AVPlayer(playerItem: item)
             player.actionAtItemEnd = .pause
             view.player = player
@@ -66,6 +72,21 @@ struct PlayerView: NSViewRepresentable {
                 onTrimmed(start.isValid ? start.seconds : nil, end.isValid ? end.seconds : nil)
             }
         }
+    }
+
+    /// Plays just the cropped part of the video.
+    static func cropComposition(for asset: AVAsset, crop: CGRect) -> AVVideoComposition {
+        let composition = AVMutableVideoComposition(asset: asset) { request in
+            let source = request.sourceImage
+            // Core Image's origin is bottom-left.
+            let ciRect = CGRect(x: crop.minX, y: source.extent.height - crop.maxY,
+                                width: crop.width, height: crop.height)
+            let output = source.cropped(to: ciRect)
+                .transformed(by: CGAffineTransform(translationX: -ciRect.minX, y: -ciRect.minY))
+            request.finish(with: output, context: nil)
+        }
+        composition.renderSize = crop.size
+        return composition
     }
 
     static func dismantleNSView(_ view: AVPlayerView, coordinator: Coordinator) {

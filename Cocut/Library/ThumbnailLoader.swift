@@ -7,13 +7,22 @@ actor ThumbnailLoader {
 
     private var cache: [URL: CGImage] = [:]
 
-    func thumbnail(for url: URL) async -> CGImage? {
+    /// `crop` is in unit coordinates (fractions of the frame, top-left origin).
+    func thumbnail(for url: URL, crop: CGRect? = nil) async -> CGImage? {
+        guard let full = await fullFrame(for: url) else { return nil }
+        guard let crop else { return full }
+        let w = CGFloat(full.width), h = CGFloat(full.height)
+        let pixels = CGRect(x: crop.minX * w, y: crop.minY * h, width: crop.width * w, height: crop.height * h).integral
+        return full.cropping(to: pixels) ?? full
+    }
+
+    private func fullFrame(for url: URL) async -> CGImage? {
         if let cached = cache[url] { return cached }
 
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 720, height: 405)
+        generator.maximumSize = CGSize(width: 1280, height: 1280)
         generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 2)
         generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 2)
 
