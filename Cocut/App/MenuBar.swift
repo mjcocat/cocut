@@ -58,10 +58,10 @@ struct MenuBarMenu: View {
         case .stopping:
             Text("Saving…")
         case .idle:
-            Button("Record Region…") {
+            Button("Record Region…   \(AppModel.newRegionHotKeyHint)") {
                 Task { await model.recordNewRegion() }
             }
-            Button("Record Full Screen") {
+            Button("Record Full Screen   \(AppModel.fullScreenHotKeyHint)") {
                 Task { await model.recordFullScreen() }
             }
             Button("Record Same Region   \(AppModel.hotKeyHint)") {
@@ -90,6 +90,7 @@ struct MenuBarMenu: View {
             model.updater.checkNow()
         }
         .disabled(model.isBusy)
+        SettingsLink { Text("Settings…") }
         Button("Show Log") { Log.reveal() }
 
         Divider()
