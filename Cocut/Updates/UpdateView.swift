@@ -33,7 +33,7 @@ struct UpdateView: View {
             case .blocked(let path):
                 status(icon: "lock.shield.fill", tint: .orange,
                        title: "macOS blocked the update",
-                       detail: "Cocut downloaded the new version but isn't allowed to replace itself yet. Turn on Cocut in System Settings › Privacy & Security › App Management, then choose Check for Updates again. Or drag the downloaded Cocut into Applications yourself.")
+                       detail: "Cocut downloaded the new version but isn't allowed to replace itself yet. Turn on Cocut in System Settings › Privacy & Security › App Management, then quit and reopen Cocut (macOS applies the permission on relaunch) and choose Check for Updates again. Or drag the downloaded Cocut into Applications yourself.")
                 HStack {
                     Button("Show Download") { updater.revealDownloadedApp(path) }
                     Spacer()

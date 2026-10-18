@@ -165,10 +165,22 @@ final class Updater {
             }.value
             try verify(newApp, expectedVersion: release.version)
 
-            // The swap happens in a small script after Cocut has quit, so the running
-            // bundle is never replaced underneath us.
-            try launchInstaller(newApp: newApp, target: currentApp)
-            Log.info("Quitting to install \(release.version)")
+            // Cocut swaps the bundle itself: macOS's App Management permission belongs to Cocut,
+            // not to helper processes. Renaming a running app's bundle is safe; the old copy
+            // keeps running from its new location until we relaunch.
+            Log.info("Swapping in \(release.version)")
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try Self.swapBundle(current: currentApp, with: newApp, backupIn: work)
+                }.value
+            } catch where Self.isPermissionError(error) {
+                Log.error("macOS blocked replacing the app: \(error.localizedDescription)")
+                state = .blocked(newApp.path(percentEncoded: false))
+                return
+            }
+
+            Log.info("Installed \(release.version); relaunching")
+            try launchRelauncher(target: currentApp)
             NSApp.terminate(nil)
             // If something holds up a normal quit, don't leave the update hanging.
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
@@ -179,6 +191,34 @@ final class Updater {
             Log.error("Update install failed: \(error.localizedDescription)")
             state = .failed("The update couldn't be installed. \(error.localizedDescription)")
         }
+    }
+
+    nonisolated private static func swapBundle(current: URL, with newApp: URL, backupIn dir: URL) throws {
+        let fm = FileManager.default
+        let backup = dir.appending(path: "Cocut-previous.app")
+        try? fm.removeItem(at: backup)
+        try fm.moveItem(at: current, to: backup)
+        do {
+            try fm.moveItem(at: newApp, to: current)
+        } catch {
+            try? fm.moveItem(at: backup, to: current)
+            throw error
+        }
+    }
+
+    nonisolated private static func isPermissionError(_ error: Error) -> Bool {
+        let ns = error as NSError
+        if ns.domain == NSCocoaErrorDomain,
+           [NSFileWriteNoPermissionError, NSFileReadNoPermissionError].contains(ns.code) {
+            return true
+        }
+        if ns.domain == NSPOSIXErrorDomain, [Int(EPERM), Int(EACCES)].contains(ns.code) {
+            return true
+        }
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return isPermissionError(underlying)
+        }
+        return false
     }
 
     private func verify(_ app: URL, expectedVersion: String) throws {
@@ -192,27 +232,26 @@ final class Updater {
         }
     }
 
-    /// Runs detached after Cocut quits: swaps the bundle, records the result, reopens Cocut.
-    /// Arguments: pid, new app path, target app path, log file, failure-marker file.
-    private static let installerScript = """
-    pid="$1"; new="$2"; target="$3"; log="$4"; marker="$5"
-    say() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) INSTALLER $*" >> "$log"; }
-    say "waiting for Cocut ($pid) to quit"
+    /// Waits for Cocut to quit, then opens the (already replaced) app.
+    private static let relaunchScript = """
+    pid="$1"; target="$2"
     for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
-    kill -9 "$pid" 2>/dev/null
-    rm -rf "$target.old"
-    if err=$(mv "$target" "$target.old" 2>&1) && err=$(mv "$new" "$target" 2>&1); then
-      rm -rf "$target.old"
-      rm -f "$marker"
-      say "installed new version at $target"
-    else
-      say "swap failed: $err"
-      [ -d "$target" ] || mv "$target.old" "$target"
-      printf '%s' "$new" > "$marker"
-    fi
-    xattr -dr com.apple.quarantine "$target" 2>/dev/null
     open "$target"
     """
+
+    private func launchRelauncher(target: URL) throws {
+        // nohup + & detaches the helper so it outlives Cocut.
+        let wrapper = "nohup /bin/sh -c \"$1\" cocut-relaunch \"$2\" \"$3\" >/dev/null 2>&1 &"
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", wrapper, "cocut-wrapper", Self.relaunchScript,
+                          String(ProcessInfo.processInfo.processIdentifier),
+                          target.path(percentEncoded: false)]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        try task.run()
+        task.waitUntilExit()
+    }
 
     /// Written by the installer when the swap fails; read on the next launch.
     static let failureMarker: URL = {
@@ -221,23 +260,6 @@ final class Updater {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appending(path: "update-failed")
     }()
-
-    private func launchInstaller(newApp: URL, target: URL) throws {
-        // nohup + & detaches the installer so it outlives Cocut.
-        let wrapper = "nohup /bin/sh -c \"$1\" cocut-installer \"$2\" \"$3\" \"$4\" \"$5\" \"$6\" >/dev/null 2>&1 &"
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = ["-c", wrapper, "cocut-wrapper", Self.installerScript,
-                          String(ProcessInfo.processInfo.processIdentifier),
-                          newApp.path(percentEncoded: false),
-                          target.path(percentEncoded: false),
-                          Log.fileURL.path(percentEncoded: false),
-                          Self.failureMarker.path(percentEncoded: false)]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        try task.run()
-        task.waitUntilExit()
-    }
 
     /// Called at launch: if the last update couldn't be swapped in, explain and offer fixes.
     func checkForFailedInstall() {
