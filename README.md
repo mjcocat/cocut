@@ -2,10 +2,11 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.5.** Everything from capture to a finished reel works:
+**Status: v0.6.** Everything from capture to a finished reel works:
 - play-to-record capture, including with the video in fullscreen
 - a reorderable clip library with trimming and import
 - a player card designer
+- sections with optional divider cards, plus workflow tags
 - MP4 export with an intro card, crossfades, captions, and an end card
 
 ## Install
@@ -68,6 +69,20 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 | Delete clips | Select one, or several with ⌘-click or ⇧-click. Then press ⌫, or use the context menu. Deleted clips go to the Trash. |
 | Leave a clip out of the reel | Uncheck **In Reel**, or right-click › **Leave Out of Reel**. |
 | Import videos | Use **Import** (⌘I), or drag .mp4/.mov files onto the list. This works for Hudl downloads. |
+
+## Sections and tags
+
+**Sections** group the reel, for example Kills, Blocks, Serves:
+- **+ › New Section…** adds a heading.
+- Right-click selected clips › **New Section from Selection…** gathers them under a new heading.
+- Drag clips under a heading, or use **Move to Section**.
+- Select a heading to rename it, and to turn on its **divider card**: a short title card before that section in the exported reel. It's off by default.
+- **Add new recordings and imports here** sends new clips straight into that section while you work through one kind of play.
+
+**Tags** are for your workflow and never appear in the export:
+- Click tag chips under the player, or right-click › **Tags** (works on several clips at once).
+- **+ › Manage Tags…** renames, recolors, or deletes tags.
+- The filter button in the list footer shows only clips with a given tag. Reordering pauses while a filter is on.
 
 ## Player Card
 

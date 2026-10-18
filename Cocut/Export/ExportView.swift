@@ -8,6 +8,7 @@ struct ExportView: View {
 
     private var exporter: ReelExporter { model.exporter }
     private var clips: [Clip] { model.library.includedClips }
+    private var plan: [ReelEntry] { model.library.reelPlan }
     private var profile: PlayerProfile { model.profile.profile }
 
     var body: some View {
@@ -25,7 +26,7 @@ struct ExportView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("Export")
-        .navigationSubtitle(clips.isEmpty ? "Nothing to export yet" : "\(clips.count) clips · about \(Clip.format(exporter.estimatedDuration(clips: clips, profile: profile)))")
+        .navigationSubtitle(clips.isEmpty ? "Nothing to export yet" : "\(clips.count) clips · about \(Clip.format(exporter.estimatedDuration(plan: plan, profile: profile)))")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if exporter.isRunning {
@@ -51,7 +52,7 @@ struct ExportView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Your reel").font(.title2.weight(.semibold))
                 Spacer()
-                Text(clips.isEmpty ? "No clips" : "About \(Clip.format(exporter.estimatedDuration(clips: clips, profile: profile)))")
+                Text(clips.isEmpty ? "No clips" : "About \(Clip.format(exporter.estimatedDuration(plan: plan, profile: profile)))")
                     .font(.title3.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -61,8 +62,14 @@ struct ExportView: View {
                     if exporter.options.includeIntro {
                         cardChip(kind: .intro, label: "Intro")
                     }
-                    ForEach(Array(clips.enumerated()), id: \.element.id) { index, clip in
-                        ExportClipChip(number: index + 1, clip: clip, url: model.library.url(for: clip))
+                    ForEach(Array(plan.enumerated()), id: \.offset) { _, entry in
+                        switch entry {
+                        case .section(let section):
+                            cardChip(kind: .section(section.title), label: section.title)
+                        case .clip(let clip):
+                            ExportClipChip(number: (clips.firstIndex { $0.id == clip.id } ?? 0) + 1,
+                                           clip: clip, url: model.library.url(for: clip))
+                        }
                     }
                     if profile.showEndCard {
                         cardChip(kind: .end, label: "End")
@@ -258,7 +265,7 @@ struct ExportView: View {
         panel.nameFieldStringValue = "\(name).mp4"
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        exporter.export(clips: clips, library: model.library, profile: profile,
+        exporter.export(plan: plan, library: model.library, profile: profile,
                         headshot: model.profile.headshot, to: url)
     }
 }

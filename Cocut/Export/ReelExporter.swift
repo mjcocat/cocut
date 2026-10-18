@@ -133,9 +133,17 @@ final class ReelExporter {
         return dir
     }
 
+    /// Divider cards are shorter than the intro and end cards.
+    var sectionCardSeconds: Double { min(options.cardSeconds, 3) }
+
     /// Estimated running time of the finished reel.
-    func estimatedDuration(clips: [Clip], profile: PlayerProfile) -> Double {
-        var pieces = clips.map(\.effectiveDuration)
+    func estimatedDuration(plan: [ReelEntry], profile: PlayerProfile) -> Double {
+        var pieces = plan.map { entry -> Double in
+            switch entry {
+            case .clip(let clip): return clip.effectiveDuration
+            case .section: return sectionCardSeconds
+            }
+        }
         if options.includeIntro { pieces.insert(options.cardSeconds, at: 0) }
         if profile.showEndCard { pieces.append(options.cardSeconds) }
         let total = pieces.reduce(0, +)
@@ -151,12 +159,12 @@ final class ReelExporter {
         task?.cancel()
     }
 
-    func export(clips: [Clip], library: ClipLibrary, profile: PlayerProfile, headshot: NSImage?, to output: URL) {
+    func export(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: NSImage?, to output: URL) {
         guard !isRunning else { return }
         let options = self.options
         task = Task {
             do {
-                try await run(clips: clips, library: library, profile: profile, headshot: headshot,
+                try await run(plan: plan, library: library, profile: profile, headshot: headshot,
                               options: options, output: output)
                 state = .finished(output)
                 Log.info("Exported reel to \(output.path(percentEncoded: false))")
@@ -174,9 +182,10 @@ final class ReelExporter {
 
     // MARK: Pipeline
 
-    private func run(clips: [Clip], library: ClipLibrary, profile: PlayerProfile, headshot: NSImage?,
+    private func run(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: NSImage?,
                      options: ExportOptions, output: URL) async throws {
-        guard !clips.isEmpty else { throw ExportError.noClips }
+        let clipCount = plan.filter { if case .clip = $0 { return true } else { return false } }.count
+        guard clipCount > 0 else { throw ExportError.noClips }
         let renderSize = options.resolution.size
         let fps = Int32(options.frameRate)
         let work = FileManager.default.temporaryDirectory.appending(path: "CocutExport-\(UUID().uuidString)")
@@ -190,15 +199,22 @@ final class ReelExporter {
             segments.append(try await cardSegment(kind: .intro, profile: profile, headshot: headshot,
                                                   size: renderSize, fps: fps, seconds: options.cardSeconds, work: work))
         }
-        for clip in clips {
-            let url = library.url(for: clip)
-            guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else {
-                throw ExportError.unreadable(clip.title)
+        for entry in plan {
+            switch entry {
+            case .section(let section):
+                state = .preparing("Drawing the “\(section.title)” card…")
+                segments.append(try await cardSegment(kind: .section(section.title), profile: profile, headshot: headshot,
+                                                      size: renderSize, fps: fps, seconds: sectionCardSeconds, work: work))
+            case .clip(let clip):
+                let url = library.url(for: clip)
+                guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else {
+                    throw ExportError.unreadable(clip.title)
+                }
+                let duration = clip.trimEndSeconds - clip.trimStartSeconds
+                guard duration > 0.1 else { continue }
+                segments.append(ReelSegment(url: url, start: clip.trimStartSeconds, duration: duration,
+                                            title: clip.title, isCard: false))
             }
-            let duration = clip.trimEndSeconds - clip.trimStartSeconds
-            guard duration > 0.1 else { continue }
-            segments.append(ReelSegment(url: url, start: clip.trimStartSeconds, duration: duration,
-                                        title: clip.title, isCard: false))
         }
         if profile.showEndCard {
             state = .preparing("Drawing the end card…")
@@ -208,7 +224,7 @@ final class ReelExporter {
         try Task.checkCancellation()
 
         // 2. Assemble.
-        state = .preparing("Assembling \(clips.count) clips…")
+        state = .preparing("Assembling \(clipCount) clips…")
         let accent = NSColor(profile.accent.color).cgColor
         let built = try await ReelComposer.build(segments: segments, options: options,
                                                  renderSize: renderSize, accent: accent)
@@ -241,7 +257,7 @@ final class ReelExporter {
         guard let image = PlayerCardView.render(profile: profile, headshot: headshot, kind: kind, pixelSize: size) else {
             throw ExportError.cardFailed
         }
-        let url = work.appending(path: kind == .intro ? "intro.mov" : "end.mov")
+        let url = work.appending(path: "card-\(UUID().uuidString).mov")
         try await Task.detached(priority: .userInitiated) {
             try CardMovieWriter.write(image, size: size, seconds: seconds, fps: fps,
                                       fadeIn: kind == .intro, fadeOut: kind == .end, to: url)
