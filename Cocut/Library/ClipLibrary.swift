@@ -13,6 +13,12 @@ struct Clip: Identifiable, Codable, Hashable {
     /// Trim points in seconds from the start of the file; nil means untrimmed.
     var trimStart: Double?
     var trimEnd: Double?
+    /// Left out of the exported reel (kept in the library).
+    var isExcluded: Bool?
+
+    var isIncluded: Bool { isExcluded != true }
+    var trimStartSeconds: Double { trimStart ?? 0 }
+    var trimEndSeconds: Double { trimEnd ?? duration }
 
     var isTrimmed: Bool { trimStart != nil || trimEnd != nil }
     var effectiveDuration: Double { max(0, (trimEnd ?? duration) - (trimStart ?? 0)) }
@@ -61,7 +67,7 @@ final class ClipLibrary {
     }
 
     @discardableResult
-    func addClip(at url: URL) async -> Clip? {
+    func addClip(at url: URL, title: String? = nil) async -> Clip? {
         let asset = AVURLAsset(url: url)
         let duration = (try? await asset.load(.duration))?.seconds ?? 0
         var size = CGSize.zero
@@ -72,7 +78,7 @@ final class ClipLibrary {
 
         let clip = Clip(
             id: UUID(),
-            title: nextTitle(),
+            title: title ?? nextTitle(),
             fileName: url.lastPathComponent,
             createdAt: .now,
             duration: duration.isFinite ? duration : 0,
@@ -83,6 +89,45 @@ final class ClipLibrary {
         recentlyAddedID = clip.id
         save()
         return clip
+    }
+
+    var includedClips: [Clip] { clips.filter(\.isIncluded) }
+
+    func setIncluded(_ ids: Set<Clip.ID>, _ included: Bool) {
+        for index in clips.indices where ids.contains(clips[index].id) {
+            clips[index].isExcluded = included ? nil : true
+        }
+        save()
+    }
+
+    /// Copies video files into the library. Returns how many were imported.
+    func importFiles(_ urls: [URL]) async -> Int {
+        var imported = 0
+        for source in urls {
+            let asset = AVURLAsset(url: source)
+            guard let tracks = try? await asset.loadTracks(withMediaType: .video), !tracks.isEmpty else {
+                Log.error("Import skipped (no video): \(source.lastPathComponent)")
+                continue
+            }
+            let base = source.deletingPathExtension().lastPathComponent
+            let ext = source.pathExtension.isEmpty ? "mov" : source.pathExtension
+            var destination = clipsDirectory.appending(path: "\(base).\(ext)")
+            var n = 2
+            while FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
+                destination = clipsDirectory.appending(path: "\(base) \(n).\(ext)")
+                n += 1
+            }
+            do {
+                let accessing = source.startAccessingSecurityScopedResource()
+                defer { if accessing { source.stopAccessingSecurityScopedResource() } }
+                try FileManager.default.copyItem(at: source, to: destination)
+            } catch {
+                Log.error("Import failed for \(source.lastPathComponent): \(error.localizedDescription)")
+                continue
+            }
+            if await addClip(at: destination, title: base) != nil { imported += 1 }
+        }
+        return imported
     }
 
     func setTrim(_ clip: Clip, start: Double?, end: Double?) {

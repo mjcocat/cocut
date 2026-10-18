@@ -88,7 +88,6 @@ final class RegionSelectionController {
 
         let mouse = NSEvent.mouseLocation
         (windows.first { $0.frame.contains(mouse) } ?? windows.first)?.makeKey()
-        NSApp.activate()
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             MainActor.assumeIsolated { () -> NSEvent? in
@@ -127,9 +126,15 @@ final class RegionSelectionController {
 }
 
 /// Borderless, transparent window that covers one screen.
-final class OverlayWindow: NSWindow {
+/// A non-activating panel: it takes keyboard input without activating Cocut, so selecting a
+/// region over a browser in fullscreen doesn't switch Spaces away from the video.
+final class OverlayWindow: NSPanel {
     convenience init(screen: NSScreen, interactive: Bool = true) {
-        self.init(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        self.init(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
+                  backing: .buffered, defer: false)
+        isFloatingPanel = true
+        hidesOnDeactivate = false
+        becomesKeyOnlyIfNeeded = false
         setFrame(screen.frame, display: false)
         level = .screenSaver
         isOpaque = false
@@ -141,7 +146,6 @@ final class OverlayWindow: NSWindow {
     }
 
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
 }
 
 // MARK: - Overlay view

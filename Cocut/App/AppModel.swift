@@ -3,6 +3,7 @@ import Carbon.HIToolbox
 import IOKit.pwr_mgt
 import ScreenCaptureKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum RecordingPhase: Equatable {
     case idle
@@ -20,6 +21,12 @@ enum RecordingPhase: Equatable {
 final class AppModel {
     let library = ClipLibrary()
     let updater = Updater()
+    let profile = ProfileStore()
+    let exporter = ReelExporter()
+    let settings = AppSettings()
+
+    /// Lets menu commands switch the main window's sidebar section.
+    var requestedSection: SidebarItem?
 
     private(set) var phase: RecordingPhase = .idle
     private(set) var elapsed: TimeInterval = 0
@@ -50,8 +57,10 @@ final class AppModel {
     var canRecordLastRegion: Bool { !isBusy && lastRegion?.screen != nil }
     var elapsedText: String { Self.formatElapsed(elapsed) }
 
-    /// Shown in menus next to the global start/stop shortcut.
+    /// System-wide shortcuts, shown in menus and hints.
     static let hotKeyHint = "⌥⌘R"
+    static let fullScreenHotKeyHint = "⌥⌘F"
+    static let newRegionHotKeyHint = "⌥⌘N"
 
     @ObservationIgnored private let selector = RegionSelectionController()
     @ObservationIgnored private let border = RecordingBorderController()
@@ -59,7 +68,7 @@ final class AppModel {
     @ObservationIgnored private var session: CaptureSession?
     @ObservationIgnored private var hiddenWindows: [NSWindow] = []
     @ObservationIgnored private var tickTimer: Timer?
-    @ObservationIgnored private var hotKey: GlobalHotKey?
+    @ObservationIgnored private var hotKeys: [GlobalHotKey] = []
     /// Keeps the display from dimming or sleeping while a session runs (nobody touches the mouse).
     @ObservationIgnored private var awakeActivity: NSObjectProtocol?
     @ObservationIgnored private var userActivityTimer: Timer?
@@ -80,9 +89,23 @@ final class AppModel {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         Log.info("Cocut \(version) launched; screen permission: \(hasScreenPermission)")
 
-        // ⌥⌘R anywhere: start a session on the same region, or end the running one.
-        hotKey = GlobalHotKey(keyCode: kVK_ANSI_R, modifiers: cmdKey | optionKey, id: 1) { [weak self] in
-            Task { @MainActor in await self?.toggleRecording() }
+        // System-wide shortcuts, so recording works even with the browser in fullscreen:
+        // ⌥⌘R same region (or finish), ⌥⌘F full screen (or finish), ⌥⌘N pick a new region.
+        let mods = cmdKey | optionKey
+        let bindings: [(Int, UInt32, @MainActor (AppModel) async -> Void)] = [
+            (kVK_ANSI_R, 1, { await $0.toggleRecording() }),
+            (kVK_ANSI_F, 2, { await $0.toggleFullScreenRecording() }),
+            (kVK_ANSI_N, 3, { await $0.toggleNewRegionRecording() }),
+        ]
+        for (key, id, action) in bindings {
+            if let hotKey = GlobalHotKey(keyCode: key, modifiers: mods, id: id, handler: { [weak self] in
+                Task { @MainActor in
+                    guard let self else { return }
+                    await action(self)
+                }
+            }) {
+                hotKeys.append(hotKey)
+            }
         }
         updater.checkForFailedInstall()
         updater.checkInBackgroundIfDue()
@@ -121,6 +144,45 @@ final class AppModel {
             }
         default:
             break
+        }
+    }
+
+    func toggleFullScreenRecording() async {
+        switch phase {
+        case .armed, .recording: await stopSession()
+        case .idle: await recordFullScreen()
+        default: break
+        }
+    }
+
+    func toggleNewRegionRecording() async {
+        switch phase {
+        case .armed, .recording: await stopSession()
+        case .idle: await recordNewRegion()
+        default: break
+        }
+    }
+
+    // MARK: Import
+
+    func importVideosWithPanel() async {
+        let panel = NSOpenPanel()
+        panel.title = "Import Videos"
+        panel.prompt = "Import"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.movie, .mpeg4Movie, .quickTimeMovie]
+        NSApp.activate()
+        guard panel.runModal() == .OK else { return }
+        await importVideos(panel.urls)
+    }
+
+    func importVideos(_ urls: [URL]) async {
+        let count = await library.importFiles(urls)
+        Log.info("Imported \(count) of \(urls.count) video(s)")
+        if count < urls.count {
+            presentError("\(urls.count - count) file(s) couldn't be imported. Cocut can import videos macOS can play, such as .mp4 and .mov.",
+                         title: "Import Problem")
         }
     }
 
@@ -215,6 +277,7 @@ final class AppModel {
         clipsThisSession = 0
         sessionMode = captureMode
         let session = CaptureSession(mode: captureMode, captureAudio: captureAudio,
+                                     tuning: settings.tuning,
                                      clipsDirectory: library.clipsDirectory)
 
         session.onSegmentStarted = { [weak self] in
@@ -274,7 +337,7 @@ final class AppModel {
         case .success(let segment):
             clipsThisSession += 1
             Log.info("Saved \(segment.url.lastPathComponent) (\(Self.formatElapsed(segment.duration)))")
-            NSSound(named: "Pop")?.play()
+            if settings.playSoundOnSave { NSSound(named: "Pop")?.play() }
             Task { await library.addClip(at: segment.url) }
         case .failure(let error):
             Log.error("Clip failed: \(error.localizedDescription)")
@@ -406,11 +469,11 @@ final class AppModel {
         NSApp.terminate(nil)
     }
 
-    func presentError(_ message: String) {
+    func presentError(_ message: String, title: String = "Recording Problem") {
         restoreAppWindows()
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Recording Problem"
+        alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Show Log")

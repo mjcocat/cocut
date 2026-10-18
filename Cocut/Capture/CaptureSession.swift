@@ -23,6 +23,16 @@ enum RecorderError: LocalizedError {
     }
 }
 
+/// Auto-mode timing the user can adjust in Settings.
+/// The clip always ends at the last change, so a longer stillSeconds only delays the save;
+/// it doesn't add dead time to the clip.
+struct CaptureTuning: Sendable {
+    /// No change in the region for this long means the video was paused.
+    var stillSeconds: Double = 3.0
+    /// Shorter bursts (hover controls, scrubbing, page flicker) are dropped.
+    var minimumClipSeconds: Double = 2.0
+}
+
 enum CaptureMode: String, Codable {
     /// Recording starts right away and runs until Stop.
     case manual
@@ -38,17 +48,14 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         let duration: Double
     }
 
-    // Tuning for auto mode.
-    // The clip always ends at the last change, so a longer stillSeconds only delays the save;
-    // it doesn't add dead time to the clip.
-    static let stillSeconds: Double = 3.0       // no change this long = paused
-    static let minimumClipSeconds: Double = 2.0 // shorter bursts (hover controls, scrubbing, page flicker) are dropped
+    // Fixed tuning for auto mode (the user-adjustable parts live in CaptureTuning).
     static let tailSeconds: Double = 0.15       // keep a moment after the last change
     static let armingGraceSeconds: Double = 1.0 // ignore the repaint when focus returns to the browser
     static let frameRate: Int32 = 60
 
     let mode: CaptureMode
     let captureAudio: Bool
+    let tuning: CaptureTuning
 
     /// All callbacks arrive on the main queue.
     var onSegmentStarted: (() -> Void)?
@@ -70,9 +77,10 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var stopping = false
     private var armedAtHost: CFTimeInterval = 0
 
-    init(mode: CaptureMode, captureAudio: Bool, clipsDirectory: URL) {
+    init(mode: CaptureMode, captureAudio: Bool, tuning: CaptureTuning, clipsDirectory: URL) {
         self.mode = mode
         self.captureAudio = captureAudio
+        self.tuning = tuning
         self.clipsDirectory = clipsDirectory
     }
 
@@ -219,7 +227,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         writer = nil
         previousPrint = []
 
-        if mode == .auto, current.duration(endingAt: end) < Self.minimumClipSeconds {
+        if mode == .auto, current.duration(endingAt: end) < self.tuning.minimumClipSeconds {
             Log.info("Dropped a \(String(format: "%.2f", current.duration(endingAt: end)))s burst")
             current.cancel()
             completion?()
@@ -241,7 +249,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         timer.schedule(deadline: .now() + 0.25, repeating: 0.2)
         timer.setEventHandler { [weak self] in
             guard let self, !self.stopping, self.writer != nil else { return }
-            if CACurrentMediaTime() - self.lastChangeHost > Self.stillSeconds {
+            if CACurrentMediaTime() - self.lastChangeHost > self.tuning.stillSeconds {
                 let end = CMTimeAdd(self.lastChangePTS, CMTime(seconds: Self.tailSeconds, preferredTimescale: 600))
                 self.finishCurrent(endingAt: end)
             }

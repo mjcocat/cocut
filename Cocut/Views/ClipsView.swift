@@ -86,7 +86,9 @@ struct ClipsView: View {
     private var subtitle: String {
         let count = library.clips.count
         guard count > 0 else { return "" }
-        return "\(count) \(count == 1 ? "clip" : "clips") · \(Clip.format(library.totalDuration)) total"
+        let included = library.includedClips.count
+        let reel = included == count ? "" : " · \(included) in reel"
+        return "\(count) \(count == 1 ? "clip" : "clips")\(reel) · \(Clip.format(library.totalDuration)) total"
     }
 
     // MARK: Empty state
@@ -116,13 +118,24 @@ struct ClipsView: View {
             .controlSize(.large)
             .disabled(model.isBusy)
 
-            Text("Press ⌥⌘R from any app to start again on the same area, or to finish.")
+            Button("Import Videos…") {
+                Task { await model.importVideosWithPanel() }
+            }
+            .buttonStyle(.borderless)
+
+            Text("From any app, even with the video in fullscreen: ⌥⌘N picks a region, ⌥⌘F records the full screen, ⌥⌘R repeats the last region. Press the same keys to finish.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.top, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .dropDestination(for: URL.self) { urls, _ in
+            let videos = urls.filter { $0.isFileURL }
+            guard !videos.isEmpty else { return false }
+            Task { await model.importVideos(videos) }
+            return true
+        }
     }
 }
 
@@ -151,6 +164,13 @@ private struct ClipListPane: View {
                 .listStyle(.inset)
                 .contextMenu(forSelectionType: Clip.ID.self) { ids in
                     let clips = library.clips.filter { ids.contains($0.id) }
+                    if clips.contains(where: { !$0.isIncluded }) {
+                        Button("Include in Reel") { library.setIncluded(ids, true) }
+                    }
+                    if clips.contains(where: { $0.isIncluded }) {
+                        Button("Leave Out of Reel") { library.setIncluded(ids, false) }
+                    }
+                    Divider()
                     if clips.count == 1, let clip = clips.first {
                         Button("Show in Finder") { library.revealInFinder(clip) }
                         Divider()
@@ -164,6 +184,12 @@ private struct ClipListPane: View {
                     let clips = library.clips.filter { selection.contains($0.id) }
                     if !clips.isEmpty { deleting = clips }
                 }
+                .dropDestination(for: URL.self) { urls, _ in
+                    let videos = urls.filter { $0.isFileURL }
+                    guard !videos.isEmpty else { return false }
+                    Task { await model.importVideos(videos) }
+                    return true
+                }
                 .onChange(of: library.recentlyAddedID) { _, newID in
                     guard let newID else { return }
                     withAnimation(.snappy) { proxy.scrollTo(newID, anchor: .bottom) }
@@ -173,13 +199,21 @@ private struct ClipListPane: View {
             Divider()
             HStack(spacing: 6) {
                 Image(systemName: "line.3.horizontal")
-                Text("Drag to reorder · ⌘-click or ⇧-click to select several")
+                Text("Drag to reorder · drop videos here to import")
+                Spacer(minLength: 8)
+                Button {
+                    Task { await model.importVideosWithPanel() }
+                } label: {
+                    Label("Import", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderless)
+                .help("Add video files, such as Hudl downloads (⌘I)")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+            .padding(.vertical, 8)
         }
     }
 }
@@ -232,7 +266,18 @@ private struct ClipRow: View {
             }
 
             Spacer(minLength: 0)
+
+            if !clip.isIncluded {
+                Text("Left out")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().strokeBorder(Color.secondary.opacity(0.5), lineWidth: 1))
+                    .help("Not included when you export the reel")
+            }
         }
+        .opacity(clip.isIncluded ? 1 : 0.5)
         .padding(.vertical, 5)
         .task(id: url) {
             image = await ThumbnailLoader.shared.thumbnail(for: url)
@@ -287,6 +332,13 @@ private struct ClipDetailPane: View {
                     }
 
                     Spacer(minLength: 12)
+
+                    Toggle("In Reel", isOn: Binding(
+                        get: { clip.isIncluded },
+                        set: { library.setIncluded([clip.id], $0) }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .help("Include this clip when exporting the highlight reel")
 
                     if clip.isTrimmed {
                         Button("Reset Trim") {

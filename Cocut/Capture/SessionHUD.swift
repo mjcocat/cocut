@@ -21,8 +21,10 @@ final class SessionHUDController {
             origin.y = frame.maxY + 14
         }
         if origin.y + size.height > visible.maxY - 8 {
-            // Full screen or a very tall region: float near the top, over the picture.
-            origin.y = visible.maxY - size.height - 24
+            // Full screen or a very tall region: tuck it into the top-right corner, over the picture.
+            // It's left out of the recording either way.
+            origin.y = visible.maxY - size.height - 20
+            origin.x = visible.maxX - size.width - 20
         }
         origin.x = min(max(origin.x, visible.minX + 8), visible.maxX - size.width - 8)
 
