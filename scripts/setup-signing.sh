@@ -4,7 +4,7 @@
 # keeps Cocut's Screen Recording permission across updates instead of asking again.
 #
 # Requires the GitHub CLI, signed in:  brew install gh && gh auth login
-# Usage: ./scripts/setup-signing.sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/mjcocat/cocut/main/scripts/setup-signing.sh | bash
 set -euo pipefail
 
 REPO="mjcocat/cocut"
@@ -12,10 +12,11 @@ NAME="Cocut Self-Signed"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-command -v gh >/dev/null || { echo "Install the GitHub CLI first: brew install gh" >&2; exit 1; }
+command -v gh >/dev/null || { echo "Install the GitHub CLI first: brew install gh, then gh auth login" >&2; exit 1; }
+gh auth status >/dev/null 2>&1 || { echo "Sign in to GitHub first: gh auth login" >&2; exit 1; }
 
 if gh secret list -R "$REPO" | grep -q '^COCUT_CERT_P12'; then
-  read -r -p "A signing certificate is already set up. Replace it? Cocut will ask for Screen Recording permission once more. [y/N] " ans
+  read -r -p "A signing certificate is already set up. Replace it? Cocut will ask for Screen Recording permission once more. [y/N] " ans < /dev/tty
   [[ "$ans" =~ ^[Yy]$ ]] || exit 0
 fi
 

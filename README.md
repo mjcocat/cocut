@@ -63,7 +63,7 @@ macOS ties Screen Recording permission to the app's code signature. Ad-hoc CI bu
 
 ```bash
 brew install gh && gh auth login   # if you don't have the GitHub CLI yet
-./scripts/setup-signing.sh
+curl -fsSL https://raw.githubusercontent.com/mjcocat/cocut/main/scripts/setup-signing.sh | bash
 ```
 
 This creates a self-signed "Cocut Self-Signed" certificate and stores it as the `COCUT_CERT_P12` and `COCUT_CERT_PASSWORD` repository secrets. Builds after that are all signed with it. You grant permission one last time, and it then sticks.
