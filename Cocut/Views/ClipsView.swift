@@ -129,7 +129,15 @@ struct ClipsView: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("No Clips Yet", systemImage: "film.stack")
+            VStack(spacing: 14) {
+                Image("Logo")
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 104, height: 104)
+                    .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+                Text("No Clips Yet")
+                    .font(.title2.weight(.semibold))
+            }
         } description: {
             Text("Open game film on YouTube or Hudl, then record just the part of the screen showing the video. Each recording becomes a clip here.")
         } actions: {

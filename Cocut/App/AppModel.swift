@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import ScreenCaptureKit
 import SwiftUI
 
 enum RecordingPhase: Equatable {
@@ -188,6 +189,11 @@ final class AppModel {
         guard isRecording else { return }
         // Keep whatever was captured before the interruption.
         await stopRecording()
+        // Stopping from macOS's own screen-recording menu bar indicator is a normal stop.
+        let nsError = error as NSError
+        if nsError.domain == SCStreamErrorDomain, nsError.code == SCStreamError.Code.userStopped.rawValue {
+            return
+        }
         presentError("Recording stopped unexpectedly: \(error.localizedDescription)")
     }
 
