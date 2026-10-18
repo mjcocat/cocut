@@ -1,0 +1,143 @@
+import AVFoundation
+import AppKit
+import Foundation
+
+struct Clip: Identifiable, Codable, Hashable {
+    let id: UUID
+    var title: String
+    let fileName: String
+    let createdAt: Date
+    var duration: Double
+    var pixelWidth: Int
+    var pixelHeight: Int
+
+    var resolutionText: String { "\(pixelWidth)×\(pixelHeight)" }
+    var durationText: String { Clip.format(duration) }
+
+    static func format(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+/// Clips live in ~/Movies/Highlight Creator/Clips, with a small JSON index alongside.
+@MainActor
+@Observable
+final class ClipLibrary {
+    private(set) var clips: [Clip] = []
+    var recentlyAddedID: Clip.ID?
+
+    let rootDirectory: URL
+    let clipsDirectory: URL
+    private var indexURL: URL { rootDirectory.appending(path: "library.json") }
+
+    init() {
+        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Movies")
+        rootDirectory = movies.appending(path: "Highlight Creator", directoryHint: .isDirectory)
+        clipsDirectory = rootDirectory.appending(path: "Clips", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: clipsDirectory, withIntermediateDirectories: true)
+        load()
+    }
+
+    var totalDuration: Double { clips.reduce(0) { $0 + $1.duration } }
+
+    func url(for clip: Clip) -> URL {
+        clipsDirectory.appending(path: clip.fileName)
+    }
+
+    func makeNewClipURL() -> URL {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        var url = clipsDirectory.appending(path: "Clip \(formatter.string(from: .now)).mov")
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
+            url = clipsDirectory.appending(path: "Clip \(formatter.string(from: .now)) \(n).mov")
+            n += 1
+        }
+        return url
+    }
+
+    @discardableResult
+    func addClip(at url: URL) async -> Clip? {
+        let asset = AVURLAsset(url: url)
+        let duration = (try? await asset.load(.duration))?.seconds ?? 0
+        var size = CGSize.zero
+        if let track = try? await asset.loadTracks(withMediaType: .video).first,
+           let natural = try? await track.load(.naturalSize) {
+            size = natural
+        }
+
+        let clip = Clip(
+            id: UUID(),
+            title: nextTitle(),
+            fileName: url.lastPathComponent,
+            createdAt: .now,
+            duration: duration.isFinite ? duration : 0,
+            pixelWidth: Int(size.width),
+            pixelHeight: Int(size.height)
+        )
+        clips.append(clip)
+        recentlyAddedID = clip.id
+        save()
+        return clip
+    }
+
+    func rename(_ clip: Clip, to title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+        clips[index].title = trimmed
+        save()
+    }
+
+    /// Moves the file to the Trash so a mistaken delete is recoverable.
+    func delete(_ clip: Clip) {
+        try? FileManager.default.trashItem(at: url(for: clip), resultingItemURL: nil)
+        clips.removeAll { $0.id == clip.id }
+        save()
+    }
+
+    func move(fromOffsets source: IndexSet, toOffset destination: Int) {
+        clips.move(fromOffsets: source, toOffset: destination)
+        save()
+    }
+
+    func revealInFinder(_ clip: Clip? = nil) {
+        if let clip {
+            NSWorkspace.shared.activateFileViewerSelecting([url(for: clip)])
+        } else {
+            NSWorkspace.shared.open(clipsDirectory)
+        }
+    }
+
+    // MARK: Persistence
+
+    private func nextTitle() -> String {
+        let used = Set(clips.map(\.title))
+        var n = clips.count + 1
+        while used.contains("Clip \(n)") { n += 1 }
+        return "Clip \(n)"
+    }
+
+    private func load() {
+        guard let data = try? Data(contentsOf: indexURL),
+              let decoded = try? Self.decoder.decode([Clip].self, from: data) else { return }
+        // Drop entries whose file was removed in Finder.
+        clips = decoded.filter { FileManager.default.fileExists(atPath: url(for: $0).path(percentEncoded: false)) }
+    }
+
+    private static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+
+    private func save() {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(clips) else { return }
+        try? data.write(to: indexURL, options: .atomic)
+    }
+}

@@ -1,0 +1,38 @@
+name: HighlightCreator
+options:
+  bundleIdPrefix: com.mjcocat
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  HighlightCreator:
+    type: application
+    platform: macOS
+    sources:
+      - HighlightCreator
+    scheme: {}
+    info:
+      path: HighlightCreator/Info.plist
+      properties:
+        CFBundleDisplayName: Highlight Creator
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.video
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+    entitlements:
+      path: HighlightCreator/HighlightCreator.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mjcocat.HighlightCreator
+        PRODUCT_NAME: Highlight Creator
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

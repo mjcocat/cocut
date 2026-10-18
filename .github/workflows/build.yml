@@ -1,0 +1,68 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build macOS app
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Generate Xcode project
+        run: xcodegen
+
+      - name: Build (Release, universal, ad-hoc signed)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project HighlightCreator.xcodeproj \
+            -scheme HighlightCreator \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build \
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
+            build | xcbeautify --renderer github-actions
+
+      - name: Package
+        run: |
+          APP="build/Build/Products/Release/Highlight Creator.app"
+          codesign --verify --deep --strict "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" HighlightCreator.zip
+          echo "Built $(du -h HighlightCreator.zip | cut -f1) app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HighlightCreator-${{ github.sha }}
+          path: HighlightCreator.zip
+          retention-days: 30
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: HighlightCreator.zip
+          generate_release_notes: true
