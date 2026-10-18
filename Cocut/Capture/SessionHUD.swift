@@ -115,14 +115,14 @@ struct SessionHUDView: View {
 
     private var statusDot: some View {
         Circle()
-            .fill(model.isRecording ? Color.red : Color.secondary.opacity(0.6))
+            .fill(model.isRecording ? (model.isPausedInClip ? Color.orange : Color.red) : Color.secondary.opacity(0.6))
             .frame(width: 10, height: 10)
             .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: model.isRecording ? 0 : 1))
     }
 
     private var title: String {
         if model.isRecording {
-            return "Recording · \(model.elapsedText)"
+            return model.recordingStatusText
         }
         return model.sessionMode == .auto ? "Ready, press play" : "Starting…"
     }

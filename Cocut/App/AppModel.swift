@@ -30,6 +30,8 @@ final class AppModel {
 
     private(set) var phase: RecordingPhase = .idle
     private(set) var elapsed: TimeInterval = 0
+    /// The video stopped changing while a clip records (auto mode): the clip will save shortly.
+    private(set) var isPausedInClip = false
     private(set) var clipsThisSession = 0
     private(set) var sessionMode: CaptureMode = .auto
     private(set) var lastRegion: CaptureRegion? {
@@ -56,6 +58,10 @@ final class AppModel {
     var isRecording: Bool { if case .recording = phase { return true } else { return false } }
     var canRecordLastRegion: Bool { !isBusy && lastRegion?.screen != nil }
     var elapsedText: String { Self.formatElapsed(elapsed) }
+    /// "Recording · 0:12" or, once the video pauses, "Paused · saving…".
+    var recordingStatusText: String {
+        isPausedInClip ? "Paused · saving \(elapsedText)…" : "Recording · \(elapsedText)"
+    }
 
     /// System-wide shortcuts, shown in menus and hints.
     static let hotKeyHint = "⌥⌘R"
@@ -105,6 +111,12 @@ final class AppModel {
                 }
             }) {
                 hotKeys.append(hotKey)
+            }
+        }
+        // Older full-screen recordings: find the video in them once, in the background.
+        Task { [library] in
+            for clip in library.clips where clip.cropChecked == nil && clip.pixelWidth >= 2000 {
+                _ = await library.autoCrop(clip.id)
             }
         }
         updater.checkForFailedInstall()
@@ -338,7 +350,12 @@ final class AppModel {
             clipsThisSession += 1
             Log.info("Saved \(segment.url.lastPathComponent) (\(Self.formatElapsed(segment.duration)))")
             if settings.playSoundOnSave { NSSound(named: "Pop")?.play() }
-            Task { await library.addClip(at: segment.url) }
+            Task {
+                if let clip = await library.addClip(at: segment.url) {
+                    // Full-screen and large recordings: find the video and crop to it.
+                    _ = await library.autoCrop(clip.id)
+                }
+            }
         case .failure(let error):
             Log.error("Clip failed: \(error.localizedDescription)")
         }
@@ -407,9 +424,19 @@ final class AppModel {
 
     private func startTicking(from start: Date) {
         elapsed = 0
+        isPausedInClip = false
         tickTimer?.invalidate()
         let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.elapsed = Date().timeIntervalSince(start) }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let now = Date().timeIntervalSince(start)
+                // In auto mode, freeze the clock when the picture stops changing: the clip ends
+                // where the video paused, even though saving waits a moment to be sure.
+                let idle = self.sessionMode == .auto ? (self.session?.secondsSinceActivity() ?? 0) : 0
+                let paused = idle > 0.6
+                if paused != self.isPausedInClip { self.isPausedInClip = paused }
+                self.elapsed = paused ? max(0, now - idle) : now
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         tickTimer = timer
@@ -419,6 +446,7 @@ final class AppModel {
         tickTimer?.invalidate()
         tickTimer = nil
         elapsed = 0
+        isPausedInClip = false
     }
 
     static func formatElapsed(_ seconds: TimeInterval) -> String {

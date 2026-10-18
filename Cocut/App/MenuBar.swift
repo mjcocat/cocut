@@ -10,7 +10,7 @@ struct MenuBarLabel: View {
         switch model.phase {
         case .recording:
             HStack(spacing: 4) {
-                Image(systemName: "record.circle.fill")
+                Image(systemName: model.isPausedInClip ? "pause.circle" : "record.circle.fill")
                 Text(model.elapsedText).monospacedDigit()
             }
         case .armed:
@@ -41,8 +41,8 @@ struct MenuBarMenu: View {
                 Task { await model.stopSession() }
             }
         case .recording:
-            Text("Recording · \(model.elapsedText)")
-            if model.sessionMode == .auto {
+            Text(model.recordingStatusText)
+            if model.sessionMode == .auto, !model.isPausedInClip {
                 Text("Pause the video to save this clip")
             }
             Button(model.sessionMode == .auto ? "Done, Back to Cocut   \(AppModel.hotKeyHint)" : "Stop and Save   \(AppModel.hotKeyHint)") {

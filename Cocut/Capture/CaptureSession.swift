@@ -75,6 +75,24 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var lastChangePTS: CMTime = .zero
     private var lastChangeHost: CFTimeInterval = 0
     private var stopping = false
+
+    /// Last time the picture changed, readable from the main thread for the on-screen clock.
+    private let activityLock = NSLock()
+    private var activityHost: CFTimeInterval = 0
+
+    /// Seconds since the captured picture last changed (0 while it's changing).
+    func secondsSinceActivity() -> Double {
+        activityLock.lock()
+        defer { activityLock.unlock() }
+        guard activityHost > 0 else { return 0 }
+        return max(0, CACurrentMediaTime() - activityHost)
+    }
+
+    private func markActivity(_ host: CFTimeInterval) {
+        activityLock.lock()
+        activityHost = host
+        activityLock.unlock()
+    }
     private var armedAtHost: CFTimeInterval = 0
 
     init(mode: CaptureMode, captureAudio: Bool, tuning: CaptureTuning, clipsDirectory: URL) {
@@ -202,6 +220,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         switch mode {
         case .manual:
             if writer == nil { beginSegment() }
+            markActivity(CACurrentMediaTime())
         case .auto:
             let print = Self.fingerprint(pixelBuffer)
             let changed = Self.differs(print, previousPrint)
@@ -209,6 +228,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
             if changed, CACurrentMediaTime() - armedAtHost > Self.armingGraceSeconds {
                 lastChangePTS = pts
                 lastChangeHost = CACurrentMediaTime()
+                markActivity(lastChangeHost)
                 if writer == nil { beginSegment() }
             }
         }
