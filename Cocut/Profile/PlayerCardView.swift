@@ -3,8 +3,10 @@ import SwiftUI
 
 /// The intro and end cards, designed on a 1920×1080 canvas. The editor shows them scaled down;
 /// the exporter renders them with ImageRenderer at the reel's resolution.
-enum CardKind {
+enum CardKind: Hashable {
     case intro, end
+    /// A divider before a section of the reel, e.g. "Kills".
+    case section(String)
 }
 
 struct PlayerCardView: View {
@@ -27,6 +29,8 @@ struct PlayerCardView: View {
                 }
             case .end:
                 endCard
+            case .section(let title):
+                sectionCard(title)
             }
         }
         .frame(width: Self.canvas.width, height: Self.canvas.height)
@@ -241,6 +245,29 @@ struct PlayerCardView: View {
             }
         }
         .padding(80)
+    }
+
+    private func sectionCard(_ title: String) -> some View {
+        VStack(spacing: 34) {
+            let byline = [profile.fullName, profile.gradYear.isEmpty ? "" : "Class of \(profile.gradYear)"]
+                .filter { !$0.isEmpty }
+            if !byline.isEmpty {
+                Text(byline.joined(separator: "  ·  ").uppercased())
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .tracking(6)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            Text(title.uppercased())
+                .font(.system(size: 210, weight: .black, design: .rounded))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.35)
+                .shadow(color: accent.opacity(0.5), radius: 40)
+            Capsule()
+                .fill(accent)
+                .frame(width: 260, height: 14)
+        }
+        .padding(.horizontal, 140)
     }
 
     private var endCard: some View {

@@ -4,8 +4,15 @@ import SwiftUI
 struct ClipsView: View {
     @Environment(AppModel.self) private var model
 
-    @State private var selection: Set<Clip.ID> = []
+    /// Selected rows: clips and/or section headings.
+    @State private var selection: Set<UUID> = []
     @State private var deleting: [Clip] = []
+    @State private var filterTagID: UUID?
+    @State private var sectionPrompt: SectionPrompt?
+    @State private var sectionName = ""
+    @State private var tagPrompt: TagPrompt?
+    @State private var tagName = ""
+    @State private var showingTagManager = false
 
     private var library: ClipLibrary { model.library }
 
@@ -17,21 +24,15 @@ struct ClipsView: View {
                     .padding(.bottom, 8)
             }
 
-            if library.clips.isEmpty {
+            if library.items.isEmpty {
                 emptyState
             } else {
                 HSplitView {
-                    ClipListPane(selection: $selection, deleting: $deleting)
-                        .frame(minWidth: 300, idealWidth: 380, maxWidth: 560)
-                    Group {
-                        if selection.count > 1 {
-                            MultiSelectionPane(clips: selectedClips, deleting: $deleting,
-                                               clearSelection: { selection = [] })
-                        } else {
-                            ClipDetailPane(clip: library.clip(withID: selection.first), deleting: $deleting)
-                        }
-                    }
-                    .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                    ClipListPane(selection: $selection, deleting: $deleting, filterTagID: $filterTagID,
+                                 actions: actions)
+                        .frame(minWidth: 320, idealWidth: 400, maxWidth: 580)
+                    detail
+                        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
@@ -59,11 +60,79 @@ struct ClipsView: View {
         } message: {
             Text("You can restore clips from the Trash in Finder.")
         }
+        .alert(sectionPrompt?.title ?? "New Section",
+               isPresented: Binding(get: { sectionPrompt != nil }, set: { if !$0 { sectionPrompt = nil } })) {
+            TextField("Section name", text: $sectionName, prompt: Text("Kills, Blocks, Serves…"))
+            Button("Add") { commitSection() }
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(sectionPrompt?.message ?? "")
+        }
+        .alert("New Tag",
+               isPresented: Binding(get: { tagPrompt != nil }, set: { if !$0 { tagPrompt = nil } })) {
+            TextField("Tag name", text: $tagName, prompt: Text("Kill, Ace, Dig, Best…"))
+            Button("Add") { commitTag() }
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text((tagPrompt?.clipIDs.isEmpty ?? true)
+                 ? "Tags help you sort and find clips. They never appear in the exported reel."
+                 : "The new tag is added to the selected clips.")
+        }
+        .sheet(isPresented: $showingTagManager) {
+            TagManagerView()
+        }
     }
 
-    private var selectedClips: [Clip] {
-        library.clips.filter { selection.contains($0.id) }
+    // MARK: Detail routing
+
+    @ViewBuilder
+    private var detail: some View {
+        let clipIDs = selection.filter { library.clip(withID: $0) != nil }
+        if selection.count == 1, let id = selection.first, let section = library.section(withID: id) {
+            SectionDetailPane(section: section)
+        } else if clipIDs.count > 1 {
+            MultiSelectionPane(clips: library.clips.filter { clipIDs.contains($0.id) },
+                               deleting: $deleting, actions: actions,
+                               clearSelection: { selection = [] })
+        } else {
+            ClipDetailPane(clip: library.clip(withID: clipIDs.first), deleting: $deleting, actions: actions)
+        }
     }
+
+    private var actions: ClipActions {
+        ClipActions(
+            newSection: { ids in
+                sectionName = ""
+                sectionPrompt = SectionPrompt(clipIDs: ids)
+            },
+            newTag: { ids in
+                tagName = ""
+                tagPrompt = TagPrompt(clipIDs: ids)
+            },
+            manageTags: { showingTagManager = true },
+            select: { selection = $0 }
+        )
+    }
+
+    private func commitSection() {
+        guard let prompt = sectionPrompt else { return }
+        let name = sectionName.trimmingCharacters(in: .whitespaces)
+        let section = library.addSection(title: name.isEmpty ? "New Section" : name, gathering: prompt.clipIDs)
+        sectionPrompt = nil
+        if prompt.clipIDs.isEmpty { selection = [section.id] }
+    }
+
+    private func commitTag() {
+        guard let prompt = tagPrompt else { return }
+        if let tag = library.addTag(name: tagName), !prompt.clipIDs.isEmpty {
+            library.toggleTag(tag.id, on: prompt.clipIDs)
+        }
+        tagPrompt = nil
+    }
+
+    // MARK: Delete
 
     private var deleteTitle: String {
         deleting.count == 1
@@ -73,13 +142,14 @@ struct ClipsView: View {
 
     private func performDelete() {
         let ids = Set(deleting.map(\.id))
-        // Keep a sensible selection: the clip that now sits where the first deleted one was.
-        let firstIndex = library.clips.firstIndex { ids.contains($0.id) } ?? 0
+        let clips = library.clips
+        let firstIndex = clips.firstIndex { ids.contains($0.id) } ?? 0
         library.delete(deleting)
         deleting = []
         selection.subtract(ids)
-        if selection.isEmpty, !library.clips.isEmpty {
-            selection = [library.clips[min(firstIndex, library.clips.count - 1)].id]
+        let remaining = library.clips
+        if selection.isEmpty, !remaining.isEmpty {
+            selection = [remaining[min(firstIndex, remaining.count - 1)].id]
         }
     }
 
@@ -139,46 +209,81 @@ struct ClipsView: View {
     }
 }
 
+private struct SectionPrompt {
+    let clipIDs: Set<UUID>
+    var title: String { clipIDs.isEmpty ? "New Section" : "New Section from \(clipIDs.count) Clip\(clipIDs.count == 1 ? "" : "s")" }
+    var message: String {
+        clipIDs.isEmpty
+            ? "Sections group clips, like Kills or Blocks. Drag clips under a section to add them."
+            : "The selected clips are gathered under the new section."
+    }
+}
+
+private struct TagPrompt {
+    let clipIDs: Set<UUID>
+}
+
+/// Actions the panes can ask the clips screen to start (prompts and sheets live there).
+struct ClipActions {
+    var newSection: (Set<UUID>) -> Void
+    var newTag: (Set<UUID>) -> Void
+    var manageTags: () -> Void
+    var select: (Set<UUID>) -> Void
+}
+
 // MARK: - List
 
 private struct ClipListPane: View {
     @Environment(AppModel.self) private var model
-    @Binding var selection: Set<Clip.ID>
+    @Binding var selection: Set<UUID>
     @Binding var deleting: [Clip]
+    @Binding var filterTagID: UUID?
+    let actions: ClipActions
 
     private var library: ClipLibrary { model.library }
 
+    /// Reordering is only possible on the full list, not a filtered one.
+    private var moveAction: ((IndexSet, Int) -> Void)? {
+        guard filterTagID == nil else { return nil }
+        let library = self.library
+        return { source, destination in library.move(fromOffsets: source, toOffset: destination) }
+    }
+
+    private var displayItems: [LibraryItem] {
+        guard let tagID = filterTagID else { return library.items }
+        return library.items.filter { $0.clip?.tags.contains(tagID) == true }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            if let tagID = filterTagID, let tag = library.tag(withID: tagID) {
+                HStack(spacing: 8) {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .foregroundStyle(tag.color.color)
+                    Text("Showing clips tagged “\(tag.name)”")
+                        .font(.callout)
+                    Spacer()
+                    Button("Show All") { filterTagID = nil }
+                        .buttonStyle(.borderless)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(tag.color.color.opacity(0.1))
+                Divider()
+            }
+
             ScrollViewReader { proxy in
                 List(selection: $selection) {
-                    ForEach(library.clips) { clip in
-                        ClipRow(clip: clip,
-                                number: (library.clips.firstIndex(of: clip) ?? 0) + 1,
-                                url: library.url(for: clip))
-                            .tag(clip.id)
-                            .id(clip.id)
+                    ForEach(displayItems) { item in
+                        row(for: item)
+                            .tag(item.id)
+                            .id(item.id)
                     }
-                    .onMove { library.move(fromOffsets: $0, toOffset: $1) }
+                    .onMove(perform: moveAction)
                 }
                 .listStyle(.inset)
-                .contextMenu(forSelectionType: Clip.ID.self) { ids in
-                    let clips = library.clips.filter { ids.contains($0.id) }
-                    if clips.contains(where: { !$0.isIncluded }) {
-                        Button("Include in Reel") { library.setIncluded(ids, true) }
-                    }
-                    if clips.contains(where: { $0.isIncluded }) {
-                        Button("Leave Out of Reel") { library.setIncluded(ids, false) }
-                    }
-                    Divider()
-                    if clips.count == 1, let clip = clips.first {
-                        Button("Show in Finder") { library.revealInFinder(clip) }
-                        Divider()
-                    }
-                    if !clips.isEmpty {
-                        Button(clips.count == 1 ? "Move to Trash…" : "Move \(clips.count) Clips to Trash…",
-                               role: .destructive) { deleting = clips }
-                    }
+                .contextMenu(forSelectionType: UUID.self) { ids in
+                    contextMenu(for: ids)
                 }
                 .onDeleteCommand {
                     let clips = library.clips.filter { selection.contains($0.id) }
@@ -192,29 +297,220 @@ private struct ClipListPane: View {
                 }
                 .onChange(of: library.recentlyAddedID) { _, newID in
                     guard let newID else { return }
-                    withAnimation(.snappy) { proxy.scrollTo(newID, anchor: .bottom) }
+                    withAnimation(.snappy) { proxy.scrollTo(newID, anchor: .center) }
                 }
             }
 
             Divider()
-            HStack(spacing: 6) {
-                Image(systemName: "line.3.horizontal")
-                Text("Drag to reorder · drop videos here to import")
-                Spacer(minLength: 8)
-                Button {
-                    Task { await model.importVideosWithPanel() }
-                } label: {
-                    Label("Import", systemImage: "square.and.arrow.down")
-                }
-                .buttonStyle(.borderless)
-                .help("Add video files, such as Hudl downloads (⌘I)")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            footer
         }
+    }
+
+    @ViewBuilder
+    private func row(for item: LibraryItem) -> some View {
+        switch item {
+        case .section(let section):
+            SectionRow(section: section,
+                       clipCount: library.clips(in: section.id).count,
+                       isNewClipsTarget: library.newClipsSectionID == section.id)
+        case .clip(let clip):
+            ClipRow(clip: clip,
+                    number: library.number(of: clip),
+                    url: library.url(for: clip),
+                    tags: clip.tags.compactMap { library.tag(withID: $0) })
+        }
+    }
+
+    @ViewBuilder
+    private func contextMenu(for ids: Set<UUID>) -> some View {
+        let clips = library.clips.filter { ids.contains($0.id) }
+        let sections = library.sections.filter { ids.contains($0.id) }
+        let clipIDs = Set(clips.map(\.id))
+
+        if !clips.isEmpty {
+            if clips.contains(where: { !$0.isIncluded }) {
+                Button("Include in Reel") { library.setIncluded(clipIDs, true) }
+            }
+            if clips.contains(where: { $0.isIncluded }) {
+                Button("Leave Out of Reel") { library.setIncluded(clipIDs, false) }
+            }
+            Divider()
+            TagsMenu(clipIDs: clipIDs, actions: actions)
+            Menu("Move to Section") {
+                Button("Top of List (No Section)") { library.moveClips(clipIDs, toSection: nil) }
+                if !library.sections.isEmpty { Divider() }
+                ForEach(library.sections) { section in
+                    Button(section.title) { library.moveClips(clipIDs, toSection: section.id) }
+                }
+            }
+            Button("New Section from Selection…") { actions.newSection(clipIDs) }
+            Divider()
+            if clips.count == 1, let clip = clips.first {
+                Button("Show in Finder") { library.revealInFinder(clip) }
+            }
+            Button(clips.count == 1 ? "Move to Trash…" : "Move \(clips.count) Clips to Trash…",
+                   role: .destructive) { deleting = clips }
+        } else if sections.count == 1, let section = sections.first {
+            Button("Rename…") { actions.select([section.id]) }
+            Toggle("Show Divider Card in Reel", isOn: Binding(
+                get: { section.showCard },
+                set: { library.setSectionCard(section.id, $0) }
+            ))
+            Toggle("Add New Clips Here", isOn: Binding(
+                get: { library.newClipsSectionID == section.id },
+                set: { library.newClipsSectionID = $0 ? section.id : nil }
+            ))
+            Divider()
+            Button("Delete Section", role: .destructive) { library.deleteSection(section.id) }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            Menu {
+                Button("New Section…") { actions.newSection([]) }
+                Button("New Tag…") { actions.newTag([]) }
+                Divider()
+                Button("Manage Tags…") { actions.manageTags() }
+            } label: {
+                Image(systemName: "plus")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Add a section or a tag")
+
+            Menu {
+                Button {
+                    filterTagID = nil
+                } label: {
+                    if filterTagID == nil { Label("All Clips", systemImage: "checkmark") } else { Text("All Clips") }
+                }
+                if !library.tags.isEmpty { Divider() }
+                ForEach(library.tags) { tag in
+                    Button {
+                        filterTagID = tag.id
+                    } label: {
+                        if filterTagID == tag.id {
+                            Label(tag.name, systemImage: "checkmark")
+                        } else {
+                            Text(tag.name)
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: filterTagID == nil
+                      ? "line.3.horizontal.decrease.circle"
+                      : "line.3.horizontal.decrease.circle.fill")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Show only clips with a tag")
+            .disabled(library.tags.isEmpty)
+
+            if let target = library.section(withID: library.newClipsSectionID) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down.to.line")
+                    Text("New clips → \(target.title)")
+                        .lineLimit(1)
+                    Button {
+                        library.newClipsSectionID = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Add new clips at the end of the list instead")
+                }
+            } else {
+                Text(filterTagID == nil ? "Drag to reorder · drop videos to import" : "Reordering is off while filtering")
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 4)
+
+            Button {
+                Task { await model.importVideosWithPanel() }
+            } label: {
+                Label("Import", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(.borderless)
+            .help("Add video files, such as Hudl downloads (⌘I)")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+}
+
+/// Tag toggles for the given clips, plus "New Tag…".
+private struct TagsMenu: View {
+    @Environment(AppModel.self) private var model
+    let clipIDs: Set<UUID>
+    let actions: ClipActions
+
+    var body: some View {
+        let library = model.library
+        let clips = library.clips.filter { clipIDs.contains($0.id) }
+        Menu("Tags") {
+            ForEach(library.tags) { tag in
+                let count = clips.filter { $0.tags.contains(tag.id) }.count
+                Button {
+                    library.toggleTag(tag.id, on: clipIDs)
+                } label: {
+                    if count == clips.count, count > 0 {
+                        Label(tag.name, systemImage: "checkmark")
+                    } else if count > 0 {
+                        Label(tag.name, systemImage: "minus")
+                    } else {
+                        Text(tag.name)
+                    }
+                }
+            }
+            if !library.tags.isEmpty { Divider() }
+            Button("New Tag…") { actions.newTag(clipIDs) }
+        }
+    }
+}
+
+private struct SectionRow: View {
+    let section: ReelSection
+    let clipCount: Int
+    let isNewClipsTarget: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "rectangle.split.1x2")
+                .foregroundStyle(Color.accentColor)
+            Text(section.title.uppercased())
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .tracking(1)
+                .lineLimit(1)
+            Text("\(clipCount)")
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            if isNewClipsTarget {
+                Image(systemName: "arrow.down.to.line")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("New clips are added to this section")
+            }
+            if section.showCard {
+                Label("Card", systemImage: "rectangle.on.rectangle")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                    .help("A divider card introduces this section in the reel")
+            }
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 4)
     }
 }
 
@@ -222,6 +518,7 @@ private struct ClipRow: View {
     let clip: Clip
     let number: Int
     let url: URL
+    let tags: [ClipTag]
 
     @State private var image: CGImage?
 
@@ -248,7 +545,7 @@ private struct ClipRow: View {
                         .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
                 )
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(clip.title)
                     .font(.headline)
                     .lineLimit(1)
@@ -263,6 +560,18 @@ private struct ClipRow: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                if !tags.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(tags.prefix(3)) { tag in
+                            TagChip(tag: tag, compact: true)
+                        }
+                        if tags.count > 3 {
+                            Text("+\(tags.count - 3)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
 
             Spacer(minLength: 0)
@@ -285,12 +594,39 @@ private struct ClipRow: View {
     }
 }
 
-// MARK: - Detail
+struct TagChip: View {
+    let tag: ClipTag
+    var compact = false
+    var selected = true
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(tag.color.color)
+                .frame(width: compact ? 6 : 8, height: compact ? 6 : 8)
+            Text(tag.name)
+                .lineLimit(1)
+        }
+        .font(compact ? .caption2.weight(.medium) : .callout.weight(.medium))
+        .padding(.horizontal, compact ? 6 : 10)
+        .padding(.vertical, compact ? 1 : 4)
+        .background(
+            Capsule().fill(tag.color.color.opacity(selected ? (compact ? 0.15 : 0.22) : 0.0))
+        )
+        .overlay(
+            Capsule().strokeBorder(tag.color.color.opacity(selected ? 0 : 0.5), lineWidth: 1)
+        )
+        .foregroundStyle(selected ? Color.primary : Color.secondary)
+    }
+}
+
+// MARK: - Clip detail
 
 private struct ClipDetailPane: View {
     @Environment(AppModel.self) private var model
     let clip: Clip?
     @Binding var deleting: [Clip]
+    let actions: ClipActions
 
     @State private var titleDraft = ""
     @State private var trimRequest = 0
@@ -316,53 +652,63 @@ private struct ClipDetailPane: View {
 
                 Divider()
 
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        TextField("Clip name", text: $titleDraft)
-                            .textFieldStyle(.plain)
-                            .font(.title3.weight(.semibold))
-                            .focused($titleFocused)
-                            .onSubmit { commitTitle(clip) }
-                            .onChange(of: titleFocused) { _, focused in
-                                if !focused { commitTitle(clip) }
-                            }
-                        Text(details(clip))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer(minLength: 12)
-
-                    Toggle("In Reel", isOn: Binding(
-                        get: { clip.isIncluded },
-                        set: { library.setIncluded([clip.id], $0) }
-                    ))
-                    .toggleStyle(.checkbox)
-                    .help("Include this clip when exporting the highlight reel")
-
-                    if clip.isTrimmed {
-                        Button("Reset Trim") {
-                            library.setTrim(clip, start: nil, end: nil)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            TextField("Clip name", text: $titleDraft)
+                                .textFieldStyle(.plain)
+                                .font(.title3.weight(.semibold))
+                                .focused($titleFocused)
+                                .onSubmit { commitTitle(clip) }
+                                .onChange(of: titleFocused) { _, focused in
+                                    if !focused { commitTitle(clip) }
+                                }
+                            Text(details(clip))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                         }
-                        .help("Use the whole clip again")
-                    }
-                    Button {
-                        trimRequest += 1
-                    } label: {
-                        Label("Trim", systemImage: "scissors")
-                    }
-                    .help("Drag the yellow handles to choose where the clip starts and ends")
 
-                    Menu {
-                        Button("Show in Finder") { library.revealInFinder(clip) }
-                        Divider()
-                        Button("Move to Trash…", role: .destructive) { deleting = [clip] }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Spacer(minLength: 12)
+
+                        Toggle("In Reel", isOn: Binding(
+                            get: { clip.isIncluded },
+                            set: { library.setIncluded([clip.id], $0) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Include this clip when exporting the highlight reel")
+
+                        if clip.isTrimmed {
+                            Button("Reset Trim") {
+                                library.setTrim(clip, start: nil, end: nil)
+                            }
+                            .help("Use the whole clip again")
+                        }
+                        Button {
+                            trimRequest += 1
+                        } label: {
+                            Label("Trim", systemImage: "scissors")
+                        }
+                        .help("Drag the yellow handles to choose where the clip starts and ends")
+
+                        Menu {
+                            Menu("Move to Section") {
+                                Button("Top of List (No Section)") { library.moveClips([clip.id], toSection: nil) }
+                                ForEach(library.sections) { section in
+                                    Button(section.title) { library.moveClips([clip.id], toSection: section.id) }
+                                }
+                            }
+                            Button("Show in Finder") { library.revealInFinder(clip) }
+                            Divider()
+                            Button("Move to Trash…", role: .destructive) { deleting = [clip] }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
+
+                    tagBar(clip)
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
@@ -371,13 +717,42 @@ private struct ClipDetailPane: View {
             .onChange(of: clip.id) { _, _ in titleDraft = clip.title }
         } else {
             ContentUnavailableView("Select a Clip", systemImage: "play.rectangle",
-                                   description: Text("Choose a clip on the left to watch, rename or trim it."))
+                                   description: Text("Choose a clip on the left to watch, rename, tag or trim it."))
+        }
+    }
+
+    private func tagBar(_ clip: Clip) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "tag")
+                .foregroundStyle(.secondary)
+                .help("Tags help you sort clips. They aren't shown in the reel.")
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(library.tags) { tag in
+                        Button {
+                            library.toggleTag(tag.id, on: [clip.id])
+                        } label: {
+                            TagChip(tag: tag, selected: clip.tags.contains(tag.id))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button {
+                        actions.newTag([clip.id])
+                    } label: {
+                        Label(library.tags.isEmpty ? "Add a Tag" : "New", systemImage: "plus")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .scrollIndicators(.never)
         }
     }
 
     private func details(_ clip: Clip) -> String {
         var parts = [clip.durationText]
         if clip.isTrimmed { parts.append("trimmed from \(Clip.format(clip.duration))") }
+        if let section = library.sectionContaining(clip.id) { parts.append(section.title) }
         parts.append(clip.resolutionText)
         parts.append(clip.createdAt.formatted(date: .abbreviated, time: .shortened))
         return parts.joined(separator: " · ")
@@ -392,19 +767,145 @@ private struct ClipDetailPane: View {
     }
 }
 
+// MARK: - Section detail
+
+private struct SectionDetailPane: View {
+    @Environment(AppModel.self) private var model
+    let section: ReelSection
+
+    @State private var titleDraft = ""
+    @FocusState private var titleFocused: Bool
+
+    private var library: ClipLibrary { model.library }
+
+    var body: some View {
+        let clips = library.clips(in: section.id)
+        let included = clips.filter(\.isIncluded).count
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("SECTION")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    TextField("Section name", text: $titleDraft)
+                        .textFieldStyle(.plain)
+                        .font(.largeTitle.weight(.bold))
+                        .focused($titleFocused)
+                        .onSubmit { commit() }
+                        .onChange(of: titleFocused) { _, focused in if !focused { commit() } }
+                    Text("\(clips.count) clip\(clips.count == 1 ? "" : "s") · \(included) in the reel · drag clips under this heading in the list to add them")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(isOn: Binding(
+                        get: { section.showCard },
+                        set: { library.setSectionCard(section.id, $0) }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Show a divider card before this section")
+                            Text("A short title card in the exported reel, in the Player Card's colors.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+
+                    PlayerCardView(profile: model.profile.profile, headshot: model.profile.headshot,
+                                   kind: .section(titleDraft.isEmpty ? section.title : titleDraft))
+                        .scaleEffect(480 / PlayerCardView.canvas.width, anchor: .topLeading)
+                        .frame(width: 480, height: 270, alignment: .topLeading)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .opacity(section.showCard ? 1 : 0.35)
+                        .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
+                        .overlay {
+                            if !section.showCard {
+                                Text("Card off")
+                                    .font(.headline)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .glassEffect(.regular, in: Capsule())
+                            }
+                        }
+                }
+                .padding(16)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.04)))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(isOn: Binding(
+                        get: { library.newClipsSectionID == section.id },
+                        set: { library.newClipsSectionID = $0 ? section.id : nil }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Add new recordings and imports here")
+                            Text("Handy while you work through one kind of play at a time.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                }
+                .padding(16)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.04)))
+
+                HStack {
+                    Spacer()
+                    Button("Delete Section", role: .destructive) { library.deleteSection(section.id) }
+                        .help("Removes the heading only; its clips stay in the list")
+                }
+            }
+            .padding(24)
+        }
+        .onAppear { titleDraft = section.title }
+        .onChange(of: section.id) { _, _ in titleDraft = section.title }
+    }
+
+    private func commit() {
+        let trimmed = titleDraft.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            titleDraft = section.title
+        } else if trimmed != section.title {
+            library.renameSection(section.id, to: trimmed)
+        }
+    }
+}
+
 // MARK: - Multiple selection
 
 private struct MultiSelectionPane: View {
+    @Environment(AppModel.self) private var model
     let clips: [Clip]
     @Binding var deleting: [Clip]
+    let actions: ClipActions
     let clearSelection: () -> Void
 
     var body: some View {
+        let library = model.library
+        let ids = Set(clips.map(\.id))
         ContentUnavailableView {
             Label("\(clips.count) Clips Selected", systemImage: "square.stack.3d.up")
         } description: {
             Text("\(Clip.format(clips.reduce(0) { $0 + $1.effectiveDuration })) total")
         } actions: {
+            if !library.tags.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(library.tags) { tag in
+                        let all = clips.allSatisfy { $0.tags.contains(tag.id) }
+                        Button {
+                            library.toggleTag(tag.id, on: ids)
+                        } label: {
+                            TagChip(tag: tag, selected: all)
+                        }
+                        .buttonStyle(.plain)
+                        .help(all ? "Remove “\(tag.name)” from these clips" : "Tag these clips “\(tag.name)”")
+                    }
+                }
+            }
+            HStack {
+                Button("New Tag…") { actions.newTag(ids) }
+                Button("New Section from Selection…") { actions.newSection(ids) }
+            }
             Button(role: .destructive) {
                 deleting = clips
             } label: {
@@ -414,6 +915,103 @@ private struct MultiSelectionPane: View {
             Button("Deselect All", action: clearSelection)
                 .buttonStyle(.borderless)
         }
+    }
+}
+
+// MARK: - Tag manager
+
+private struct TagManagerView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var newName = ""
+
+    var body: some View {
+        let library = model.library
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Tags").font(.title2.weight(.semibold))
+            Text("Tags are for sorting and finding clips while you work. They're never shown in the exported reel.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if library.tags.isEmpty {
+                Text("No tags yet.")
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                List {
+                    ForEach(library.tags) { tag in
+                        TagManagerRow(tag: tag)
+                    }
+                }
+                .listStyle(.bordered(alternatesRowBackgrounds: false))
+                .frame(minHeight: 160, maxHeight: 280)
+            }
+
+            HStack {
+                TextField("New tag", text: $newName, prompt: Text("Kill, Ace, Dig…"))
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(add)
+                Button("Add", action: add)
+                    .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(22)
+        .frame(width: 440)
+    }
+
+    private func add() {
+        if model.library.addTag(name: newName) != nil { newName = "" }
+    }
+}
+
+private struct TagManagerRow: View {
+    @Environment(AppModel.self) private var model
+    let tag: ClipTag
+    @State private var name = ""
+
+    var body: some View {
+        let library = model.library
+        let count = library.clips.filter { $0.tags.contains(tag.id) }.count
+        HStack(spacing: 10) {
+            Menu {
+                ForEach(TagColor.allCases) { color in
+                    Button {
+                        library.setTagColor(tag.id, color)
+                    } label: {
+                        Label(color.rawValue.capitalized, systemImage: tag.color == color ? "checkmark.circle.fill" : "circle.fill")
+                    }
+                }
+            } label: {
+                Circle().fill(tag.color.color).frame(width: 14, height: 14)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+
+            TextField("Name", text: $name)
+                .textFieldStyle(.plain)
+                .onSubmit { library.renameTag(tag.id, to: name) }
+
+            Text("\(count) clip\(count == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button {
+                library.deleteTag(tag.id)
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Delete this tag (clips are kept)")
+        }
+        .onAppear { name = tag.name }
     }
 }
 
