@@ -479,7 +479,7 @@ enum ReelComposer {
     /// nothing worth cropping.
     static func contentRect(asset: AVURLAsset, natural: CGSize, range: CMTimeRange) async -> CGRect? {
         let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTransform = false
+        generator.appliesPreferredTrackTransform = false
         generator.maximumSize = CGSize(width: 640, height: 640)
         generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 2)
         generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 2)
