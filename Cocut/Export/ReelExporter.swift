@@ -37,6 +37,10 @@ struct ExportOptions: Codable, Equatable {
     var includeSound = true
     var resolution: ReelResolution = .hd1080
     var frameRate = 30
+    /// Crop away black bars around the picture (e.g. a 16:9 video recorded full screen on a 16:10 display).
+    var removeBlackBars = true
+    /// Scale clips to cover the whole frame, cropping edges, instead of fitting inside it.
+    var fillFrame = false
 
     static let transitionSeconds = 0.6
 
@@ -52,6 +56,8 @@ struct ExportOptions: Codable, Equatable {
         includeSound = (try? c.decodeIfPresent(Bool.self, forKey: .includeSound)) ?? d.includeSound
         resolution = (try? c.decodeIfPresent(ReelResolution.self, forKey: .resolution)) ?? d.resolution
         frameRate = (try? c.decodeIfPresent(Int.self, forKey: .frameRate)) ?? d.frameRate
+        removeBlackBars = (try? c.decodeIfPresent(Bool.self, forKey: .removeBlackBars)) ?? d.removeBlackBars
+        fillFrame = (try? c.decodeIfPresent(Bool.self, forKey: .fillFrame)) ?? d.fillFrame
     }
 }
 
@@ -270,6 +276,8 @@ enum ReelComposer {
         let audio: AVAssetTrack?
         let audioRange: CMTimeRange?
         let transform: CGAffineTransform
+        /// Part of the source picture to show (natural coordinates), when black bars were found.
+        let crop: CGRect?
     }
 
     static func build(segments: [ReelSegment], options: ExportOptions,
@@ -308,8 +316,24 @@ enum ReelComposer {
             let source = CMTimeRange(start: start, end: end)
             let fixed = ReelSegment(url: segment.url, start: start.seconds, duration: source.duration.seconds,
                                     title: segment.title, isCard: segment.isCard)
+            var crop: CGRect?
+            if !segment.isCard, options.removeBlackBars, preferred.isIdentity {
+                crop = await contentRect(asset: asset, natural: natural, range: source)
+                if let crop {
+                    Log.info("\(segment.url.lastPathComponent): cropping black bars to \(Int(crop.width))x\(Int(crop.height)) of \(Int(natural.width))x\(Int(natural.height))")
+                }
+            }
+            let transform: CGAffineTransform
+            if let crop {
+                transform = place(crop, into: renderSize, fill: options.fillFrame && !segment.isCard)
+            } else if preferred.isIdentity {
+                transform = place(CGRect(origin: .zero, size: natural), into: renderSize,
+                                  fill: options.fillFrame && !segment.isCard)
+            } else {
+                transform = aspectFit(natural: natural, preferred: preferred, into: renderSize)
+            }
             loaded.append(Loaded(asset: asset, segment: fixed, source: source, video: video, audio: audio, audioRange: audioRange,
-                                 transform: aspectFit(natural: natural, preferred: preferred, into: renderSize)))
+                                 transform: transform, crop: crop))
         }
         guard !loaded.isEmpty else { throw ExportError.noClips }
 
@@ -371,6 +395,9 @@ enum ReelComposer {
         func layer(_ i: Int, at start: Double) -> AVMutableVideoCompositionLayerInstruction {
             let li = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTracks[i % 2])
             li.setTransform(loaded[i].transform, at: time(start))
+            if let crop = loaded[i].crop {
+                li.setCropRectangle(crop, at: time(start))
+            }
             return li
         }
         func instruction(_ from: Double, _ to: Double, _ layers: [AVMutableVideoCompositionLayerInstruction]) {
@@ -437,6 +464,78 @@ enum ReelComposer {
     }
 
     /// Scales a source to fit the frame (letterboxed), honoring its rotation.
+    /// Maps `rect` of an upright source onto the frame: fit (letterbox) or fill (crop overflow), centered.
+    static func place(_ rect: CGRect, into render: CGSize, fill: Bool) -> CGAffineTransform {
+        guard rect.width > 0, rect.height > 0 else { return .identity }
+        let sx = render.width / rect.width, sy = render.height / rect.height
+        let s = fill ? max(sx, sy) : min(sx, sy)
+        return CGAffineTransform(translationX: -rect.minX, y: -rect.minY)
+            .concatenating(CGAffineTransform(scaleX: s, y: s))
+            .concatenating(CGAffineTransform(translationX: (render.width - rect.width * s) / 2,
+                                             y: (render.height - rect.height * s) / 2))
+    }
+
+    /// Finds the picture inside black bars by sampling a few frames. Returns nil when there's
+    /// nothing worth cropping.
+    static func contentRect(asset: AVURLAsset, natural: CGSize, range: CMTimeRange) async -> CGRect? {
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTransform = false
+        generator.maximumSize = CGSize(width: 640, height: 640)
+        generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 2)
+        generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 2)
+
+        var found: CGRect?
+        for fraction in [0.2, 0.5, 0.8] {
+            let t = range.start + CMTimeMultiplyByFloat64(range.duration, multiplier: fraction)
+            guard let image = try? await generator.image(at: t).image,
+                  let rect = brightBounds(of: image) else { continue }
+            let scaleX = natural.width / CGFloat(image.width)
+            let scaleY = natural.height / CGFloat(image.height)
+            let mapped = CGRect(x: rect.minX * scaleX, y: rect.minY * scaleY,
+                                width: rect.width * scaleX, height: rect.height * scaleY)
+            found = found.map { $0.union(mapped) } ?? mapped
+        }
+        guard var rect = found else { return nil }
+        // Pull in a hair to avoid a dark seam, then snap to even pixels.
+        rect = rect.insetBy(dx: 2, dy: 2).integral
+        rect.origin.x -= rect.origin.x.truncatingRemainder(dividingBy: 2)
+        rect.origin.y -= rect.origin.y.truncatingRemainder(dividingBy: 2)
+        let area = natural.width * natural.height
+        let kept = rect.width * rect.height / area
+        // Nearly the whole frame: nothing to crop. Tiny: probably a dark scene, don't trust it.
+        guard kept < 0.96, kept > 0.15 else { return nil }
+        return rect
+    }
+
+    /// Bounding box (top-left origin) of rows/columns that have meaningful non-black content.
+    private static func brightBounds(of image: CGImage) -> CGRect? {
+        let w = image.width, h = image.height
+        guard w > 8, h > 8,
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        else { return nil }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let data = ctx.data else { return nil }
+        let px = data.assumingMemoryBound(to: UInt8.self)
+        let threshold: UInt8 = 28
+        var rowHas = [Bool](repeating: false, count: h)
+        var colCount = [Int](repeating: 0, count: w)
+        for y in 0..<h {
+            var count = 0
+            let row = px + y * w
+            for x in 0..<w where row[x] > threshold {
+                count += 1
+                colCount[x] += 1
+            }
+            rowHas[y] = count > w / 50
+        }
+        guard let top = rowHas.firstIndex(of: true), let bottom = rowHas.lastIndex(of: true),
+              let left = colCount.firstIndex(where: { $0 > h / 50 }),
+              let right = colCount.lastIndex(where: { $0 > h / 50 }),
+              bottom > top, right > left else { return nil }
+        return CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)
+    }
+
     static func aspectFit(natural: CGSize, preferred: CGAffineTransform, into render: CGSize) -> CGAffineTransform {
         let rect = CGRect(origin: .zero, size: natural).applying(preferred)
         let w = abs(rect.width), h = abs(rect.height)

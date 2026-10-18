@@ -48,7 +48,7 @@ struct PlayerView: NSViewRepresentable {
             if let trimStart {
                 player.seek(to: CMTime(seconds: trimStart, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
             }
-            if isActive { player.play() }
+            // Don't start playing on its own; the user presses play.
         }
 
         if !isActive {

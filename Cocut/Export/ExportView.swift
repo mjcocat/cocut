@@ -197,6 +197,22 @@ struct ExportView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 320)
+                Toggle(isOn: $exporter.options.removeBlackBars) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Remove black bars around clips")
+                        Text("Finds the picture in each clip, such as a 16:9 video recorded full screen, and enlarges it to the frame.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Toggle(isOn: $exporter.options.fillFrame) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Fill the whole frame")
+                        Text("Crops the edges of clips that aren't 16:9 instead of leaving bars.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Text("1080p at 30 fps plays everywhere and keeps files small for email and recruiting sites.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
