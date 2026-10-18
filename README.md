@@ -2,7 +2,7 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.3.** Play-to-record capture, a reorderable clip list with trimming, menu bar controls, and in-app updates work. Player Card and Export come next.
+**Status: v0.4.** Play-to-record capture, a reorderable clip list with trimming, menu bar controls, and in-app updates work. Player Card and Export come next.
 
 ## Install
 
@@ -26,7 +26,9 @@ CI builds aren't notarized, which requires a paid Apple Developer account. The i
 3. Drag over the video. Stay inside the picture, above the player's control bar. Pick 16:9, 4:3, or Free, then adjust with the corner handles.
 4. Leave **Record when video plays** on and click **Start**. A dashed outline means Cocut is waiting.
 5. **Press play.** The outline turns red and a clip starts. **Pause** and the clip saves about three seconds later with a soft pop. The clip itself ends right where you paused. Scrub to the next play and press play again. Each play/pause becomes its own clip.
-6. When you're done, press **⌥⌘R** or choose **Done Recording** from the menu bar.
+6. When you're done, click **Done** on the floating control next to the video. It also shows the keyboard shortcuts for the player. You can also press **⌥⌘R**, or choose **Done, Back to Cocut** from the menu bar. Cocut comes back with your new clips selected.
+
+To record a whole display, choose **Record Full Screen** (**⇧⌘F**), or click **Use Full Screen** while selecting a region.
 
 Tips:
 - Use the keyboard (**Space** or **K** on YouTube and Hudl) to play and pause. Moving the mouse over the video makes the player's controls appear in the clip.
@@ -43,7 +45,7 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 | Watch a clip | Select it, and it plays in the player on the right. |
 | Rename a clip | Click its name under the player. |
 | Trim a clip | Click **Trim** and drag the yellow handles. The original file is kept, so **Reset Trim** undoes it. |
-| Delete a clip | Press ⌫, or use the context menu. Deleted clips go to the Trash. |
+| Delete clips | Select one, or several with ⌘-click or ⇧-click. Then press ⌫, or use the context menu. Deleted clips go to the Trash. |
 
 **If something goes wrong,** Cocut shows an alert with a **Show Log** button. The log lives at `~/Library/Logs/Cocut/Cocut.log`. You can also open it from **Help › Show Log**.
 

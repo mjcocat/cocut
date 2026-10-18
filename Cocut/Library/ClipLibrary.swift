@@ -113,6 +113,15 @@ final class ClipLibrary {
         save()
     }
 
+    func delete(_ batch: [Clip]) {
+        let ids = Set(batch.map(\.id))
+        for clip in batch {
+            try? FileManager.default.trashItem(at: url(for: clip), resultingItemURL: nil)
+        }
+        clips.removeAll { ids.contains($0.id) }
+        save()
+    }
+
     func move(fromOffsets source: IndexSet, toOffset destination: Int) {
         clips.move(fromOffsets: source, toOffset: destination)
         save()

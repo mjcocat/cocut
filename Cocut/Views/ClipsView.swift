@@ -4,8 +4,8 @@ import SwiftUI
 struct ClipsView: View {
     @Environment(AppModel.self) private var model
 
-    @State private var selectedID: Clip.ID?
-    @State private var deleting: Clip?
+    @State private var selection: Set<Clip.ID> = []
+    @State private var deleting: [Clip] = []
 
     private var library: ClipLibrary { model.library }
 
@@ -21,10 +21,17 @@ struct ClipsView: View {
                 emptyState
             } else {
                 HSplitView {
-                    ClipListPane(selectedID: $selectedID, deleting: $deleting)
+                    ClipListPane(selection: $selection, deleting: $deleting)
                         .frame(minWidth: 300, idealWidth: 380, maxWidth: 560)
-                    ClipDetailPane(clip: library.clip(withID: selectedID), deleting: $deleting)
-                        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                    Group {
+                        if selection.count > 1 {
+                            MultiSelectionPane(clips: selectedClips, deleting: $deleting,
+                                               clearSelection: { selection = [] })
+                        } else {
+                            ClipDetailPane(clip: library.clip(withID: selection.first), deleting: $deleting)
+                        }
+                    }
+                    .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
@@ -39,27 +46,40 @@ struct ClipsView: View {
         }
         .animation(.snappy, value: model.phase)
         .onAppear {
-            if selectedID == nil { selectedID = library.clips.first?.id }
+            if selection.isEmpty, let first = library.clips.first?.id { selection = [first] }
         }
         .onChange(of: library.recentlyAddedID) { _, newID in
-            if let newID { selectedID = newID }
+            if let newID { selection = [newID] }
         }
         .confirmationDialog(
-            "Move “\(deleting?.title ?? "")” to the Trash?",
-            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+            deleteTitle,
+            isPresented: Binding(get: { !deleting.isEmpty }, set: { if !$0 { deleting = [] } })
         ) {
-            Button("Move to Trash", role: .destructive) {
-                guard let clip = deleting else { return }
-                if selectedID == clip.id {
-                    let index = library.clips.firstIndex(of: clip) ?? 0
-                    library.delete(clip)
-                    selectedID = library.clips.indices.contains(index) ? library.clips[index].id : library.clips.last?.id
-                } else {
-                    library.delete(clip)
-                }
-            }
+            Button("Move to Trash", role: .destructive) { performDelete() }
         } message: {
-            Text("You can restore it from the Trash in Finder.")
+            Text("You can restore clips from the Trash in Finder.")
+        }
+    }
+
+    private var selectedClips: [Clip] {
+        library.clips.filter { selection.contains($0.id) }
+    }
+
+    private var deleteTitle: String {
+        deleting.count == 1
+            ? "Move “\(deleting[0].title)” to the Trash?"
+            : "Move \(deleting.count) clips to the Trash?"
+    }
+
+    private func performDelete() {
+        let ids = Set(deleting.map(\.id))
+        // Keep a sensible selection: the clip that now sits where the first deleted one was.
+        let firstIndex = library.clips.firstIndex { ids.contains($0.id) } ?? 0
+        library.delete(deleting)
+        deleting = []
+        selection.subtract(ids)
+        if selection.isEmpty, !library.clips.isEmpty {
+            selection = [library.clips[min(firstIndex, library.clips.count - 1)].id]
         }
     }
 
@@ -110,32 +130,39 @@ struct ClipsView: View {
 
 private struct ClipListPane: View {
     @Environment(AppModel.self) private var model
-    @Binding var selectedID: Clip.ID?
-    @Binding var deleting: Clip?
+    @Binding var selection: Set<Clip.ID>
+    @Binding var deleting: [Clip]
 
     private var library: ClipLibrary { model.library }
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
-                List(selection: $selectedID) {
+                List(selection: $selection) {
                     ForEach(library.clips) { clip in
                         ClipRow(clip: clip,
                                 number: (library.clips.firstIndex(of: clip) ?? 0) + 1,
                                 url: library.url(for: clip))
                             .tag(clip.id)
                             .id(clip.id)
-                            .contextMenu {
-                                Button("Show in Finder") { library.revealInFinder(clip) }
-                                Divider()
-                                Button("Move to Trash…", role: .destructive) { deleting = clip }
-                            }
                     }
                     .onMove { library.move(fromOffsets: $0, toOffset: $1) }
                 }
                 .listStyle(.inset)
+                .contextMenu(forSelectionType: Clip.ID.self) { ids in
+                    let clips = library.clips.filter { ids.contains($0.id) }
+                    if clips.count == 1, let clip = clips.first {
+                        Button("Show in Finder") { library.revealInFinder(clip) }
+                        Divider()
+                    }
+                    if !clips.isEmpty {
+                        Button(clips.count == 1 ? "Move to Trash…" : "Move \(clips.count) Clips to Trash…",
+                               role: .destructive) { deleting = clips }
+                    }
+                }
                 .onDeleteCommand {
-                    if let clip = library.clip(withID: selectedID) { deleting = clip }
+                    let clips = library.clips.filter { selection.contains($0.id) }
+                    if !clips.isEmpty { deleting = clips }
                 }
                 .onChange(of: library.recentlyAddedID) { _, newID in
                     guard let newID else { return }
@@ -146,7 +173,7 @@ private struct ClipListPane: View {
             Divider()
             HStack(spacing: 6) {
                 Image(systemName: "line.3.horizontal")
-                Text("Drag clips into the order you want in the reel.")
+                Text("Drag to reorder · ⌘-click or ⇧-click to select several")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -218,7 +245,7 @@ private struct ClipRow: View {
 private struct ClipDetailPane: View {
     @Environment(AppModel.self) private var model
     let clip: Clip?
-    @Binding var deleting: Clip?
+    @Binding var deleting: [Clip]
 
     @State private var titleDraft = ""
     @State private var trimRequest = 0
@@ -277,7 +304,7 @@ private struct ClipDetailPane: View {
                     Menu {
                         Button("Show in Finder") { library.revealInFinder(clip) }
                         Divider()
-                        Button("Move to Trash…", role: .destructive) { deleting = clip }
+                        Button("Move to Trash…", role: .destructive) { deleting = [clip] }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -309,6 +336,31 @@ private struct ClipDetailPane: View {
             titleDraft = clip.title
         } else if titleDraft != clip.title {
             library.rename(clip, to: titleDraft)
+        }
+    }
+}
+
+// MARK: - Multiple selection
+
+private struct MultiSelectionPane: View {
+    let clips: [Clip]
+    @Binding var deleting: [Clip]
+    let clearSelection: () -> Void
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("\(clips.count) Clips Selected", systemImage: "square.stack.3d.up")
+        } description: {
+            Text("\(Clip.format(clips.reduce(0) { $0 + $1.effectiveDuration })) total")
+        } actions: {
+            Button(role: .destructive) {
+                deleting = clips
+            } label: {
+                Label("Move \(clips.count) Clips to Trash…", systemImage: "trash")
+            }
+            .controlSize(.large)
+            Button("Deselect All", action: clearSelection)
+                .buttonStyle(.borderless)
         }
     }
 }

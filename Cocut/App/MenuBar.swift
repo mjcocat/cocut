@@ -37,7 +37,7 @@ struct MenuBarMenu: View {
         case .armed:
             Text("Waiting for the video to play…")
             Text(sessionSummary)
-            Button("Done Recording   \(AppModel.hotKeyHint)") {
+            Button("Done, Back to Cocut   \(AppModel.hotKeyHint)") {
                 Task { await model.stopSession() }
             }
         case .recording:
@@ -45,7 +45,7 @@ struct MenuBarMenu: View {
             if model.sessionMode == .auto {
                 Text("Pause the video to save this clip")
             }
-            Button(model.sessionMode == .auto ? "Save and Finish   \(AppModel.hotKeyHint)" : "Stop and Save   \(AppModel.hotKeyHint)") {
+            Button(model.sessionMode == .auto ? "Done, Back to Cocut   \(AppModel.hotKeyHint)" : "Stop and Save   \(AppModel.hotKeyHint)") {
                 Task { await model.stopSession() }
             }
             Button("Discard This Clip") {
@@ -60,6 +60,9 @@ struct MenuBarMenu: View {
         case .idle:
             Button("Record Region…") {
                 Task { await model.recordNewRegion() }
+            }
+            Button("Record Full Screen") {
+                Task { await model.recordFullScreen() }
             }
             Button("Record Same Region   \(AppModel.hotKeyHint)") {
                 Task { await model.recordLastRegion() }

@@ -226,11 +226,25 @@ struct SelectionOverlayView: View {
             Text("Return to start  ·  Esc to cancel")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            VStack(spacing: 5) {
+                Text("While recording, control the video from the keyboard:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                KeyHints()
+            }
+            .padding(.top, 6)
+            Button {
+                selectFullScreen()
+            } label: {
+                Label("Use Full Screen", systemImage: "rectangle.dashed")
+            }
+            .controlSize(.large)
+            .padding(.top, 4)
+            .help("Record this whole display")
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 22)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .allowsHitTesting(false)
         .position(x: bounds.width / 2, y: bounds.height / 2)
     }
 
@@ -323,6 +337,14 @@ struct SelectionOverlayView: View {
             .labelsHidden()
             .frame(width: 168)
 
+            Button {
+                selectFullScreen()
+            } label: {
+                Image(systemName: "rectangle.dashed")
+            }
+            .buttonStyle(.borderless)
+            .help("Select the whole display")
+
             Divider().frame(height: 22)
 
             Toggle(isOn: Binding(
@@ -360,7 +382,7 @@ struct SelectionOverlayView: View {
     }
 
     private func controlBarPosition(for rect: CGRect) -> CGPoint {
-        let barHalfWidth: CGFloat = 330
+        let barHalfWidth: CGFloat = 350
         let x = min(max(rect.midX, barHalfWidth + 12), bounds.width - barHalfWidth - 12)
         let gap: CGFloat = 36
         let y: CGFloat
@@ -369,7 +391,8 @@ struct SelectionOverlayView: View {
         } else if rect.minY - gap - 30 > 0 {
             y = rect.minY - gap - 14
         } else {
-            y = rect.maxY - gap
+            // Region fills the screen: float above the Dock area.
+            y = bounds.height - 140
         }
         return CGPoint(x: x, y: y)
     }
@@ -398,6 +421,14 @@ struct SelectionOverlayView: View {
                 }
             }
             .onEnded { _ in endDrag() }
+    }
+
+    private func selectFullScreen() {
+        state.aspect = .free
+        state.displayID = displayID
+        withAnimation(.snappy(duration: 0.2)) {
+            state.rect = CGRect(origin: .zero, size: bounds)
+        }
     }
 
     private func endDrag() {

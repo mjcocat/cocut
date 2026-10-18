@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct CocutApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
 
     var body: some Scene {
@@ -26,6 +27,12 @@ struct CocutApp: App {
                     Task { await model.recordNewRegion() }
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(model.isBusy)
+
+                Button("Record Full Screen") {
+                    Task { await model.recordFullScreen() }
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
                 .disabled(model.isBusy)
 
                 Button("Record Same Region") {

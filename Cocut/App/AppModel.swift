@@ -51,6 +51,7 @@ final class AppModel {
 
     @ObservationIgnored private let selector = RegionSelectionController()
     @ObservationIgnored private let border = RecordingBorderController()
+    @ObservationIgnored private let hud = SessionHUDController()
     @ObservationIgnored private var session: CaptureSession?
     @ObservationIgnored private var hiddenWindows: [NSWindow] = []
     @ObservationIgnored private var tickTimer: Timer?
@@ -138,6 +139,18 @@ final class AppModel {
         await startSession(region)
     }
 
+    /// Records the whole display the mouse is on, skipping region selection.
+    func recordFullScreen() async {
+        guard !isBusy, ensurePermission() else { return }
+        let mouse = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main,
+              let id = screen.displayID else { return }
+        let region = CaptureRegion(displayID: id, rect: CGRect(origin: .zero, size: screen.frame.size))
+        lastRegion = region
+        hideAppWindows()
+        await startSession(region)
+    }
+
     func recordLastRegion() async {
         guard !isBusy, ensurePermission() else { return }
         guard let region = lastRegion, region.screen != nil else {
@@ -154,6 +167,7 @@ final class AppModel {
         phase = .stopping
         stopTicking()
         border.hide()
+        hud.hide()
         await session.stop()
         self.session = nil
         keepDisplayAwake(false)
@@ -174,6 +188,7 @@ final class AppModel {
             self.session = nil
             keepDisplayAwake(false)
             border.hide()
+            hud.hide()
             restoreAppWindows()
             phase = .idle
         }
@@ -213,6 +228,7 @@ final class AppModel {
 
         self.session = session
         keepDisplayAwake(true)
+        hud.show(near: region, model: self)
         if captureMode == .auto {
             phase = .armed
             border.show(around: region, style: .armed)
