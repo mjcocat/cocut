@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import IOKit.pwr_mgt
 import ScreenCaptureKit
 import SwiftUI
 
@@ -33,6 +34,9 @@ final class AppModel {
     private(set) var captureMode: CaptureMode {
         didSet { UserDefaults.standard.set(captureMode.rawValue, forKey: Keys.mode) }
     }
+    private(set) var captureAudio: Bool {
+        didSet { UserDefaults.standard.set(captureAudio, forKey: Keys.audio) }
+    }
     private(set) var hasScreenPermission = CGPreflightScreenCaptureAccess()
 
     var isBusy: Bool { phase != .idle }
@@ -58,17 +62,21 @@ final class AppModel {
     @ObservationIgnored private var hotKey: GlobalHotKey?
     /// Keeps the display from dimming or sleeping while a session runs (nobody touches the mouse).
     @ObservationIgnored private var awakeActivity: NSObjectProtocol?
+    @ObservationIgnored private var userActivityTimer: Timer?
+    @ObservationIgnored private var userActivityAssertion: IOPMAssertionID = 0
 
     private enum Keys {
         static let lastRegion = "lastCaptureRegion"
         static let aspect = "selectionAspect"
         static let mode = "captureMode"
+        static let audio = "captureAudio"
     }
 
     init() {
         lastRegion = Self.load(CaptureRegion.self, forKey: Keys.lastRegion)
         aspect = AspectPreset(rawValue: UserDefaults.standard.string(forKey: Keys.aspect) ?? "") ?? .widescreen
         captureMode = CaptureMode(rawValue: UserDefaults.standard.string(forKey: Keys.mode) ?? "") ?? .auto
+        captureAudio = UserDefaults.standard.object(forKey: Keys.audio) as? Bool ?? true
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         Log.info("Cocut \(version) launched; screen permission: \(hasScreenPermission)")
 
@@ -121,14 +129,21 @@ final class AppModel {
         captureMode = mode
     }
 
+    func setCaptureAudio(_ on: Bool) {
+        guard !isBusy else { return }
+        captureAudio = on
+    }
+
     func recordNewRegion() async {
         guard !isBusy, ensurePermission() else { return }
         phase = .selecting
         hideAppWindows()
 
-        let region = await selector.selectRegion(initial: lastRegion, aspect: aspect, mode: captureMode)
+        let region = await selector.selectRegion(initial: lastRegion, aspect: aspect, mode: captureMode,
+                                                 captureAudio: captureAudio)
         aspect = selector.currentAspect
         captureMode = selector.currentMode
+        captureAudio = selector.currentCaptureAudio
 
         guard let region else {
             Log.info("Region selection cancelled")
@@ -199,7 +214,8 @@ final class AppModel {
         phase = .starting
         clipsThisSession = 0
         sessionMode = captureMode
-        let session = CaptureSession(mode: captureMode, clipsDirectory: library.clipsDirectory)
+        let session = CaptureSession(mode: captureMode, captureAudio: captureAudio,
+                                     clipsDirectory: library.clipsDirectory)
 
         session.onSegmentStarted = { [weak self] in
             MainActor.assumeIsolated { self?.segmentStarted() }
@@ -291,15 +307,37 @@ final class AppModel {
         return false
     }
 
+    /// Blocking display sleep isn't always enough to stop the pre-sleep dim (notably on battery),
+    /// so also tell macOS the user is active every few seconds, like video players do.
     private func keepDisplayAwake(_ awake: Bool) {
         if awake, awakeActivity == nil {
             awakeActivity = ProcessInfo.processInfo.beginActivity(
                 options: [.idleDisplaySleepDisabled, .userInitiated],
                 reason: "Recording game film")
-        } else if !awake, let activity = awakeActivity {
-            ProcessInfo.processInfo.endActivity(activity)
-            awakeActivity = nil
+            declareUserActivity()
+            let timer = Timer(timeInterval: 15, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.declareUserActivity() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            userActivityTimer = timer
+        } else if !awake {
+            if let activity = awakeActivity {
+                ProcessInfo.processInfo.endActivity(activity)
+                awakeActivity = nil
+            }
+            userActivityTimer?.invalidate()
+            userActivityTimer = nil
+            if userActivityAssertion != 0 {
+                IOPMAssertionRelease(userActivityAssertion)
+                userActivityAssertion = 0
+            }
         }
+    }
+
+    private func declareUserActivity() {
+        var id = userActivityAssertion
+        IOPMAssertionDeclareUserActivity("Cocut recording game film" as CFString, kIOPMUserActiveLocal, &id)
+        userActivityAssertion = id
     }
 
     // MARK: Timer

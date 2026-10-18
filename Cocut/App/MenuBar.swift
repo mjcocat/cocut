@@ -68,6 +68,10 @@ struct MenuBarMenu: View {
                 Task { await model.recordLastRegion() }
             }
             .disabled(!model.canRecordLastRegion)
+            Toggle("Record Sound", isOn: Binding(
+                get: { model.captureAudio },
+                set: { model.setCaptureAudio($0) }
+            ))
             Toggle("Record When Video Plays", isOn: Binding(
                 get: { model.captureMode == .auto },
                 set: { model.setCaptureMode($0 ? .auto : .manual) }

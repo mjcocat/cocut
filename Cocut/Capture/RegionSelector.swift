@@ -26,6 +26,7 @@ final class SelectionState {
     var rect: CGRect?
     var aspect: AspectPreset = .widescreen
     var mode: CaptureMode = .auto
+    var captureAudio = true
 
     @ObservationIgnored var onConfirm: @MainActor () -> Void = {}
     @ObservationIgnored var onCancel: @MainActor () -> Void = {}
@@ -43,21 +44,24 @@ final class RegionSelectionController {
 
     static let minimumSize: CGFloat = 24
 
-    func selectRegion(initial: CaptureRegion?, aspect: AspectPreset, mode: CaptureMode) async -> CaptureRegion? {
+    func selectRegion(initial: CaptureRegion?, aspect: AspectPreset, mode: CaptureMode,
+                      captureAudio: Bool) async -> CaptureRegion? {
         guard continuation == nil else { return nil }
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
-            self.present(initial: initial, aspect: aspect, mode: mode)
+            self.present(initial: initial, aspect: aspect, mode: mode, captureAudio: captureAudio)
         }
     }
 
     var currentAspect: AspectPreset { state.aspect }
     var currentMode: CaptureMode { state.mode }
+    var currentCaptureAudio: Bool { state.captureAudio }
 
-    private func present(initial: CaptureRegion?, aspect: AspectPreset, mode: CaptureMode) {
+    private func present(initial: CaptureRegion?, aspect: AspectPreset, mode: CaptureMode, captureAudio: Bool) {
         let state = SelectionState()
         state.aspect = aspect
         state.mode = mode
+        state.captureAudio = captureAudio
         if let initial, initial.screen != nil {
             state.displayID = initial.displayID
             state.rect = initial.rect
@@ -227,7 +231,7 @@ struct SelectionOverlayView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             VStack(spacing: 5) {
-                Text("While recording, control the video from the keyboard:")
+                Text("While recording, click the video once, then control it from the keyboard:")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 KeyHints()
@@ -357,6 +361,13 @@ struct SelectionOverlayView: View {
             .controlSize(.small)
             .help("Cocut waits for the video to move: play starts a clip, pause ends it. Turn off to record immediately.")
 
+            Toggle(isOn: $state.captureAudio) {
+                Image(systemName: state.captureAudio ? "speaker.wave.2.fill" : "speaker.slash")
+                    .frame(width: 18)
+            }
+            .toggleStyle(.button)
+            .help(state.captureAudio ? "Recording the video's sound. Click to record silent clips." : "Recording without sound. Click to include the video's sound.")
+
             Divider().frame(height: 22)
 
             Button("Cancel") { state.onCancel() }
@@ -382,7 +393,7 @@ struct SelectionOverlayView: View {
     }
 
     private func controlBarPosition(for rect: CGRect) -> CGPoint {
-        let barHalfWidth: CGFloat = 350
+        let barHalfWidth: CGFloat = 375
         let x = min(max(rect.midX, barHalfWidth + 12), bounds.width - barHalfWidth - 12)
         let gap: CGFloat = 36
         let y: CGFloat

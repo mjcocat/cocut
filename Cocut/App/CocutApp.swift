@@ -41,6 +41,12 @@ struct CocutApp: App {
                 .keyboardShortcut("l", modifiers: [.command, .shift])
                 .disabled(!model.canRecordLastRegion)
 
+                Toggle("Record Sound", isOn: Binding(
+                    get: { model.captureAudio },
+                    set: { model.setCaptureAudio($0) }
+                ))
+                .disabled(model.isBusy)
+
                 Toggle("Record When Video Plays", isOn: Binding(
                     get: { model.captureMode == .auto },
                     set: { model.setCaptureMode($0 ? .auto : .manual) }

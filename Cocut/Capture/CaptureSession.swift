@@ -48,6 +48,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     static let frameRate: Int32 = 60
 
     let mode: CaptureMode
+    let captureAudio: Bool
 
     /// All callbacks arrive on the main queue.
     var onSegmentStarted: (() -> Void)?
@@ -69,8 +70,9 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var stopping = false
     private var armedAtHost: CFTimeInterval = 0
 
-    init(mode: CaptureMode, clipsDirectory: URL) {
+    init(mode: CaptureMode, captureAudio: Bool, clipsDirectory: URL) {
         self.mode = mode
+        self.captureAudio = captureAudio
         self.clipsDirectory = clipsDirectory
     }
 
@@ -101,9 +103,19 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         config.colorSpaceName = CGColorSpace.sRGB
         config.showsCursor = false
         config.queueDepth = 6
+        if captureAudio {
+            // System audio (the browser's sound); Cocut's own sounds are left out.
+            config.capturesAudio = true
+            config.sampleRate = 48_000
+            config.channelCount = 2
+            config.excludesCurrentProcessAudio = true
+        }
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+        if captureAudio {
+            try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+        }
         try await stream.startCapture()
         self.stream = stream
 
@@ -111,7 +123,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
             queue.sync { armedAtHost = CACurrentMediaTime() }
             startStillTimer()
         }
-        Log.info("Capture running at \(pixelWidth)x\(pixelHeight)")
+        Log.info("Capture running at \(pixelWidth)x\(pixelHeight), audio \(captureAudio ? "on" : "off")")
     }
 
     /// Ends the session, finishing any clip in progress (delivered through `onSegmentFinished`).
@@ -157,7 +169,13 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     // MARK: Frames
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, sampleBuffer.isValid, !stopping else { return }
+        guard sampleBuffer.isValid, !stopping else { return }
+        if type == .audio {
+            // Sound rides along with whatever clip is being written; motion alone starts and ends clips.
+            writer?.appendAudio(sampleBuffer)
+            return
+        }
+        guard type == .screen else { return }
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
               let statusRaw = attachments.first?[.status] as? Int,
               let status = SCFrameStatus(rawValue: statusRaw),
@@ -186,7 +204,8 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
 
     private func beginSegment() {
         do {
-            writer = try SegmentWriter(url: Self.makeClipURL(in: clipsDirectory), width: pixelWidth, height: pixelHeight)
+            writer = try SegmentWriter(url: Self.makeClipURL(in: clipsDirectory),
+                                       width: pixelWidth, height: pixelHeight, audio: captureAudio)
             Log.info("Clip started")
             DispatchQueue.main.async { [weak self] in self?.onSegmentStarted?() }
         } catch {
@@ -299,11 +318,12 @@ final class SegmentWriter {
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
+    private let audioInput: AVAssetWriterInput?
     private var startPTS: CMTime?
     private var startHost: CFTimeInterval = 0
     private var lastPTS: CMTime = .zero
 
-    init(url: URL, width: Int, height: Int) throws {
+    init(url: URL, width: Int, height: Int, audio: Bool) throws {
         self.url = url
         try? FileManager.default.removeItem(at: url)
         writer = try AVAssetWriter(outputURL: url, fileType: .mov)
@@ -324,6 +344,25 @@ final class SegmentWriter {
         adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
         guard writer.canAdd(input) else { throw RecorderError.writerFailed("Unsupported video settings.") }
         writer.add(input)
+
+        if audio {
+            let audioSettings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 48_000,
+                AVNumberOfChannelsKey: 2,
+                AVEncoderBitRateKey: 192_000,
+            ]
+            let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
+            audioInput.expectsMediaDataInRealTime = true
+            if writer.canAdd(audioInput) {
+                writer.add(audioInput)
+                self.audioInput = audioInput
+            } else {
+                self.audioInput = nil
+            }
+        } else {
+            audioInput = nil
+        }
         guard writer.startWriting() else {
             throw RecorderError.writerFailed(writer.error?.localizedDescription ?? "Couldn't start writing.")
         }
@@ -341,6 +380,14 @@ final class SegmentWriter {
         if input.isReadyForMoreMediaData, adaptor.append(buffer, withPresentationTime: pts) {
             lastPTS = pts
         }
+    }
+
+    /// Audio is kept only once the video has started the clip, so the two stay in sync.
+    func appendAudio(_ sampleBuffer: CMSampleBuffer) {
+        guard let audioInput, writer.status == .writing, let startPTS,
+              sampleBuffer.presentationTimeStamp >= startPTS,
+              audioInput.isReadyForMoreMediaData else { return }
+        audioInput.append(sampleBuffer)
     }
 
     /// Maps "now" onto the capture timeline, for ending a clip at the moment Stop was pressed.
@@ -361,6 +408,7 @@ final class SegmentWriter {
             return
         }
         input.markAsFinished()
+        audioInput?.markAsFinished()
         writer.endSession(atSourceTime: CMTimeMaximum(end, lastPTS))
         let assetWriter = writer
         let fileURL = url

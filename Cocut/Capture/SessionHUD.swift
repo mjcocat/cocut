@@ -13,7 +13,7 @@ final class SessionHUDController {
         hide()
         guard let screen = region.screen, let frame = region.globalFrame else { return }
 
-        let size = CGSize(width: 500, height: 92)
+        let size = CGSize(width: 540, height: 128)
         let visible = screen.visibleFrame
         var origin = CGPoint(x: frame.midX - size.width / 2, y: frame.minY - size.height - 14)
         if origin.y < visible.minY + 8 {
@@ -64,7 +64,7 @@ struct SessionHUDView: View {
     let model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 statusDot
                 VStack(alignment: .leading, spacing: 1) {
@@ -100,10 +100,13 @@ struct SessionHUDView: View {
             }
 
             KeyHints()
+            Text("Click the video once so the keys reach the player.")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .frame(width: 500, height: 92)
+        .frame(width: 540, height: 128)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
@@ -135,19 +138,35 @@ struct SessionHUDView: View {
     }
 }
 
-/// Keyboard shortcuts that work in YouTube's and Hudl's players while the browser has focus.
+/// Player keyboard shortcuts. The browser needs focus on the video (click it once) for these to work.
 struct KeyHints: View {
     var body: some View {
-        HStack(spacing: 12) {
-            hint(["Space"], "play / pause")
-            hint(["←", "→"], "skip 5s")
-            hint(["J", "L"], "skip 10s")
-            hint([",", "."], "frame step")
+        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 5) {
+            GridRow {
+                site("YouTube")
+                hint(["Space"], "play/pause")
+                hint(["←", "→"], "5s")
+                hint(["J", "L"], "10s")
+                hint([",", "."], "frame")
+            }
+            GridRow {
+                site("Hudl")
+                hint(["C"], "play/pause")
+                hint(["Z", "B"], "−2s / +5s")
+                hint(["X", "V"], "frame")
+                hint(["D", "F"], "prev/next clip")
+            }
         }
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
         .lineLimit(1)
         .fixedSize()
+    }
+
+    private func site(_ name: String) -> some View {
+        Text(name)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.primary.opacity(0.8))
     }
 
     private func hint(_ keys: [String], _ label: String) -> some View {
