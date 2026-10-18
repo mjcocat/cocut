@@ -25,12 +25,12 @@ CI builds aren't notarized, which requires a paid Apple Developer account. The i
 2. Choose **Record Region…** from the menu bar icon or the **Record** button, or press **⇧⌘R** in Cocut.
 3. Drag over the video. Stay inside the picture, above the player's control bar. Pick 16:9, 4:3, or Free, then adjust with the corner handles.
 4. Leave **Record when video plays** on and click **Start**. A dashed outline means Cocut is waiting.
-5. **Press play.** The outline turns red and a clip starts. **Pause** and the clip saves after about a second, with a soft pop sound. Scrub to the next play and press play again. Each play/pause becomes its own clip.
+5. **Press play.** The outline turns red and a clip starts. **Pause** and the clip saves about three seconds later with a soft pop. The clip itself ends right where you paused. Scrub to the next play and press play again. Each play/pause becomes its own clip.
 6. When you're done, press **⌥⌘R** or choose **Done Recording** from the menu bar.
 
 Tips:
 - Use the keyboard (**Space** or **K** on YouTube and Hudl) to play and pause. Moving the mouse over the video makes the player's controls appear in the clip.
-- Bursts shorter than one second, like hover animations or scrubbing, are ignored.
+- Bursts shorter than two seconds, like hover animations, scrubbing, or page flicker, are ignored. Cocut also keeps your display from dimming while a session is running.
 - Turn **Record when video plays** off to record immediately until you press **⌥⌘R**.
 
 Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full Retina resolution.

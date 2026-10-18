@@ -55,6 +55,8 @@ final class AppModel {
     @ObservationIgnored private var hiddenWindows: [NSWindow] = []
     @ObservationIgnored private var tickTimer: Timer?
     @ObservationIgnored private var hotKey: GlobalHotKey?
+    /// Keeps the display from dimming or sleeping while a session runs (nobody touches the mouse).
+    @ObservationIgnored private var awakeActivity: NSObjectProtocol?
 
     private enum Keys {
         static let lastRegion = "lastCaptureRegion"
@@ -154,6 +156,7 @@ final class AppModel {
         border.hide()
         await session.stop()
         self.session = nil
+        keepDisplayAwake(false)
         restoreAppWindows()
         phase = .idle
         Log.info("Session ended with \(clipsThisSession) clip(s)")
@@ -169,6 +172,7 @@ final class AppModel {
             border.setStyle(.armed)
         } else {
             self.session = nil
+            keepDisplayAwake(false)
             border.hide()
             restoreAppWindows()
             phase = .idle
@@ -208,6 +212,7 @@ final class AppModel {
         }
 
         self.session = session
+        keepDisplayAwake(true)
         if captureMode == .auto {
             phase = .armed
             border.show(around: region, style: .armed)
@@ -267,6 +272,17 @@ final class AppModel {
         Log.info("Screen permission missing; requesting")
         requestPermission()
         return false
+    }
+
+    private func keepDisplayAwake(_ awake: Bool) {
+        if awake, awakeActivity == nil {
+            awakeActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.idleDisplaySleepDisabled, .userInitiated],
+                reason: "Recording game film")
+        } else if !awake, let activity = awakeActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            awakeActivity = nil
+        }
     }
 
     // MARK: Timer

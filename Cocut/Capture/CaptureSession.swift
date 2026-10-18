@@ -39,9 +39,12 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     }
 
     // Tuning for auto mode.
-    static let stillSeconds: Double = 1.2      // no change this long = paused
-    static let minimumClipSeconds: Double = 1.0 // shorter bursts (hover controls, scrubbing) are dropped
+    // The clip always ends at the last change, so a longer stillSeconds only delays the save;
+    // it doesn't add dead time to the clip.
+    static let stillSeconds: Double = 3.0       // no change this long = paused
+    static let minimumClipSeconds: Double = 2.0 // shorter bursts (hover controls, scrubbing, page flicker) are dropped
     static let tailSeconds: Double = 0.15       // keep a moment after the last change
+    static let armingGraceSeconds: Double = 1.0 // ignore the repaint when focus returns to the browser
     static let frameRate: Int32 = 60
 
     let mode: CaptureMode
@@ -64,6 +67,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var lastChangePTS: CMTime = .zero
     private var lastChangeHost: CFTimeInterval = 0
     private var stopping = false
+    private var armedAtHost: CFTimeInterval = 0
 
     init(mode: CaptureMode, clipsDirectory: URL) {
         self.mode = mode
@@ -103,7 +107,10 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         try await stream.startCapture()
         self.stream = stream
 
-        if mode == .auto { startStillTimer() }
+        if mode == .auto {
+            queue.sync { armedAtHost = CACurrentMediaTime() }
+            startStillTimer()
+        }
         Log.info("Capture running at \(pixelWidth)x\(pixelHeight)")
     }
 
@@ -167,7 +174,7 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
             let print = Self.fingerprint(pixelBuffer)
             let changed = Self.differs(print, previousPrint)
             previousPrint = print
-            if changed {
+            if changed, CACurrentMediaTime() - armedAtHost > Self.armingGraceSeconds {
                 lastChangePTS = pts
                 lastChangeHost = CACurrentMediaTime()
                 if writer == nil { beginSegment() }
@@ -254,8 +261,10 @@ final class CaptureSession: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         // An empty previous print means "no baseline yet": this frame only sets one.
         guard !a.isEmpty, a.count == b.count else { return false }
         var changed = 0
-        for i in a.indices where abs(Int(a[i]) - Int(b[i])) > 12 { changed += 1 }
-        return changed >= max(4, a.count / 100)
+        // Sensitive on purpose: a paused video is pixel-identical, so any real difference
+        // means it's playing — even a slow stretch of fixed-camera game film.
+        for i in a.indices where abs(Int(a[i]) - Int(b[i])) > 4 { changed += 1 }
+        return changed >= 3
     }
 
     static func makeClipURL(in directory: URL) -> URL {
