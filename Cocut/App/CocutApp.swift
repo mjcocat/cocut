@@ -18,7 +18,7 @@ struct CocutApp: App {
                 Button("Check for Updates…") {
                     model.updater.checkNow()
                 }
-                .disabled(model.isRecording)
+                .disabled(model.isBusy)
             }
 
             CommandMenu("Record") {
@@ -33,6 +33,17 @@ struct CocutApp: App {
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
                 .disabled(!model.canRecordLastRegion)
+
+                Toggle("Record When Video Plays", isOn: Binding(
+                    get: { model.captureMode == .auto },
+                    set: { model.setCaptureMode($0 ? .auto : .manual) }
+                ))
+                .disabled(model.isBusy)
+
+                Button("Done Recording") {
+                    Task { await model.stopSession() }
+                }
+                .disabled(!model.isSessionActive)
 
                 Divider()
 

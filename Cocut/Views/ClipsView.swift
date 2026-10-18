@@ -5,56 +5,56 @@ struct ClipsView: View {
     @Environment(AppModel.self) private var model
 
     @State private var selectedID: Clip.ID?
-    @State private var previewing: Clip?
-    @State private var renaming: Clip?
-    @State private var renameText = ""
     @State private var deleting: Clip?
 
     private var library: ClipLibrary { model.library }
-
-    private let columns = [GridItem(.adaptive(minimum: 230, maximum: 340), spacing: 20)]
 
     var body: some View {
         VStack(spacing: 0) {
             if !model.hasScreenPermission {
                 PermissionBanner()
-                    .padding([.horizontal, .top], 20)
+                    .padding([.horizontal, .top], 16)
+                    .padding(.bottom, 8)
             }
 
             if library.clips.isEmpty {
                 emptyState
             } else {
-                grid
+                HSplitView {
+                    ClipListPane(selectedID: $selectedID, deleting: $deleting)
+                        .frame(minWidth: 300, idealWidth: 380, maxWidth: 560)
+                    ClipDetailPane(clip: library.clip(withID: selectedID), deleting: $deleting)
+                        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
         .navigationTitle("Clips")
         .navigationSubtitle(subtitle)
         .overlay(alignment: .bottom) {
-            if model.phase == .saving {
+            if model.phase == .stopping {
                 SavingToast()
                     .padding(.bottom, 24)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(.snappy, value: model.phase)
-        .sheet(item: $previewing) { clip in
-            ClipPreviewView(clip: clip, url: library.url(for: clip))
+        .onAppear {
+            if selectedID == nil { selectedID = library.clips.first?.id }
         }
-        .alert("Rename Clip", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Name", text: $renameText)
-            Button("Rename") {
-                if let clip = renaming { library.rename(clip, to: renameText) }
-            }
-            .keyboardShortcut(.defaultAction)
-            Button("Cancel", role: .cancel) {}
+        .onChange(of: library.recentlyAddedID) { _, newID in
+            if let newID { selectedID = newID }
         }
         .confirmationDialog(
             "Move “\(deleting?.title ?? "")” to the Trash?",
             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
         ) {
             Button("Move to Trash", role: .destructive) {
-                if let clip = deleting {
-                    if selectedID == clip.id { selectedID = nil }
+                guard let clip = deleting else { return }
+                if selectedID == clip.id {
+                    let index = library.clips.firstIndex(of: clip) ?? 0
+                    library.delete(clip)
+                    selectedID = library.clips.indices.contains(index) ? library.clips[index].id : library.clips.last?.id
+                } else {
                     library.delete(clip)
                 }
             }
@@ -67,62 +67,6 @@ struct ClipsView: View {
         let count = library.clips.count
         guard count > 0 else { return "" }
         return "\(count) \(count == 1 ? "clip" : "clips") · \(Clip.format(library.totalDuration)) total"
-    }
-
-    // MARK: Grid
-
-    private var grid: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 24) {
-                    ForEach(library.clips) { clip in
-                        ClipCard(
-                            clip: clip,
-                            url: library.url(for: clip),
-                            isSelected: selectedID == clip.id,
-                            isNew: library.recentlyAddedID == clip.id
-                        )
-                        .id(clip.id)
-                        .onTapGesture(count: 2) { previewing = clip }
-                        .onTapGesture { selectedID = clip.id }
-                        .contextMenu { menu(for: clip) }
-                    }
-                }
-                .padding(24)
-            }
-            .onChange(of: library.recentlyAddedID) { _, newID in
-                guard let newID else { return }
-                selectedID = newID
-                withAnimation(.snappy) { proxy.scrollTo(newID, anchor: .center) }
-            }
-        }
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.001)) // makes empty space clickable
-        .onTapGesture { selectedID = nil }
-        .onDeleteCommand {
-            if let id = selectedID, let clip = library.clips.first(where: { $0.id == id }) {
-                deleting = clip
-            }
-        }
-        .onKeyPress(.space) {
-            guard let id = selectedID, let clip = library.clips.first(where: { $0.id == id }) else { return .ignored }
-            previewing = clip
-            return .handled
-        }
-        .focusable()
-        .focusEffectDisabled()
-    }
-
-    @ViewBuilder
-    private func menu(for clip: Clip) -> some View {
-        Button("Preview") { previewing = clip }
-        Button("Rename…") {
-            renameText = clip.title
-            renaming = clip
-        }
-        Divider()
-        Button("Show in Finder") { library.revealInFinder(clip) }
-        Divider()
-        Button("Move to Trash…", role: .destructive) { deleting = clip }
     }
 
     // MARK: Empty state
@@ -139,7 +83,7 @@ struct ClipsView: View {
                     .font(.title2.weight(.semibold))
             }
         } description: {
-            Text("Open game film on YouTube or Hudl, then record just the part of the screen showing the video. Each recording becomes a clip here.")
+            Text("Open game film on YouTube or Hudl and select the video. Cocut records a clip each time you press play and saves it when you pause.")
         } actions: {
             Button {
                 Task { await model.recordNewRegion() }
@@ -152,99 +96,220 @@ struct ClipsView: View {
             .controlSize(.large)
             .disabled(model.isBusy)
 
-            Text("Tip: press ⌥⌘R from any app to record the same area again, and ⌥⌘R again to stop. Controls also live in the menu bar.")
+            Text("Press ⌥⌘R from any app to start again on the same area, or to finish.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
                 .padding(.top, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-// MARK: - Clip card
+// MARK: - List
 
-struct ClipCard: View {
-    let clip: Clip
-    let url: URL
-    let isSelected: Bool
-    let isNew: Bool
+private struct ClipListPane: View {
+    @Environment(AppModel.self) private var model
+    @Binding var selectedID: Clip.ID?
+    @Binding var deleting: Clip?
 
-    @State private var image: CGImage?
-    @State private var isHovering = false
+    private var library: ClipLibrary { model.library }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            thumbnail
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(clip.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    if isNew {
-                        Text("NEW")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.accentColor))
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                List(selection: $selectedID) {
+                    ForEach(library.clips) { clip in
+                        ClipRow(clip: clip,
+                                number: (library.clips.firstIndex(of: clip) ?? 0) + 1,
+                                url: library.url(for: clip))
+                            .tag(clip.id)
+                            .id(clip.id)
+                            .contextMenu {
+                                Button("Show in Finder") { library.revealInFinder(clip) }
+                                Divider()
+                                Button("Move to Trash…", role: .destructive) { deleting = clip }
+                            }
+                    }
+                    .onMove { library.move(fromOffsets: $0, toOffset: $1) }
+                }
+                .listStyle(.inset)
+                .onDeleteCommand {
+                    if let clip = library.clip(withID: selectedID) { deleting = clip }
+                }
+                .onChange(of: library.recentlyAddedID) { _, newID in
+                    guard let newID else { return }
+                    withAnimation(.snappy) { proxy.scrollTo(newID, anchor: .bottom) }
+                }
+            }
+
+            Divider()
+            HStack(spacing: 6) {
+                Image(systemName: "line.3.horizontal")
+                Text("Drag clips into the order you want in the reel.")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+        }
+    }
+}
+
+private struct ClipRow: View {
+    let clip: Clip
+    let number: Int
+    let url: URL
+
+    @State private var image: CGImage?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("\(number)")
+                .font(.system(.callout, design: .rounded).weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: 22, alignment: .trailing)
+
+            Color.black
+                .frame(width: 112, height: 63)
+                .overlay {
+                    if let image {
+                        Image(decorative: image, scale: 1)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
                     }
                 }
-                Text("\(clip.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(clip.resolutionText)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(clip.title)
+                    .font(.headline)
                     .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(clip.durationText).monospacedDigit()
+                    if clip.isTrimmed {
+                        Image(systemName: "scissors")
+                            .help("Trimmed")
+                    }
+                    Text("·")
+                    Text(clip.createdAt.formatted(date: .omitted, time: .shortened))
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 2)
+
+            Spacer(minLength: 0)
         }
-        .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
+        .padding(.vertical, 5)
         .task(id: url) {
             image = await ThumbnailLoader.shared.thumbnail(for: url)
         }
     }
+}
 
-    private var thumbnail: some View {
-        Color.black
-            .aspectRatio(16.0 / 9.0, contentMode: .fit)
-            .overlay {
-                if let image {
-                    Image(decorative: image, scale: 1)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                } else {
-                    ProgressView().controlSize(.small).tint(.white)
+// MARK: - Detail
+
+private struct ClipDetailPane: View {
+    @Environment(AppModel.self) private var model
+    let clip: Clip?
+    @Binding var deleting: Clip?
+
+    @State private var titleDraft = ""
+    @State private var trimRequest = 0
+    @FocusState private var titleFocused: Bool
+
+    private var library: ClipLibrary { model.library }
+
+    var body: some View {
+        if let clip {
+            VStack(spacing: 0) {
+                PlayerView(
+                    url: library.url(for: clip),
+                    trimStart: clip.trimStart,
+                    trimEnd: clip.trimEnd,
+                    isActive: !model.isBusy,
+                    trimRequest: trimRequest,
+                    onTrimmed: { start, end in library.setTrim(clip, start: start, end: end) }
+                )
+                // Rebuild the player when the clip or its trim changes.
+                .id("\(clip.id)-\(clip.trimStart ?? -1)-\(clip.trimEnd ?? -1)")
+                .background(Color.black)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Divider()
+
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        TextField("Clip name", text: $titleDraft)
+                            .textFieldStyle(.plain)
+                            .font(.title3.weight(.semibold))
+                            .focused($titleFocused)
+                            .onSubmit { commitTitle(clip) }
+                            .onChange(of: titleFocused) { _, focused in
+                                if !focused { commitTitle(clip) }
+                            }
+                        Text(details(clip))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    if clip.isTrimmed {
+                        Button("Reset Trim") {
+                            library.setTrim(clip, start: nil, end: nil)
+                        }
+                        .help("Use the whole clip again")
+                    }
+                    Button {
+                        trimRequest += 1
+                    } label: {
+                        Label("Trim", systemImage: "scissors")
+                    }
+                    .help("Drag the yellow handles to choose where the clip starts and ends")
+
+                    Menu {
+                        Button("Show in Finder") { library.revealInFinder(clip) }
+                        Divider()
+                        Button("Move to Trash…", role: .destructive) { deleting = clip }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
                 }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
             }
-            .overlay {
-                if isHovering {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 52, height: 52)
-                        .glassEffect(.regular, in: Circle())
-                        .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Text(clip.durationText)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.65)))
-                    .padding(8)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.08),
-                                  lineWidth: isSelected ? 3 : 1)
-            }
-            .shadow(color: .black.opacity(isHovering ? 0.22 : 0.1), radius: isHovering ? 12 : 5, y: isHovering ? 6 : 2)
-            .scaleEffect(isHovering ? 1.015 : 1)
-            .animation(.snappy(duration: 0.18), value: isHovering)
-            .animation(.snappy(duration: 0.18), value: isSelected)
+            .onAppear { titleDraft = clip.title }
+            .onChange(of: clip.id) { _, _ in titleDraft = clip.title }
+        } else {
+            ContentUnavailableView("Select a Clip", systemImage: "play.rectangle",
+                                   description: Text("Choose a clip on the left to watch, rename or trim it."))
+        }
+    }
+
+    private func details(_ clip: Clip) -> String {
+        var parts = [clip.durationText]
+        if clip.isTrimmed { parts.append("trimmed from \(Clip.format(clip.duration))") }
+        parts.append(clip.resolutionText)
+        parts.append(clip.createdAt.formatted(date: .abbreviated, time: .shortened))
+        return parts.joined(separator: " · ")
+    }
+
+    private func commitTitle(_ clip: Clip) {
+        if titleDraft.trimmingCharacters(in: .whitespaces).isEmpty {
+            titleDraft = clip.title
+        } else if titleDraft != clip.title {
+            library.rename(clip, to: titleDraft)
+        }
     }
 }
 

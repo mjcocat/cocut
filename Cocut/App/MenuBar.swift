@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The menu bar icon: scissors when idle, a stop symbol and running time while recording.
+/// The menu bar icon: scissors when idle, a ring while waiting for playback,
+/// a filled dot and running time while a clip records.
 struct MenuBarLabel: View {
     let model: AppModel
 
@@ -9,10 +10,17 @@ struct MenuBarLabel: View {
         switch model.phase {
         case .recording:
             HStack(spacing: 4) {
-                Image(systemName: "stop.circle.fill")
+                Image(systemName: "record.circle.fill")
                 Text(model.elapsedText).monospacedDigit()
             }
-        case .starting, .saving:
+        case .armed:
+            HStack(spacing: 4) {
+                Image(systemName: "record.circle")
+                if model.clipsThisSession > 0 {
+                    Text("\(model.clipsThisSession)").monospacedDigit()
+                }
+            }
+        case .starting, .stopping:
             Image(systemName: "ellipsis.circle")
         default:
             Image(systemName: "scissors")
@@ -26,20 +34,29 @@ struct MenuBarMenu: View {
 
     var body: some View {
         switch model.phase {
+        case .armed:
+            Text("Waiting for the video to play…")
+            Text(sessionSummary)
+            Button("Done Recording   \(AppModel.hotKeyHint)") {
+                Task { await model.stopSession() }
+            }
         case .recording:
             Text("Recording · \(model.elapsedText)")
-            Button("Stop and Save   \(AppModel.hotKeyHint)") {
-                Task { await model.stopRecording() }
+            if model.sessionMode == .auto {
+                Text("Pause the video to save this clip")
             }
-            Button("Discard Recording") {
-                Task { await model.discardRecording() }
+            Button(model.sessionMode == .auto ? "Save and Finish   \(AppModel.hotKeyHint)" : "Stop and Save   \(AppModel.hotKeyHint)") {
+                Task { await model.stopSession() }
+            }
+            Button("Discard This Clip") {
+                Task { await model.discardCurrentClip() }
             }
         case .selecting:
             Text("Selecting a region…")
         case .starting:
             Text("Starting capture…")
-        case .saving:
-            Text("Saving clip…")
+        case .stopping:
+            Text("Saving…")
         case .idle:
             Button("Record Region…") {
                 Task { await model.recordNewRegion() }
@@ -48,6 +65,10 @@ struct MenuBarMenu: View {
                 Task { await model.recordLastRegion() }
             }
             .disabled(!model.canRecordLastRegion)
+            Toggle("Record When Video Plays", isOn: Binding(
+                get: { model.captureMode == .auto },
+                set: { model.setCaptureMode($0 ? .auto : .manual) }
+            ))
         }
 
         Divider()
@@ -61,13 +82,21 @@ struct MenuBarMenu: View {
             showMainWindow()
             model.updater.checkNow()
         }
-        .disabled(model.isRecording)
+        .disabled(model.isBusy)
         Button("Show Log") { Log.reveal() }
 
         Divider()
 
         Button("Quit Cocut") { NSApp.terminate(nil) }
-            .disabled(model.isRecording)
+            .disabled(model.isSessionActive)
+    }
+
+    private var sessionSummary: String {
+        switch model.clipsThisSession {
+        case 0: return "Press play in your browser to start a clip"
+        case 1: return "1 clip saved this session"
+        default: return "\(model.clipsThisSession) clips saved this session"
+        }
     }
 
     private var updateTitle: String {

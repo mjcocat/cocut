@@ -2,7 +2,7 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.2.** Region recording, the clip library, menu bar controls, and in-app updates work. Player Card and Export come next.
+**Status: v0.3.** Play-to-record capture, a reorderable clip list with trimming, menu bar controls, and in-app updates work. Player Card and Export come next.
 
 ## Install
 
@@ -21,30 +21,39 @@ CI builds aren't notarized, which requires a paid Apple Developer account. The i
 
 ## Recording
 
-1. Open the game film in your browser.
+1. Open the game film in your browser. Pause it just before the first play.
 2. Choose **Record Region…** from the menu bar icon or the **Record** button, or press **⇧⌘R** in Cocut.
-3. Drag over the video. Pick 16:9, 4:3, or Free, then adjust with the corner handles or by dragging the middle.
-4. Press **Return** or click **Record**, then play the video. A red outline marks the captured area, and the menu bar icon shows the running time.
-5. Stop with **⌥⌘R** from any app, or choose **Stop and Save** from the menu bar. **Discard Recording** throws the take away.
-6. For the next play, scrub to it and press **⌥⌘R** again. It records the same region without re-selecting.
+3. Drag over the video. Stay inside the picture, above the player's control bar. Pick 16:9, 4:3, or Free, then adjust with the corner handles.
+4. Leave **Record when video plays** on and click **Start**. A dashed outline means Cocut is waiting.
+5. **Press play.** The outline turns red and a clip starts. **Pause** and the clip saves after about a second, with a soft pop sound. Scrub to the next play and press play again. Each play/pause becomes its own clip.
+6. When you're done, press **⌥⌘R** or choose **Done Recording** from the menu bar.
+
+Tips:
+- Use the keyboard (**Space** or **K** on YouTube and Hudl) to play and pause. Moving the mouse over the video makes the player's controls appear in the clip.
+- Bursts shorter than one second, like hover animations or scrubbing, are ignored.
+- Turn **Record when video plays** off to record immediately until you press **⌥⌘R**.
 
 Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full Retina resolution.
 
 **Clip library:**
-- Double-click a clip, or select it and press Space, to preview it.
-- Right-click to rename, show in Finder, or move to the Trash.
+
+| To | Do this |
+|---|---|
+| Reorder clips | Drag them in the list. The list order is the reel order. |
+| Watch a clip | Select it, and it plays in the player on the right. |
+| Rename a clip | Click its name under the player. |
+| Trim a clip | Click **Trim** and drag the yellow handles. The original file is kept, so **Reset Trim** undoes it. |
+| Delete a clip | Press ⌫, or use the context menu. Deleted clips go to the Trash. |
 
 **If something goes wrong,** Cocut shows an alert with a **Show Log** button. The log lives at `~/Library/Logs/Cocut/Cocut.log`. You can also open it from **Help › Show Log**.
 
 ## Releases and updates
 
-```bash
-git tag v0.2.1 && git push origin v0.2.1
-```
+Bump `MARKETING_VERSION` in `project.yml` and push to `main`. CI builds the app and publishes a `vX.Y.Z` release with `Cocut.zip` if that version hasn't been released yet. Pushing a `v*` tag does the same.
 
 Every push to `main` is built on GitHub's macOS runners. Each build is downloadable as an artifact from the **Actions** tab.
 
-A `v*` tag publishes a GitHub release with `Cocut.zip`. The tag sets the app's version, so it must be higher than the last release for the updater to offer it.
+The updater only offers a release whose version is higher than the installed one.
 
 The updater reads GitHub's latest release, downloads `Cocut.zip`, checks the bundle ID, swaps the app in place, and relaunches.
 

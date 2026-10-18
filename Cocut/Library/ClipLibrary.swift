@@ -10,9 +10,14 @@ struct Clip: Identifiable, Codable, Hashable {
     var duration: Double
     var pixelWidth: Int
     var pixelHeight: Int
+    /// Trim points in seconds from the start of the file; nil means untrimmed.
+    var trimStart: Double?
+    var trimEnd: Double?
 
+    var isTrimmed: Bool { trimStart != nil || trimEnd != nil }
+    var effectiveDuration: Double { max(0, (trimEnd ?? duration) - (trimStart ?? 0)) }
     var resolutionText: String { "\(pixelWidth)×\(pixelHeight)" }
-    var durationText: String { Clip.format(duration) }
+    var durationText: String { Clip.format(effectiveDuration) }
 
     static func format(_ seconds: Double) -> String {
         let total = Int(seconds.rounded())
@@ -49,23 +54,10 @@ final class ClipLibrary {
         load()
     }
 
-    var totalDuration: Double { clips.reduce(0) { $0 + $1.duration } }
+    var totalDuration: Double { clips.reduce(0) { $0 + $1.effectiveDuration } }
 
     func url(for clip: Clip) -> URL {
         clipsDirectory.appending(path: clip.fileName)
-    }
-
-    func makeNewClipURL() -> URL {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-        var url = clipsDirectory.appending(path: "Clip \(formatter.string(from: .now)).mov")
-        var n = 2
-        while FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
-            url = clipsDirectory.appending(path: "Clip \(formatter.string(from: .now)) \(n).mov")
-            n += 1
-        }
-        return url
     }
 
     @discardableResult
@@ -91,6 +83,20 @@ final class ClipLibrary {
         recentlyAddedID = clip.id
         save()
         return clip
+    }
+
+    func setTrim(_ clip: Clip, start: Double?, end: Double?) {
+        guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+        let s = (start ?? 0) > 0.01 ? start : nil
+        let e = end.map { $0 < clips[index].duration - 0.01 ? $0 : nil } ?? nil
+        clips[index].trimStart = s
+        clips[index].trimEnd = e
+        save()
+    }
+
+    func clip(withID id: Clip.ID?) -> Clip? {
+        guard let id else { return nil }
+        return clips.first { $0.id == id }
     }
 
     func rename(_ clip: Clip, to title: String) {

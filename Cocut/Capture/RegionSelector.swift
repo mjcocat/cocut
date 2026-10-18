@@ -25,6 +25,7 @@ final class SelectionState {
     var displayID: CGDirectDisplayID?
     var rect: CGRect?
     var aspect: AspectPreset = .widescreen
+    var mode: CaptureMode = .auto
 
     @ObservationIgnored var onConfirm: @MainActor () -> Void = {}
     @ObservationIgnored var onCancel: @MainActor () -> Void = {}
@@ -42,19 +43,21 @@ final class RegionSelectionController {
 
     static let minimumSize: CGFloat = 24
 
-    func selectRegion(initial: CaptureRegion?, aspect: AspectPreset) async -> CaptureRegion? {
+    func selectRegion(initial: CaptureRegion?, aspect: AspectPreset, mode: CaptureMode) async -> CaptureRegion? {
         guard continuation == nil else { return nil }
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
-            self.present(initial: initial, aspect: aspect)
+            self.present(initial: initial, aspect: aspect, mode: mode)
         }
     }
 
     var currentAspect: AspectPreset { state.aspect }
+    var currentMode: CaptureMode { state.mode }
 
-    private func present(initial: CaptureRegion?, aspect: AspectPreset) {
+    private func present(initial: CaptureRegion?, aspect: AspectPreset, mode: CaptureMode) {
         let state = SelectionState()
         state.aspect = aspect
+        state.mode = mode
         if let initial, initial.screen != nil {
             state.displayID = initial.displayID
             state.rect = initial.rect
@@ -217,7 +220,10 @@ struct SelectionOverlayView: View {
                 .font(.system(size: 34, weight: .light))
             Text("Drag to select the video")
                 .font(.title3.weight(.semibold))
-            Text("Return to record  ·  Esc to cancel")
+            Text("Tip: stay inside the picture, above the player's controls")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Text("Return to start  ·  Esc to cancel")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -319,6 +325,18 @@ struct SelectionOverlayView: View {
 
             Divider().frame(height: 22)
 
+            Toggle(isOn: Binding(
+                get: { state.mode == .auto },
+                set: { state.mode = $0 ? .auto : .manual }
+            )) {
+                Text("Record when video plays")
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .help("Cocut waits for the video to move: play starts a clip, pause ends it. Turn off to record immediately.")
+
+            Divider().frame(height: 22)
+
             Button("Cancel") { state.onCancel() }
                 .buttonStyle(.borderless)
                 .controlSize(.large)
@@ -326,7 +344,8 @@ struct SelectionOverlayView: View {
             Button {
                 state.onConfirm()
             } label: {
-                Label("Record", systemImage: "record.circle.fill")
+                Label(state.mode == .auto ? "Start" : "Record",
+                      systemImage: state.mode == .auto ? "play.circle.fill" : "record.circle.fill")
                     .fontWeight(.semibold)
             }
             .buttonStyle(.borderedProminent)
@@ -341,7 +360,7 @@ struct SelectionOverlayView: View {
     }
 
     private func controlBarPosition(for rect: CGRect) -> CGPoint {
-        let barHalfWidth: CGFloat = 200
+        let barHalfWidth: CGFloat = 330
         let x = min(max(rect.midX, barHalfWidth + 12), bounds.width - barHalfWidth - 12)
         let gap: CGFloat = 36
         let y: CGFloat

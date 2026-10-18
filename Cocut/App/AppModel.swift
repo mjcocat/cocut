@@ -7,8 +7,11 @@ enum RecordingPhase: Equatable {
     case idle
     case selecting
     case starting
+    /// Auto mode: watching the region, waiting for the video to play.
+    case armed
+    /// A clip is being written.
     case recording(startedAt: Date)
-    case saving
+    case stopping
 }
 
 @MainActor
@@ -19,25 +22,36 @@ final class AppModel {
 
     private(set) var phase: RecordingPhase = .idle
     private(set) var elapsed: TimeInterval = 0
+    private(set) var clipsThisSession = 0
+    private(set) var sessionMode: CaptureMode = .auto
     private(set) var lastRegion: CaptureRegion? {
         didSet { Self.store(lastRegion, forKey: Keys.lastRegion) }
     }
     private(set) var aspect: AspectPreset {
         didSet { UserDefaults.standard.set(aspect.rawValue, forKey: Keys.aspect) }
     }
+    private(set) var captureMode: CaptureMode {
+        didSet { UserDefaults.standard.set(captureMode.rawValue, forKey: Keys.mode) }
+    }
     private(set) var hasScreenPermission = CGPreflightScreenCaptureAccess()
 
     var isBusy: Bool { phase != .idle }
+    var isSessionActive: Bool {
+        switch phase {
+        case .armed, .recording: return true
+        default: return false
+        }
+    }
     var isRecording: Bool { if case .recording = phase { return true } else { return false } }
     var canRecordLastRegion: Bool { !isBusy && lastRegion?.screen != nil }
     var elapsedText: String { Self.formatElapsed(elapsed) }
 
-    /// Shown in menus next to the global record/stop shortcut.
+    /// Shown in menus next to the global start/stop shortcut.
     static let hotKeyHint = "⌥⌘R"
 
     @ObservationIgnored private let selector = RegionSelectionController()
     @ObservationIgnored private let border = RecordingBorderController()
-    @ObservationIgnored private var recorder: RegionRecorder?
+    @ObservationIgnored private var session: CaptureSession?
     @ObservationIgnored private var hiddenWindows: [NSWindow] = []
     @ObservationIgnored private var tickTimer: Timer?
     @ObservationIgnored private var hotKey: GlobalHotKey?
@@ -45,15 +59,17 @@ final class AppModel {
     private enum Keys {
         static let lastRegion = "lastCaptureRegion"
         static let aspect = "selectionAspect"
+        static let mode = "captureMode"
     }
 
     init() {
         lastRegion = Self.load(CaptureRegion.self, forKey: Keys.lastRegion)
         aspect = AspectPreset(rawValue: UserDefaults.standard.string(forKey: Keys.aspect) ?? "") ?? .widescreen
+        captureMode = CaptureMode(rawValue: UserDefaults.standard.string(forKey: Keys.mode) ?? "") ?? .auto
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         Log.info("Cocut \(version) launched; screen permission: \(hasScreenPermission)")
 
-        // ⌥⌘R anywhere: start recording (same region if there is one), or stop and save.
+        // ⌥⌘R anywhere: start a session on the same region, or end the running one.
         hotKey = GlobalHotKey(keyCode: kVK_ANSI_R, modifiers: cmdKey | optionKey, id: 1) { [weak self] in
             Task { @MainActor in await self?.toggleRecording() }
         }
@@ -79,12 +95,12 @@ final class AppModel {
         }
     }
 
-    // MARK: Recording flow
+    // MARK: Session control
 
     func toggleRecording() async {
         switch phase {
-        case .recording:
-            await stopRecording()
+        case .armed, .recording:
+            await stopSession()
         case .idle:
             if canRecordLastRegion {
                 await recordLastRegion()
@@ -96,13 +112,19 @@ final class AppModel {
         }
     }
 
+    func setCaptureMode(_ mode: CaptureMode) {
+        guard !isBusy else { return }
+        captureMode = mode
+    }
+
     func recordNewRegion() async {
         guard !isBusy, ensurePermission() else { return }
         phase = .selecting
         hideAppWindows()
 
-        let region = await selector.selectRegion(initial: lastRegion, aspect: aspect)
+        let region = await selector.selectRegion(initial: lastRegion, aspect: aspect, mode: captureMode)
         aspect = selector.currentAspect
+        captureMode = selector.currentMode
 
         guard let region else {
             Log.info("Region selection cancelled")
@@ -111,7 +133,7 @@ final class AppModel {
             return
         }
         lastRegion = region
-        await startRecording(region)
+        await startSession(region)
     }
 
     func recordLastRegion() async {
@@ -121,54 +143,62 @@ final class AppModel {
             return
         }
         hideAppWindows()
-        await startRecording(region)
+        await startSession(region)
     }
 
-    func stopRecording() async {
-        guard isRecording, let recorder else { return }
+    /// Ends the session; a clip in progress is finished and saved.
+    func stopSession() async {
+        guard isSessionActive, let session else { return }
+        phase = .stopping
         stopTicking()
         border.hide()
+        await session.stop()
+        self.session = nil
         restoreAppWindows()
-        phase = .saving
-        do {
-            let url = try await recorder.stop()
-            await library.addClip(at: url)
-            Log.info("Saved \(url.lastPathComponent) (\(elapsedText))")
-        } catch {
-            Log.error("Stop failed: \(error.localizedDescription)")
-            presentError(error.localizedDescription)
+        phase = .idle
+        Log.info("Session ended with \(clipsThisSession) clip(s)")
+    }
+
+    /// Throws away the clip being recorded. In auto mode Cocut keeps waiting for the next play.
+    func discardCurrentClip() async {
+        guard isRecording, let session else { return }
+        stopTicking()
+        await session.discardCurrent()
+        if session.mode == .auto {
+            phase = .armed
+            border.setStyle(.armed)
+        } else {
+            self.session = nil
+            border.hide()
+            restoreAppWindows()
+            phase = .idle
         }
-        self.recorder = nil
-        phase = .idle
     }
 
-    func discardRecording() async {
-        guard isRecording, let recorder else { return }
-        stopTicking()
-        border.hide()
-        await recorder.discard()
-        self.recorder = nil
-        restoreAppWindows()
-        phase = .idle
-        Log.info("Recording discarded")
-    }
-
-    private func startRecording(_ region: CaptureRegion) async {
+    private func startSession(_ region: CaptureRegion) async {
         phase = .starting
-        let recorder = RegionRecorder()
-        recorder.onUnexpectedStop = { [weak self] error in
+        clipsThisSession = 0
+        sessionMode = captureMode
+        let session = CaptureSession(mode: captureMode, clipsDirectory: library.clipsDirectory)
+
+        session.onSegmentStarted = { [weak self] in
+            MainActor.assumeIsolated { self?.segmentStarted() }
+        }
+        session.onSegmentFinished = { [weak self] result in
+            MainActor.assumeIsolated { self?.segmentFinished(result) }
+        }
+        session.onUnexpectedStop = { [weak self] error in
             Task { @MainActor in await self?.handleUnexpectedStop(error) }
         }
-        let outputURL = library.makeNewClipURL()
 
         do {
             // ScreenCaptureKit can stall (e.g. behind a permission prompt); don't hang forever.
             try await withTimeout(seconds: 12) {
-                try await recorder.start(region: region, outputURL: outputURL)
+                try await session.start(region: region)
             }
         } catch {
             Log.error("Start failed: \(error.localizedDescription)")
-            await recorder.discard()
+            await session.stop()
             phase = .idle
             refreshPermission()
             presentError(hasScreenPermission
@@ -177,18 +207,50 @@ final class AppModel {
             return
         }
 
-        self.recorder = recorder
-        let startedAt = Date()
-        phase = .recording(startedAt: startedAt)
-        startTicking(from: startedAt)
-        border.show(around: region)
-        Log.info("Recording started")
+        self.session = session
+        if captureMode == .auto {
+            phase = .armed
+            border.show(around: region, style: .armed)
+            Log.info("Armed; waiting for playback")
+        } else {
+            // Manual: the first frame starts the clip; show recording state right away.
+            phase = .recording(startedAt: .now)
+            startTicking(from: .now)
+            border.show(around: region, style: .recording)
+            Log.info("Recording started")
+        }
+    }
+
+    private func segmentStarted() {
+        guard session != nil else { return }
+        if case .recording = phase { return }
+        phase = .recording(startedAt: .now)
+        startTicking(from: .now)
+        border.setStyle(.recording)
+    }
+
+    private func segmentFinished(_ result: Result<CaptureSession.Segment, Error>) {
+        switch result {
+        case .success(let segment):
+            clipsThisSession += 1
+            Log.info("Saved \(segment.url.lastPathComponent) (\(Self.formatElapsed(segment.duration)))")
+            NSSound(named: "Pop")?.play()
+            Task { await library.addClip(at: segment.url) }
+        case .failure(let error):
+            Log.error("Clip failed: \(error.localizedDescription)")
+        }
+        // Auto mode goes back to waiting for the next play.
+        if session?.mode == .auto, isRecording {
+            stopTicking()
+            phase = .armed
+            border.setStyle(.armed)
+        }
     }
 
     private func handleUnexpectedStop(_ error: Error) async {
-        guard isRecording else { return }
+        guard isSessionActive else { return }
         // Keep whatever was captured before the interruption.
-        await stopRecording()
+        await stopSession()
         // Stopping from macOS's own screen-recording menu bar indicator is a normal stop.
         let nsError = error as NSError
         if nsError.domain == SCStreamErrorDomain, nsError.code == SCStreamError.Code.userStopped.rawValue {
@@ -220,6 +282,7 @@ final class AppModel {
     private func stopTicking() {
         tickTimer?.invalidate()
         tickTimer = nil
+        elapsed = 0
     }
 
     static func formatElapsed(_ seconds: TimeInterval) -> String {
