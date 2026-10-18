@@ -211,12 +211,14 @@ final class AppModel {
         if captureMode == .auto {
             phase = .armed
             border.show(around: region, style: .armed)
+            returnFocusToVideo()
             Log.info("Armed; waiting for playback")
         } else {
             // Manual: the first frame starts the clip; show recording state right away.
             phase = .recording(startedAt: .now)
             startTicking(from: .now)
             border.show(around: region, style: .recording)
+            returnFocusToVideo()
             Log.info("Recording started")
         }
     }
@@ -293,15 +295,44 @@ final class AppModel {
     // MARK: Windows & alerts
 
     /// Gets the app's own windows out of the way while picking a region and recording.
+    /// Windows are made transparent and click-through rather than ordered out: SwiftUI lists in an
+    /// ordered-out window can come back blank. Cocut's windows are excluded from capture either way.
     private func hideAppWindows() {
-        hiddenWindows = NSApp.windows.filter { $0.isVisible && $0.canBecomeMain && !($0 is OverlayWindow) }
-        hiddenWindows.forEach { $0.orderOut(nil) }
+        hiddenWindows = NSApp.windows.filter {
+            $0.isVisible && $0.canBecomeMain && $0.alphaValue > 0 && !($0 is OverlayWindow)
+        }
+        for window in hiddenWindows {
+            window.alphaValue = 0
+            window.ignoresMouseEvents = true
+        }
     }
 
     func restoreAppWindows() {
-        hiddenWindows.forEach { $0.makeKeyAndOrderFront(nil) }
+        for window in hiddenWindows {
+            window.alphaValue = 1
+            window.ignoresMouseEvents = false
+            window.makeKeyAndOrderFront(nil)
+        }
         hiddenWindows.removeAll()
         NSApp.activate()
+    }
+
+    /// Hands keyboard focus back to the browser so Space/K play and pause the video right away.
+    private func returnFocusToVideo() {
+        NSApp.deactivate()
+    }
+
+    /// Quits and reopens Cocut. macOS only applies a new Screen Recording permission after a relaunch.
+    func relaunch() {
+        let script = "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; open \"$2\""
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", script, "cocut-relaunch",
+                          String(ProcessInfo.processInfo.processIdentifier),
+                          Bundle.main.bundleURL.path(percentEncoded: false)]
+        try? task.run()
+        Log.info("Relaunching")
+        NSApp.terminate(nil)
     }
 
     func presentError(_ message: String) {

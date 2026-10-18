@@ -326,14 +326,19 @@ struct PermissionBanner: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Screen Recording permission needed")
                     .font(.headline)
-                Text("Turn on Cocut in System Settings › Privacy & Security › Screen & System Audio Recording. You may need to quit and reopen the app afterward.")
+                Text("Turn on Cocut in System Settings › Privacy & Security › Screen & System Audio Recording, then click Reopen. macOS only applies the change after Cocut restarts.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
-            Button("Open Settings") { model.requestPermission() }
-                .controlSize(.large)
+            VStack(spacing: 6) {
+                Button("Open Settings") { model.requestPermission() }
+                    .controlSize(.large)
+                Button("Reopen Cocut") { model.relaunch() }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+            }
         }
         .padding(16)
         .background(
