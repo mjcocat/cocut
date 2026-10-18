@@ -20,7 +20,7 @@ struct Clip: Identifiable, Codable, Hashable {
     }
 }
 
-/// Clips live in ~/Movies/Highlight Creator/Clips, with a small JSON index alongside.
+/// Clips live in ~/Movies/Cocut/Clips, with a small JSON index alongside.
 @MainActor
 @Observable
 final class ClipLibrary {
@@ -34,8 +34,17 @@ final class ClipLibrary {
     init() {
         let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Movies")
-        rootDirectory = movies.appending(path: "Highlight Creator", directoryHint: .isDirectory)
+        rootDirectory = movies.appending(path: "Cocut", directoryHint: .isDirectory)
         clipsDirectory = rootDirectory.appending(path: "Clips", directoryHint: .isDirectory)
+
+        // Carry clips over from the app's previous name.
+        let legacy = movies.appending(path: "Highlight Creator", directoryHint: .isDirectory)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: legacy.path(percentEncoded: false)),
+           !fm.fileExists(atPath: rootDirectory.path(percentEncoded: false)) {
+            try? fm.moveItem(at: legacy, to: rootDirectory)
+            Log.info("Moved clip library from \(legacy.path(percentEncoded: false))")
+        }
         try? FileManager.default.createDirectory(at: clipsDirectory, withIntermediateDirectories: true)
         load()
     }

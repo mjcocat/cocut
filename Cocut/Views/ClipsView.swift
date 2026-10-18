@@ -144,7 +144,7 @@ struct ClipsView: View {
             .controlSize(.large)
             .disabled(model.isBusy)
 
-            Text("Tip: ⇧⌘L records the same area again — handy for grabbing play after play.")
+            Text("Tip: press ⌥⌘R from any app to record the same area again, and ⌥⌘R again to stop. Controls also live in the menu bar.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .padding(.top, 6)
@@ -253,7 +253,7 @@ struct PermissionBanner: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Screen Recording permission needed")
                     .font(.headline)
-                Text("Turn on Highlight Creator in System Settings › Privacy & Security › Screen & System Audio Recording. You may need to quit and reopen the app afterward.")
+                Text("Turn on Cocut in System Settings › Privacy & Security › Screen & System Audio Recording. You may need to quit and reopen the app afterward.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

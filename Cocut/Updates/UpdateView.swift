@@ -1,0 +1,112 @@
+import AppKit
+import SwiftUI
+
+struct UpdateView: View {
+    let updater: Updater
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            switch updater.state {
+            case .idle, .checking:
+                status(icon: nil, title: "Checking for updates…", detail: nil)
+                HStack { Spacer(); Button("Cancel") { updater.dismiss() } }
+
+            case .upToDate:
+                status(icon: "checkmark.seal.fill", tint: .green,
+                       title: "You're up to date",
+                       detail: "Cocut \(updater.currentVersion) is the newest version.")
+                HStack {
+                    Spacer()
+                    Button("OK") { updater.dismiss() }.keyboardShortcut(.defaultAction)
+                }
+
+            case .available(let release):
+                available(release)
+
+            case .downloading(let release):
+                status(icon: nil, title: "Downloading Cocut \(release.version)…", detail: nil)
+
+            case .installing(let release):
+                status(icon: nil, title: "Installing Cocut \(release.version)…",
+                       detail: "Cocut will reopen in a moment.")
+
+            case .failed(let message):
+                status(icon: "exclamationmark.triangle.fill", tint: .orange,
+                       title: "Update problem", detail: message)
+                HStack {
+                    Button("Open Releases Page") {
+                        NSWorkspace.shared.open(URL(string: "https://github.com/\(Updater.repo)/releases/latest")!)
+                    }
+                    Spacer()
+                    Button("Close") { updater.dismiss() }.keyboardShortcut(.defaultAction)
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 480)
+        .animation(.snappy, value: updater.state)
+    }
+
+    @ViewBuilder
+    private func available(_ release: Updater.Release) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 56, height: 56)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Cocut \(release.version) is available")
+                    .font(.title3.weight(.semibold))
+                Text("You have version \(updater.currentVersion).")
+                    .foregroundStyle(.secondary)
+            }
+        }
+
+        if !release.notes.isEmpty {
+            ScrollView {
+                Text(Self.markdown(release.notes))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+            .frame(maxHeight: 220)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.quaternary.opacity(0.5)))
+        }
+
+        HStack {
+            Button("Skip This Version") { updater.skip(release) }
+            Spacer()
+            Button("Later") { updater.dismiss() }
+                .keyboardShortcut(.cancelAction)
+            Button("Install and Relaunch") { updater.install(release) }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private func status(icon: String?, tint: Color = .accentColor, title: String, detail: String?) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            Group {
+                if let icon {
+                    Image(systemName: icon).font(.system(size: 30)).foregroundStyle(tint)
+                } else {
+                    ProgressView().controlSize(.regular)
+                }
+            }
+            .frame(width: 40)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                if let detail {
+                    Text(detail)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private static func markdown(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+}

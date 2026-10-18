@@ -1,9 +1,9 @@
-# Highlight Creator — local build helpers. Requires Xcode and `brew install xcodegen`.
+# Cocut — local build helpers. Requires Xcode and `brew install xcodegen`.
 
 SHELL   := /bin/bash
-PROJECT := HighlightCreator.xcodeproj
-SCHEME  := HighlightCreator
-APP     := build/Build/Products/Release/Highlight Creator.app
+PROJECT := Cocut.xcodeproj
+SCHEME  := Cocut
+APP     := build/Build/Products/Release/Cocut.app
 
 .PHONY: project open build run install clean
 
@@ -27,9 +27,9 @@ run: build
 
 ## Build and copy into /Applications
 install: build
-	rm -rf "/Applications/Highlight Creator.app"
+	rm -rf "/Applications/Cocut.app"
 	cp -R "$(APP)" /Applications/
-	@echo "Installed to /Applications/Highlight Creator.app"
+	@echo "Installed to /Applications/Cocut.app"
 
 clean:
 	rm -rf build $(PROJECT)

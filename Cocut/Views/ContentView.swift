@@ -65,16 +65,12 @@ struct ContentView: View {
                 .disabled(model.isBusy)
             }
         }
-        .alert(
-            "Recording Problem",
-            isPresented: Binding(
-                get: { model.errorMessage != nil },
-                set: { if !$0 { model.errorMessage = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(model.errorMessage ?? "")
+        .sheet(isPresented: Binding(
+            get: { model.updater.isPresentingSheet },
+            set: { if !$0 { model.updater.dismiss() } }
+        )) {
+            UpdateView(updater: model.updater)
+                .interactiveDismissDisabled()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refreshPermission()

@@ -19,6 +19,8 @@ jobs:
     name: Build macOS app
     runs-on: macos-26
     timeout-minutes: 30
+    env:
+      HAS_CERT: ${{ secrets.COCUT_CERT_P12 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,38 +33,77 @@ jobs:
       - name: Install tools
         run: brew install xcodegen xcbeautify
 
+      - name: Work out version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(grep -m1 'MARKETING_VERSION' project.yml | sed -E 's/.*"([^"]+)".*/\1/')"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Building Cocut $VERSION (build ${{ github.run_number }})"
+
       - name: Generate Xcode project
         run: xcodegen
 
-      - name: Build (Release, universal, ad-hoc signed)
+      - name: Build (Release, universal)
         run: |
           set -o pipefail
           xcodebuild \
-            -project HighlightCreator.xcodeproj \
-            -scheme HighlightCreator \
+            -project Cocut.xcodeproj \
+            -scheme Cocut \
             -configuration Release \
             -destination 'generic/platform=macOS' \
             -derivedDataPath build \
             ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGNING_ALLOWED=NO \
             build | xcbeautify --renderer github-actions
+
+      - name: Import signing certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          CERT_P12: ${{ secrets.COCUT_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.COCUT_CERT_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KC_PW="$(openssl rand -hex 12)"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PW" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          HASH="$(security find-certificate -c "Cocut Self-Signed" -Z "$KC" | awk '/SHA-1/ {print $NF}')"
+          echo "SIGN_IDENTITY=$HASH" >> "$GITHUB_ENV"
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Sign
+        run: |
+          APP="build/Build/Products/Release/Cocut.app"
+          IDENTITY="${SIGN_IDENTITY:--}"
+          [[ "$IDENTITY" == "-" ]] && echo "::notice::No COCUT_CERT_P12 secret; signing ad-hoc. Run scripts/setup-signing.sh once to keep Screen Recording permission across updates."
+          codesign --force --options runtime --timestamp=none \
+            --entitlements Cocut/Cocut.entitlements \
+            --sign "$IDENTITY" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dr - "$APP"
 
       - name: Package
         run: |
-          APP="build/Build/Products/Release/Highlight Creator.app"
-          codesign --verify --deep --strict "$APP"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" HighlightCreator.zip
-          echo "Built $(du -h HighlightCreator.zip | cut -f1) app"
+          ditto -c -k --sequesterRsrc --keepParent "build/Build/Products/Release/Cocut.app" Cocut.zip
+          echo "Built Cocut $VERSION: $(du -h Cocut.zip | cut -f1)"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: HighlightCreator-${{ github.sha }}
-          path: HighlightCreator.zip
+          name: Cocut-${{ env.VERSION }}-${{ github.run_number }}
+          path: Cocut.zip
           retention-days: 30
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: HighlightCreator.zip
+          files: Cocut.zip
           generate_release_notes: true

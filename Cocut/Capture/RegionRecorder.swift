@@ -7,6 +7,7 @@ enum RecorderError: LocalizedError {
     case displayNotFound
     case writerFailed(String)
     case noFrames
+    case startTimedOut
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +17,8 @@ enum RecorderError: LocalizedError {
             return "The clip couldn't be saved. \(reason)"
         case .noFrames:
             return "No video was captured. If the video was paused the whole time, press play and try again."
+        case .startTimedOut:
+            return "macOS didn't start the screen capture. Check System Settings › Privacy & Security › Screen & System Audio Recording, make sure Cocut is on, then quit and reopen Cocut."
         }
     }
 }
@@ -26,7 +29,7 @@ final class RegionRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     /// Called on the main queue if capture stops unexpectedly (display unplugged, permission revoked).
     var onUnexpectedStop: ((Error) -> Void)?
 
-    private let queue = DispatchQueue(label: "com.mjcocat.HighlightCreator.capture", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.mjcocat.Cocut.capture", qos: .userInitiated)
     private var stream: SCStream?
     private var writer: AVAssetWriter?
     private var input: AVAssetWriterInput?
@@ -41,7 +44,9 @@ final class RegionRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     static let frameRate: Int32 = 60
 
     func start(region: CaptureRegion, outputURL: URL) async throws {
+        Log.info("Starting capture: display \(region.displayID), rect \(region.rect)")
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        Log.info("Shareable content: \(content.displays.count) displays, \(content.applications.count) apps")
         guard let display = content.displays.first(where: { $0.displayID == region.displayID }) else {
             throw RecorderError.displayNotFound
         }
@@ -98,6 +103,7 @@ final class RegionRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
         try await stream.startCapture()
         self.stream = stream
+        Log.info("Capture running at \(pixelWidth)x\(pixelHeight) -> \(outputURL.lastPathComponent)")
     }
 
     /// Stops capture and finalizes the file. Returns the finished clip URL.
@@ -126,6 +132,7 @@ final class RegionRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
                 input.markAsFinished()
                 writer.endSession(atSourceTime: endTime)
                 writer.finishWriting {
+                    Log.info("Writer finished with status \(writer.status.rawValue)")
                     if writer.status == .completed {
                         continuation.resume(returning: writer.outputURL)
                     } else {
@@ -184,6 +191,7 @@ final class RegionRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     // MARK: SCStreamDelegate
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
+        Log.error("Stream stopped with error: \(error.localizedDescription)")
         DispatchQueue.main.async { [weak self] in
             self?.onUnexpectedStop?(error)
         }
