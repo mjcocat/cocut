@@ -2,7 +2,11 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.4.** Play-to-record capture, a reorderable clip list with trimming, menu bar controls, and in-app updates work. Player Card and Export come next.
+**Status: v0.5.** Everything from capture to a finished reel works:
+- play-to-record capture, including with the video in fullscreen
+- a reorderable clip library with trimming and import
+- a player card designer
+- MP4 export with an intro card, crossfades, captions, and an end card
 
 ## Install
 
@@ -30,6 +34,18 @@ CI builds aren't notarized, which requires a paid Apple Developer account. The i
 
 To record a whole display, choose **Record Full Screen** (**⇧⌘F**), or click **Use Full Screen** while selecting a region.
 
+### Recording with the video in fullscreen
+
+When YouTube or Hudl is in fullscreen (press **F** on YouTube, **\\** on Hudl), Cocut's window and menus are out of reach. Use the system-wide shortcuts instead:
+
+| Shortcut | Action |
+|---|---|
+| **⌥⌘F** | Record the full screen. Press again to finish. |
+| **⌥⌘N** | Select a region over the fullscreen video. Press again to finish. |
+| **⌥⌘R** | Record the last region again. Press again to finish. |
+
+The floating control tucks into the top-right corner and stays out of the recording.
+
 Tips:
 - Click the video once, then use the keyboard. Moving the mouse over the video makes the player's controls appear in the clip.
   - **YouTube:** Space or K to play/pause, ← → to skip 5s, J L to skip 10s, , . to step frames.
@@ -49,6 +65,34 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 | Rename a clip | Click its name under the player. |
 | Trim a clip | Click **Trim** and drag the yellow handles. The original file is kept, so **Reset Trim** undoes it. |
 | Delete clips | Select one, or several with ⌘-click or ⇧-click. Then press ⌫, or use the context menu. Deleted clips go to the Trash. |
+| Leave a clip out of the reel | Uncheck **In Reel**, or right-click › **Leave Out of Reel**. |
+| Import videos | Use **Import** (⌘I), or drag .mp4/.mov files onto the list. This works for Hudl downloads. |
+
+## Player Card
+
+The **Player Card** section designs the reel's intro card, and an optional end card with contact details. You can set:
+- a headshot (drag in a photo)
+- name, position, class year, height, age
+- club and high school with jersey numbers
+- hometown, GPA, contact details
+- up to six custom stats, such as approach touch or block touch
+
+Pick a layout (Split or Centered) and a team color. The preview updates as you type, and blank fields are left off the card. Everything is saved in `~/Movies/Cocut`.
+
+## Export
+
+The **Export** section (⌘E) shows the reel in order (intro card, included clips, end card) and its estimated length. You can choose:
+- how long each card is shown
+- cut or crossfade between clips
+- whether to show clip names as captions
+- whether to include sound
+- 720p, 1080p, or 4K, at 30 or 60 fps
+
+Click **Export Highlight Reel…** to save an MP4 (by default in `~/Movies/Cocut/Exports`). When it's done you can play it in place, share it, or show it in Finder.
+
+## Settings
+
+**Cocut › Settings…** adjusts how long a pause has to last before a clip is saved, the shortest clip to keep, and the save sound. It also lists every shortcut.
 
 **If something goes wrong,** Cocut shows an alert with a **Show Log** button. The log lives at `~/Library/Logs/Cocut/Cocut.log`. You can also open it from **Help › Show Log**.
 
@@ -94,7 +138,9 @@ Cocut/
 │   ├── CocutApp.swift        App entry, menus, menu bar extra
 │   ├── AppModel.swift        Recording flow, permission, errors
 │   ├── MenuBar.swift         Menu bar icon + menu
-│   ├── GlobalHotKey.swift    ⌥⌘R system-wide shortcut
+│   ├── GlobalHotKey.swift    ⌥⌘R/⌥⌘F/⌥⌘N system-wide shortcuts
+│   ├── AppSettings.swift     Preferences + Settings window
+│   ├── Splash.swift          Launch splash
 │   └── Log.swift             Unified log + ~/Library/Logs/Cocut
 ├── Capture/
 │   ├── CaptureRegion.swift   Region model + coordinate helpers
@@ -102,13 +148,14 @@ Cocut/
 │   ├── RegionRecorder.swift  ScreenCaptureKit → AVAssetWriter
 │   └── RecordingBorder.swift Red outline around the captured area
 ├── Library/                  Clip model, JSON index, thumbnails
+├── Profile/                  Player profile, card designs, editor
+├── Export/                   Reel composer (AVFoundation) + Export screen
 ├── Updates/                  GitHub Releases updater + sheet
 └── Views/                    Main window, clip grid, preview
 ```
 
 ## Roadmap
 
-1. **Clip editing.** Trim in/out points, drag to reorder, import existing video files.
-2. **Player card.** Headshot, name, grad year, position, height, club, and jersey number, rendered as a 4–5 second intro.
-3. **Export.** Stitch the intro and clips into a 1080p MP4 with progress.
-4. **Polish.** A spotlight ring on the athlete, transitions, music, and an app icon.
+- A spotlight ring to point out the athlete at the start of a clip
+- Background music under the reel
+- Multiple players or reels
