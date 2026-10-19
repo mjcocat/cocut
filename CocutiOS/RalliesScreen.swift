@@ -14,7 +14,7 @@ struct RalliesScreen: View {
     @State private var showingFiles = false
     @State private var loadingMatch = false
     @State private var sharing: URL?
-    @State private var saveMessage: String?
+    @State private var loadProblem: String?
 
     var body: some View {
         let finder = model.rallies
@@ -80,6 +80,7 @@ struct RalliesScreen: View {
             .photosPicker(isPresented: $showingPhotos, selection: $photoItem, matching: .videos,
                           preferredItemEncoding: .current)
             .onChange(of: photoItem) { _, item in
+                Log.info("Photos selection changed: \(item == nil ? "none" : "1 item")")
                 guard let item else { return }
                 photoItem = nil
                 Task { await loadFromPhotos(item) }
@@ -101,6 +102,12 @@ struct RalliesScreen: View {
             }
             .onChange(of: finder.lastCondensedURL) { _, url in
                 if let url { sharing = url }
+            }
+            .alert("Find Rallies", isPresented: Binding(get: { loadProblem != nil },
+                                                        set: { if !$0 { loadProblem = nil } })) {
+                Button("OK") { loadProblem = nil }
+            } message: {
+                Text(loadProblem ?? "")
             }
             .sheet(item: $sharing) { url in
                 FinishedVideoSheet(url: url, title: "Condensed Match")
@@ -151,7 +158,11 @@ struct RalliesScreen: View {
     private func loadFromPhotos(_ item: PhotosPickerItem) async {
         loadingMatch = true
         defer { loadingMatch = false }
-        guard let temp = await PickedMovie.load([item]).first else { return }
+        let loaded = await PickedMovie.load([item])
+        guard let temp = loaded.urls.first else {
+            loadProblem = (["Couldn't get that video from Photos."] + loaded.problems).joined(separator: "\n\n")
+            return
+        }
         do {
             let kept = try MatchFiles.keep(temp, move: true)
             PickedMovie.cleanUp([temp])

@@ -10,31 +10,51 @@ struct PickedMovie: Transferable {
     let url: URL
 
     static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(contentType: .movie) { movie in
-            SentTransferredFile(movie.url)
-        } importing: { received in
-            let dir = FileManager.default.temporaryDirectory
-                .appending(path: "CocutImports/\(UUID().uuidString)", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let destination = dir.appending(path: received.file.lastPathComponent)
-            try FileManager.default.copyItem(at: received.file, to: destination)
-            return PickedMovie(url: destination)
-        }
+        // Photos hands videos over as QuickTime or MPEG-4 files; accept any movie type.
+        FileRepresentation(importedContentType: .quickTimeMovie) { received in try keep(received.file) }
+        FileRepresentation(importedContentType: .mpeg4Movie) { received in try keep(received.file) }
+        FileRepresentation(importedContentType: .movie) { received in try keep(received.file) }
     }
 
-    /// Loads the picked items as local files, in order. Items that fail are skipped (and logged).
-    static func load(_ items: [PhotosPickerItem]) async -> [URL] {
+    /// The received file only exists during the import, so copy it somewhere it will last.
+    private static func keep(_ file: URL) throws -> PickedMovie {
+        let dir = FileManager.default.temporaryDirectory
+            .appending(path: "CocutImports/\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let destination = dir.appending(path: file.lastPathComponent)
+        try FileManager.default.copyItem(at: file, to: destination)
+        return PickedMovie(url: destination)
+    }
+
+    struct LoadResult {
         var urls: [URL] = []
-        for item in items {
+        /// Why items couldn't be loaded, for the message shown afterwards.
+        var problems: [String] = []
+    }
+
+    /// Loads the picked items as local files, in order. Every step is logged, and items that
+    /// fail are reported in `problems`.
+    static func load(_ items: [PhotosPickerItem]) async -> LoadResult {
+        var result = LoadResult()
+        Log.info("Photos picker returned \(items.count) item(s)")
+        for (i, item) in items.enumerated() {
+            let types = item.supportedContentTypes.map(\.identifier).joined(separator: ", ")
+            Log.info("Item \(i + 1) types: \(types.isEmpty ? "none" : types)")
             do {
                 if let movie = try await item.loadTransferable(type: PickedMovie.self) {
-                    urls.append(movie.url)
+                    let size = (try? FileManager.default.attributesOfItem(atPath: movie.url.path(percentEncoded: false))[.size] as? Int) ?? 0
+                    Log.info("Item \(i + 1) loaded: \(movie.url.lastPathComponent), \(size / 1_000_000) MB")
+                    result.urls.append(movie.url)
+                } else {
+                    Log.error("Item \(i + 1): Photos returned no movie (types: \(types))")
+                    result.problems.append("A selected item isn't a video Cocut can read.")
                 }
             } catch {
-                Log.error("Couldn't load a video from Photos: \(error.localizedDescription)")
+                Log.error("Item \(i + 1) couldn't be loaded from Photos: \(error)")
+                result.problems.append(error.localizedDescription)
             }
         }
-        return urls
+        return result
     }
 
     /// Removes the temporary copies once they've been imported.

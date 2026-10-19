@@ -10,6 +10,7 @@ struct ClipsScreen: View {
     @State private var showingPhotos = false
     @State private var showingFiles = false
     @State private var importStatus: String?
+    @State private var importProblem: String?
     @State private var newSectionName = ""
     @State private var namingSection = false
 
@@ -96,6 +97,10 @@ struct ClipsScreen: View {
                             .disabled(!library.canUndo)
                         Button("Redo \(library.redoName ?? "")", systemImage: "arrow.uturn.forward") { library.redo() }
                             .disabled(!library.canRedo)
+                        Divider()
+                        ShareLink(item: Log.fileURL) {
+                            Label("Share Log", systemImage: "doc.text")
+                        }
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
@@ -104,6 +109,7 @@ struct ClipsScreen: View {
             .photosPicker(isPresented: $showingPhotos, selection: $photoItems, matching: .videos,
                           preferredItemEncoding: .current)
             .onChange(of: photoItems) { _, items in
+                Log.info("Photos selection changed: \(items.count) item(s)")
                 guard !items.isEmpty else { return }
                 photoItems = []
                 Task { await importFromPhotos(items) }
@@ -113,6 +119,12 @@ struct ClipsScreen: View {
                 if case .success(let urls) = result {
                     Task { await importFiles(urls) }
                 }
+            }
+            .alert("Import", isPresented: Binding(get: { importProblem != nil },
+                                                  set: { if !$0 { importProblem = nil } })) {
+                Button("OK") { importProblem = nil }
+            } message: {
+                Text(importProblem ?? "")
             }
             .alert("New Section", isPresented: $namingSection) {
                 TextField("e.g. Kills", text: $newSectionName)
@@ -126,17 +138,31 @@ struct ClipsScreen: View {
     }
 
     private func importFromPhotos(_ items: [PhotosPickerItem]) async {
-        importStatus = items.count == 1 ? "Importing a video…" : "Importing \(items.count) videos…"
-        let urls = await PickedMovie.load(items)
-        _ = await model.library.importFiles(urls)
-        PickedMovie.cleanUp(urls)
+        importStatus = items.count == 1 ? "Getting the video from Photos…" : "Getting \(items.count) videos from Photos…"
+        let loaded = await PickedMovie.load(items)
+        importStatus = loaded.urls.count == 1 ? "Importing a video…" : "Importing \(loaded.urls.count) videos…"
+        let imported = await model.library.importFiles(loaded.urls)
+        PickedMovie.cleanUp(loaded.urls)
         importStatus = nil
+        report(imported: imported, of: items.count, problems: loaded.problems)
     }
 
     private func importFiles(_ urls: [URL]) async {
+        Log.info("Files picker returned \(urls.count) file(s)")
         importStatus = urls.count == 1 ? "Importing a video…" : "Importing \(urls.count) videos…"
-        _ = await model.library.importFiles(urls)
+        let imported = await model.library.importFiles(urls)
         importStatus = nil
+        report(imported: imported, of: urls.count, problems: [])
+    }
+
+    /// Says what happened, so an import never just silently does nothing.
+    private func report(imported: Int, of count: Int, problems: [String]) {
+        Log.info("Imported \(imported) of \(count) video(s)")
+        guard imported < count else { return }
+        var lines = [imported == 0 ? "No videos were imported." : "Imported \(imported) of \(count) videos."]
+        lines += Array(Set(problems)).sorted()
+        lines.append("Use Share Log in the + menu to send the details.")
+        importProblem = lines.joined(separator: "\n\n")
     }
 }
 
