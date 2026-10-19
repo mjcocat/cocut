@@ -71,6 +71,9 @@ struct RalliesScreen: View {
                             Button("Choose Another Match…", systemImage: "arrow.triangle.2.circlepath") {
                                 finder.reset()
                             }
+                            ShareLink(item: Log.fileURL) {
+                                Label("Share Log", systemImage: "doc.text")
+                            }
                         } label: {
                             Label("Done", systemImage: "checkmark.circle")
                         }

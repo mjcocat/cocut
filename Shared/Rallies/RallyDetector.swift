@@ -28,6 +28,9 @@ enum RallyDetector {
     struct NumberRead: Codable, Sendable, Hashable {
         var time: Double
         var number: Int
+        /// Where in the picture it was read (unit coordinates, Vision's bottom-left origin).
+        var x: Double = 0
+        var y: Double = 0
     }
 
     struct Span: Codable, Sendable, Hashable {
@@ -327,20 +330,39 @@ enum RallyDetector {
         generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 10)
 
         var reads: [NumberRead] = []
+        var rejected: [String: Int] = [:]
         for (i, t) in times.enumerated() {
             try Task.checkCancellation()
             if i % 20 == 0 { progress(Double(i) / Double(times.count)) }
             guard let image = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image else { continue }
-            for number in numbers(in: image) {
-                reads.append(NumberRead(time: t, number: number))
+            for found in numbers(in: image, rejected: &rejected) {
+                reads.append(NumberRead(time: t, number: found.number, x: found.x, y: found.y))
             }
         }
         progress(1)
-        return reads
+        let common = rejected.sorted { $0.value > $1.value }.prefix(15).map { "\"\($0.key)\"×\($0.value)" }
+        if !common.isEmpty { Log.info("Short text read but not taken as a number: \(common.joined(separator: ", "))") }
+        return dropStationary(reads)
     }
 
-    /// One- or two-digit numbers in the lower part of the picture (where the near team is).
-    static func numbers(in image: CGImage) -> [Int] {
+    /// Drops numbers that are nearly always read at the same spot: a sign, scoreboard or banner,
+    /// not a player (players move around).
+    static func dropStationary(_ reads: [NumberRead]) -> [NumberRead] {
+        let byNumber = Dictionary(grouping: reads, by: \.number)
+        var stationary: Set<Int> = []
+        for (number, list) in byNumber where list.count >= 6 {
+            let xs = list.map(\.x).sorted(), ys = list.map(\.y).sorted()
+            let mx = xs[xs.count / 2], my = ys[ys.count / 2]
+            let near = list.filter { abs($0.x - mx) < 0.02 && abs($0.y - my) < 0.02 }.count
+            if Double(near) / Double(list.count) > 0.8 { stationary.insert(number) }
+        }
+        if !stationary.isEmpty { Log.info("Ignoring numbers that never move (signs?): \(stationary.sorted())") }
+        return reads.filter { !stationary.contains($0.number) }
+    }
+
+    /// One- or two-digit numbers in the lower part of the picture (where the near team is), with
+    /// where each was read. Short text that isn't a number is counted in `rejected` for the log.
+    static func numbers(in image: CGImage, rejected: inout [String: Int]) -> [(number: Int, x: Double, y: Double)] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
@@ -353,18 +375,42 @@ enum RallyDetector {
         } catch {
             return []
         }
-        var found: [Int] = []
+        var found: [(Int, Double, Double)] = []
         for observation in request.results ?? [] {
-            for candidate in observation.topCandidates(2) where candidate.confidence >= 0.5 {
-                let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .replacingOccurrences(of: "#", with: "")
-                if (1...2).contains(text.count), text.allSatisfy(\.isNumber), let n = Int(text) {
-                    found.append(n)
+            let box = observation.boundingBox
+            var taken = false
+            for candidate in observation.topCandidates(3) where candidate.confidence >= 0.3 {
+                if let n = jerseyNumber(from: candidate.string) {
+                    found.append((n, Double(box.midX), Double(box.midY)))
+                    taken = true
                     break
                 }
             }
+            if !taken, let best = observation.topCandidates(1).first?.string, best.count <= 3 {
+                rejected[best, default: 0] += 1
+            }
         }
         return found
+    }
+
+    /// Text recognition reads a jersey's "1" as I, l or | about as often as as a digit (and "11"
+    /// as "II" or "ll"), since it's looking for words. Short readings are mapped back to digits.
+    static func jerseyNumber(from raw: String) -> Int? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "#", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        guard (1...2).contains(text.count) else { return nil }
+        let lookalikes: [Character: Character] = [
+            "I": "1", "l": "1", "|": "1", "i": "1", "!": "1", "]": "1", "[": "1", "j": "1", "J": "1",
+            "O": "0", "o": "0", "D": "0", "Q": "0",
+            "Z": "2", "z": "2", "S": "5", "s": "5", "B": "8", "G": "6", "b": "6", "g": "9", "q": "9",
+        ]
+        let digits = String(text.map { lookalikes[$0] ?? $0 })
+        guard digits.allSatisfy(\.isASCII), digits.allSatisfy(\.isNumber), let n = Int(digits) else { return nil }
+        // A two-letter word that maps to digits ("SO", "IO") is too risky unless it's the 1/11 case.
+        let letters = text.filter { !$0.isNumber }
+        if text.count == 2, letters.count == 2, !letters.allSatisfy({ "Il|i!".contains($0) }) { return nil }
+        return n
     }
 
     /// Numbers that appear in a rally: read at least twice in it. With a roster, only roster
