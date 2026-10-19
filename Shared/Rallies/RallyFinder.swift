@@ -47,9 +47,10 @@ final class RallyFinder {
     var rallies: [Rally] = []
     var selectedID: Rally.ID?
     /// Start each rally at the serve whistle (shows the server getting ready) instead of just
-    /// before the serve.
-    var includeServeSetup = true {
+    /// before the serve. Off by default: in a busy hall the setup is mostly walking around.
+    var includeServeSetup = UserDefaults.standard.bool(forKey: "rallyIncludeServeSetup") {
         didSet {
+            UserDefaults.standard.set(includeServeSetup, forKey: "rallyIncludeServeSetup")
             guard includeServeSetup != oldValue, !restoring else { return }
             pushUndo("Serve Setup", RallySnapshot(rallies: rallies, includeServeSetup: oldValue))
             rebuildRallies()

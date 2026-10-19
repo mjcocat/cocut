@@ -2,7 +2,7 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.15.1.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
+**Status: v0.15.2.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
 - play-to-record capture, including with the video in fullscreen
 - a reorderable clip library with trimming and import
 - a player card designer
@@ -119,7 +119,7 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 - Rallies added to Clips keep their players. In Clips, the filter's **Player** section finds every clip with that player.
 - Numbers on backs facing the camera read best. Import matches at **1080p or better**: at 720p, front-row numbers are often too small to read.
 
-How it works: from a fixed camera, the walls and ceiling above the net never move. During a rally the ball keeps crossing that area, so Cocut looks for a small, fast object there. The referee's whistle (a steady tone around 3–4 kHz) marks where each rally starts and ends. **Include serve setup** starts each rally at the serve whistle; turn it off to start just before the serve.
+How it works: from a fixed camera, the walls and ceiling above the net never move. During a rally the ball keeps crossing that area, so Cocut looks for a small, fast object there. The referee's whistle (a steady tone around 3–4 kHz) marks where each rally starts and ends. Each rally starts just before the serve. Turn on **Include serve setup** to start at the serve whistle instead (at most 5 seconds earlier), showing the server getting ready.
 
 Works best with:
 - a tripod behind the end line that doesn't pan or zoom

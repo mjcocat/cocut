@@ -73,7 +73,7 @@ enum RallyDetector {
         let spans = rallies(from: result, includeSetup: true)
         result.numbers = try await readNumbers(asset: asset, spans: spans) { progress(0.8 + $0 * 0.2) }
         Log.info("Rally analysis\(courtArea.map { " (court area \(Int($0.minX * 100))–\(Int($0.maxX * 100))% across, \(Int($0.minY * 100))–\(Int($0.maxY * 100))% down)" } ?? " (automatic area)"): \(bursts.count) ball bursts, \(whistles.count) whistles, ball zone \(Int(zone * 100))% of height, \(Int(duration))s")
-        Log.info("Read \(result.numbers.count) jersey numbers in \(spans.count) rallies: \(Set(result.numbers.map(\.number)).sorted())")
+        Log.info("Read \(result.numbers.count) jersey numbers in \(spans.count) rallies: \(readSummary(result.numbers))")
         return result
     }
 
@@ -460,9 +460,10 @@ enum RallyDetector {
     /// Text recognition reads a jersey's "1" as I, l or | about as often as as a digit (and "11"
     /// as "II" or "ll"), since it's looking for words. Short readings are mapped back to digits.
     static func jerseyNumber(from raw: String) -> Int? {
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "#", with: "")
-            .replacingOccurrences(of: " ", with: "")
+        // Drop punctuation the reader adds around a number ("26:", "26.", "$26", "#12").
+        let text = raw.replacingOccurrences(of: " ", with: "")
+            .trimmingCharacters(in: CharacterSet.punctuationCharacters
+                .union(.symbols).union(.whitespacesAndNewlines).subtracting(CharacterSet(charactersIn: "|!][")))
         guard (1...2).contains(text.count) else { return nil }
         let lookalikes: [Character: Character] = [
             "I": "1", "l": "1", "|": "1", "i": "1", "!": "1", "]": "1", "[": "1", "j": "1", "J": "1",
@@ -477,27 +478,59 @@ enum RallyDetector {
         return n
     }
 
-    /// Numbers that appear in a rally: read at least twice in it. With a roster, only roster
-    /// numbers count; without one, only numbers seen in at least two rallies (drops referees and
-    /// passers-by).
+    /// Numbers that appear in a rally. A number counts when it's read at least twice in the
+    /// rally, or once if it turns up all through the match (some numbers, like a lone 1, are
+    /// read only now and then). With a roster, only roster numbers count; without one, only
+    /// numbers seen across several rallies (drops referees and passers-by).
     static func players(in span: Span, reads: [NumberRead], roster: Set<Int>, frequent: Set<Int>) -> [Int] {
         var counts: [Int: Int] = [:]
         for r in reads where r.time >= span.start && r.time <= span.end {
             counts[r.number, default: 0] += 1
         }
         let allowed = roster.isEmpty ? frequent : roster
-        return counts.filter { $0.value >= 2 && allowed.contains($0.key) }.keys.sorted()
+        let established = establishedNumbers(reads: reads)
+        return counts.filter { number, count in
+            allowed.contains(number) && (count >= 2 || established.contains(number))
+        }.keys.sorted()
     }
 
-    /// Numbers read (twice or more) in at least two different rallies.
+    /// Numbers read twice or more in at least two rallies, or at least once in four or more.
     static func frequentNumbers(spans: [Span], reads: [NumberRead]) -> Set<Int> {
-        var rallyCount: [Int: Int] = [:]
+        var strong: [Int: Int] = [:], any: [Int: Int] = [:]
         for span in spans {
             var counts: [Int: Int] = [:]
             for r in reads where r.time >= span.start && r.time <= span.end { counts[r.number, default: 0] += 1 }
-            for (n, c) in counts where c >= 2 { rallyCount[n, default: 0] += 1 }
+            for (n, c) in counts {
+                any[n, default: 0] += 1
+                if c >= 2 { strong[n, default: 0] += 1 }
+            }
         }
-        return Set(rallyCount.filter { $0.value >= 2 }.keys)
+        return Set(strong.filter { $0.value >= 2 }.keys).union(any.filter { $0.value >= 4 }.keys)
+    }
+
+    /// Numbers read at least 8 times over the match, at moments spread across it (not one burst).
+    static func establishedNumbers(reads: [NumberRead]) -> Set<Int> {
+        var out: Set<Int> = []
+        for (number, list) in Dictionary(grouping: reads, by: \.number) where list.count >= 8 {
+            // At least four separate moments, a minute or more apart.
+            var moments = 0, last = -Double.infinity
+            for t in list.map(\.time).sorted() where t - last >= 60 {
+                moments += 1
+                last = t
+            }
+            if moments >= 4 { out.insert(number) }
+        }
+        return out
+    }
+
+    /// A line for the log: how often each number was read.
+    static func readSummary(_ reads: [NumberRead]) -> String {
+        Dictionary(grouping: reads, by: \.number)
+            .map { (number: $0.key, count: $0.value.count) }
+            .sorted { $0.count > $1.count }
+            .prefix(30)
+            .map { "#\($0.number)×\($0.count)" }
+            .joined(separator: " ")
     }
 
     // MARK: - Audio: referee whistles
