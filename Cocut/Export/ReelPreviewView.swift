@@ -112,8 +112,6 @@ struct ReelPreviewView: View {
             case .ready:
                 if let player = preview.player {
                     PreviewPlayerView(player: player)
-                    SpotlightOverlay()
-                        .allowsHitTesting(false)
                     CaptionOverlay()
                         .allowsHitTesting(false)
                 }
@@ -287,7 +285,7 @@ private struct PreviewPieceList: View {
                 .padding(.bottom, 6)
             ScrollViewReader { proxy in
                 List {
-                    ForEach(preview.pieces) { piece in
+                    ForEach(preview.pieces.filter { !$0.segment.isSpotlight }) { piece in
                         PreviewPieceRow(piece: piece, number: number(of: piece), isCurrent: current == piece.id)
                             .id(piece.id)
                             .contentShape(Rectangle())
@@ -409,29 +407,6 @@ private struct PreviewPlayerView: NSViewRepresentable {
 
     static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) {
         view.player = nil
-    }
-}
-
-/// The spotlight dimming and ring, drawn to match the export.
-private struct SpotlightOverlay: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let accent = model.profile.profile.accentColor
-        if let spot = model.preview.currentSpotlight {
-            Canvas { context, size in
-                let k = size.width / ReelPreview.renderSize.width
-                let c = CGPoint(x: spot.center.x * k, y: spot.center.y * k)
-                let r = max(spot.radius, 20 * ReelPreview.renderSize.height / 1080) * k
-                var dim = Path(CGRect(origin: .zero, size: size))
-                dim.addEllipse(in: CGRect(x: c.x - r * 1.15, y: c.y - r * 1.15, width: r * 2.3, height: r * 2.3))
-                context.fill(dim, with: .color(.black.opacity(0.55 * spot.dim)), style: FillStyle(eoFill: true))
-                let rr = r * spot.scale
-                let ring = Path(ellipseIn: CGRect(x: c.x - rr, y: c.y - rr, width: rr * 2, height: rr * 2))
-                context.stroke(ring, with: .color(accent.opacity(spot.ring)),
-                               lineWidth: 8 * size.height / 1080)
-            }
-        }
     }
 }
 

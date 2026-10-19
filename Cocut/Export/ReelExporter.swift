@@ -99,6 +99,8 @@ struct ReelSegment: Sendable {
     var clipID: UUID? = nil
     /// Ring the athlete on a frozen first frame.
     var spotlight: Spotlight? = nil
+    /// A spotlight still (rendered like a card), which cuts straight into its clip.
+    var isSpotlight = false
 }
 
 /// Builds the highlight reel: intro card, clips in order (trimmed), end card, with optional
@@ -269,9 +271,15 @@ final class ReelExporter {
                 }
                 let duration = clip.trimEndSeconds - clip.trimStartSeconds
                 guard duration > 0.1 else { continue }
+                if options.showSpotlights, let spot = clip.spotlight {
+                    status("Drawing the spotlight on “\(clip.title)”…")
+                    if let still = await spotlightSegment(clip: clip, url: url, spot: spot, accent: NSColor(profile.accentColor).cgColor,
+                                                          options: options, size: renderSize, fps: fps, work: work) {
+                        segments.append(still)
+                    }
+                }
                 segments.append(ReelSegment(url: url, start: clip.trimStartSeconds, duration: duration,
-                                            title: clip.title, isCard: false, crop: clip.cropRect, clipID: clip.id,
-                                            spotlight: options.showSpotlights ? clip.spotlight : nil))
+                                            title: clip.title, isCard: false, crop: clip.cropRect, clipID: clip.id))
             }
         }
         if profile.showEndCard {
@@ -280,6 +288,60 @@ final class ReelExporter {
                                                   size: renderSize, fps: fps, seconds: options.cardSeconds, work: work))
         }
         return segments
+    }
+
+    /// The clip's first frame as a short movie with the spotlight drawn on: the picture dims
+    /// around the athlete and a ring in the team color snaps in. Made like a card (a still turned
+    /// into frames), so it needs no video overlay. Nil if the frame can't be read.
+    private static func spotlightSegment(clip: Clip, url: URL, spot: Spotlight, accent: CGColor, options: ExportOptions,
+                                         size: CGSize, fps: Int32, work: URL) async -> ReelSegment? {
+        guard var frame = await SpotlightEditor.firstFrame(url: url, at: clip.trimStartSeconds, crop: clip.unitCrop) else {
+            Log.error("Couldn't read the first frame of \(clip.fileName) for its spotlight")
+            return nil
+        }
+        // Match the clip when black bars will be cropped away from it.
+        if clip.crop == nil, options.removeBlackBars {
+            let asset = AVURLAsset(url: url)
+            if let track = try? await asset.loadTracks(withMediaType: .video).first,
+               let natural = try? await track.load(.naturalSize),
+               let preferred = try? await track.load(.preferredTransform), preferred.isIdentity,
+               let bars = await ReelComposer.contentRect(asset: asset, natural: natural,
+                                                         range: CMTimeRange(start: CMTime(seconds: clip.trimStartSeconds, preferredTimescale: 600),
+                                                                            end: CMTime(seconds: clip.trimEndSeconds, preferredTimescale: 600))) {
+                let sx = CGFloat(frame.width) / natural.width, sy = CGFloat(frame.height) / natural.height
+                let rect = CGRect(x: bars.minX * sx, y: bars.minY * sy, width: bars.width * sx, height: bars.height * sy).integral
+                // The ring was placed on the uncropped frame: move it into the cropped picture.
+                if let cropped = frame.cropping(to: rect) {
+                    let fw = CGFloat(frame.width), fh = CGFloat(frame.height)
+                    var moved = spot
+                    moved.x = (spot.x * fw - rect.minX) / rect.width
+                    moved.y = (spot.y * fh - rect.minY) / rect.height
+                    moved.radius = spot.radius * fh / rect.height
+                    frame = cropped
+                    return await writeSpotlight(frame: frame, clip: clip, spot: moved, accent: accent, fill: options.fillFrame,
+                                                size: size, fps: fps, work: work)
+                }
+            }
+        }
+        return await writeSpotlight(frame: frame, clip: clip, spot: spot, accent: accent, fill: options.fillFrame,
+                                    size: size, fps: fps, work: work)
+    }
+
+    private static func writeSpotlight(frame: CGImage, clip: Clip, spot: Spotlight, accent: CGColor, fill: Bool,
+                                       size: CGSize, fps: Int32, work: URL) async -> ReelSegment? {
+        let movie = work.appending(path: "spotlight-\(UUID().uuidString).mov")
+        let seconds = ExportOptions.spotlightSeconds
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try SpotlightMovieWriter.write(frame: frame, spot: spot, accent: accent, fill: fill,
+                                               size: size, seconds: seconds, fps: fps, to: movie)
+            }.value
+        } catch {
+            Log.error("Couldn't draw the spotlight for \(clip.fileName): \(error.localizedDescription)")
+            return nil
+        }
+        return ReelSegment(url: movie, start: 0, duration: seconds, title: nil, isCard: true,
+                           cardLabel: "Spotlight", clipID: clip.id, isSpotlight: true)
     }
 
     private static func cardSegment(kind: CardKind, label: String, profile: PlayerProfile, headshot: NSImage?,
@@ -325,17 +387,6 @@ enum ReelComposer {
         let duration: Double
         /// When its name caption shows, for clips with a name.
         let caption: (start: Double, duration: Double)?
-        /// The spotlight ring, in render coordinates (top-left origin), and when it shows.
-        let spotlight: SpotlightTiming?
-    }
-
-    struct SpotlightTiming {
-        let center: CGPoint
-        let radius: CGFloat
-        /// Ring and dimming appear (when the clip is fully on screen).
-        let start: Double
-        /// The frozen frame ends and play starts.
-        let playStart: Double
     }
 
     /// Caption timing: shortly after the clip is fully on screen, for up to three seconds.
@@ -356,11 +407,8 @@ enum ReelComposer {
         let transform: CGAffineTransform
         /// Part of the source picture to show (natural coordinates), when black bars were found.
         let crop: CGRect?
-        let natural: CGSize
-        /// Seconds the first frame is held for a spotlight (0 without one).
-        let freeze: Double
-        /// Time on the timeline: the hold plus the clip.
-        var length: Double { freeze + segment.duration }
+        /// Time on the timeline.
+        var length: Double { segment.duration }
     }
 
     /// `forPlayback` leaves out the Core Animation captions, which only work when exporting
@@ -418,9 +466,8 @@ enum ReelComposer {
             } else {
                 transform = aspectFit(natural: natural, preferred: preferred, into: renderSize)
             }
-            let freeze = segment.spotlight != nil && !segment.isCard ? ExportOptions.spotlightSeconds : 0
             loaded.append(Loaded(asset: asset, segment: fixed, source: source, video: video, audio: audio, audioRange: audioRange,
-                                 transform: transform, crop: crop, natural: natural, freeze: freeze))
+                                 transform: transform, crop: crop))
         }
         guard !loaded.isEmpty else { throw ExportError.noClips }
 
@@ -442,7 +489,8 @@ enum ReelComposer {
         var overlaps: [Double] = Array(repeating: 0, count: max(0, n - 1))
         if options.transition == .crossfade {
             for i in 0..<(n - 1) {
-                overlaps[i] = min(ExportOptions.transitionSeconds,
+                // A spotlight still cuts straight into its clip (it is the clip's first frame).
+                overlaps[i] = loaded[i].segment.isSpotlight ? 0 : min(ExportOptions.transitionSeconds,
                                   loaded[i].length / 3, loaded[i + 1].length / 3)
             }
         }
@@ -454,15 +502,7 @@ enum ReelComposer {
             starts.append(cursor)
             let source = item.source
             do {
-                if item.freeze > 0 {
-                    // Spotlight: hold the first frame by stretching one frame of it.
-                    let frame = CMTimeMinimum(CMTime(value: 1, timescale: 30), source.duration)
-                    try videoTracks[i % 2].insertTimeRange(CMTimeRange(start: source.start, duration: frame),
-                                                           of: item.video, at: time(cursor))
-                    videoTracks[i % 2].scaleTimeRange(CMTimeRange(start: time(cursor), duration: frame),
-                                                      toDuration: time(item.freeze))
-                }
-                try videoTracks[i % 2].insertTimeRange(source, of: item.video, at: time(cursor + item.freeze))
+                try videoTracks[i % 2].insertTimeRange(source, of: item.video, at: time(cursor))
             } catch {
                 let ns = error as NSError
                 Log.error("Video insert failed for \(item.segment.url.lastPathComponent) range \(source.start.seconds)+\(source.duration.seconds): \(ns.domain) \(ns.code) \(ns.userInfo)")
@@ -474,7 +514,7 @@ enum ReelComposer {
                 if !overlap.isEmpty, overlap.duration.seconds > 0.05 {
                     let offset = overlap.start - source.start
                     do {
-                        try audioTracks[i % 2].insertTimeRange(overlap, of: audio, at: time(cursor + item.freeze) + offset)
+                        try audioTracks[i % 2].insertTimeRange(overlap, of: audio, at: time(cursor) + offset)
                     } catch {
                         let ns = error as NSError
                         Log.error("Audio insert failed for \(item.segment.url.lastPathComponent): \(ns.domain) \(ns.code); continuing without its sound")
@@ -534,20 +574,8 @@ enum ReelComposer {
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(options.frameRate))
         videoComposition.instructions = instructions
 
-        // Where and when each spotlight ring shows.
-        let spots: [SpotlightTiming?] = loaded.enumerated().map { i, item in
-            guard item.freeze > 0, let spot = item.segment.spotlight else { return nil }
-            let base = item.segment.crop ?? CGRect(origin: .zero, size: item.natural)
-            let shown = base.applying(item.transform).standardized
-            let visible = starts[i] + (i > 0 ? overlaps[i - 1] : 0)
-            return SpotlightTiming(center: CGPoint(x: shown.minX + spot.x * shown.width, y: shown.minY + spot.y * shown.height),
-                                   radius: spot.radius * shown.height,
-                                   start: visible, playStart: starts[i] + item.freeze)
-        }
-
-        if !forPlayback, options.showClipNames || spots.contains(where: { $0 != nil }) {
-            videoComposition.animationTool = overlayTool(loaded: loaded, starts: starts, overlaps: overlaps, spots: spots,
-                                                         captions: options.showClipNames,
+        if options.showClipNames, !forPlayback {
+            videoComposition.animationTool = captionTool(loaded: loaded, starts: starts, overlaps: overlaps,
                                                          renderSize: renderSize, accent: accent)
         }
 
@@ -571,10 +599,10 @@ enum ReelComposer {
             var caption: (start: Double, duration: Double)?
             if options.showClipNames, !item.segment.isCard,
                let title = item.segment.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty {
-                caption = captionTiming(visibleStart: max(visible, starts[i] + item.freeze), duration: item.segment.duration)
+                caption = captionTiming(visibleStart: visible, duration: item.segment.duration)
             }
             return Piece(id: i, segment: item.segment, start: starts[i], visibleStart: visible,
-                         duration: item.length, caption: caption, spotlight: spots[i])
+                         duration: item.length, caption: caption)
         }
 
         Log.info("Composed reel\(forPlayback ? " for preview" : ""): \(n) pieces, \(String(format: "%.1f", total))s at \(Int(renderSize.width))x\(Int(renderSize.height))")
@@ -666,9 +694,9 @@ enum ReelComposer {
     }
 
     /// Lower-third captions with each clip's name, faded in and out near the start of the clip.
-    /// Clip-name captions and spotlight rings, drawn over the video when exporting.
-    private static func overlayTool(loaded: [Loaded], starts: [Double], overlaps: [Double], spots: [SpotlightTiming?],
-                                    captions: Bool, renderSize: CGSize, accent: CGColor) -> AVVideoCompositionCoreAnimationTool {
+    /// Clip-name captions, drawn over the video when exporting.
+    private static func captionTool(loaded: [Loaded], starts: [Double], overlaps: [Double],
+                                    renderSize: CGSize, accent: CGColor) -> AVVideoCompositionCoreAnimationTool {
         let scale = renderSize.height / 1080
         let parent = CALayer()
         parent.frame = CGRect(origin: .zero, size: renderSize)
@@ -676,13 +704,9 @@ enum ReelComposer {
         video.frame = parent.frame
         parent.addSublayer(video)
 
-        for spot in spots.compactMap({ $0 }) {
-            addSpotlight(spot, to: parent, renderSize: renderSize, scale: scale, accent: accent)
-        }
-
-        for (i, item) in loaded.enumerated() where captions && !item.segment.isCard {
+        for (i, item) in loaded.enumerated() where !item.segment.isCard {
             guard let title = item.segment.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty else { continue }
-            let timing = captionTiming(visibleStart: max(starts[i] + (i > 0 ? overlaps[i - 1] : 0), starts[i] + item.freeze),
+            let timing = captionTiming(visibleStart: starts[i] + (i > 0 ? overlaps[i - 1] : 0),
                                        duration: item.segment.duration)
             let visibleStart = timing.start, visibleFor = timing.duration
 
@@ -730,68 +754,19 @@ enum ReelComposer {
         return AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: video, in: parent)
     }
 
-    /// The spotlight: everything but the athlete dims while the frame is held, and a ring in the
-    /// team color snaps in around them, staying a moment after play starts.
-    private static func addSpotlight(_ spot: SpotlightTiming, to parent: CALayer, renderSize: CGSize,
-                                     scale: CGFloat, accent: CGColor) {
-        // Core Animation's origin is bottom-left.
-        let center = CGPoint(x: spot.center.x, y: renderSize.height - spot.center.y)
-        let r = max(spot.radius, 20 * scale)
-        let hole = CGRect(x: center.x - r * 1.15, y: center.y - r * 1.15, width: r * 2.3, height: r * 2.3)
-        let dimEnd = spot.playStart + 0.25
-        let ringEnd = spot.playStart + 0.8
-
-        let dim = CAShapeLayer()
-        dim.frame = parent.bounds
-        let path = CGMutablePath()
-        path.addRect(parent.bounds)
-        path.addEllipse(in: hole)
-        dim.path = path
-        dim.fillRule = .evenOdd
-        dim.fillColor = CGColor(gray: 0, alpha: 0.55)
-        dim.opacity = 0
-        dim.add(keyframes("opacity", [0, 1, 1, 0],
-                          times: [spot.start, spot.start + 0.25, spot.playStart, dimEnd]), forKey: "dim")
-        parent.addSublayer(dim)
-
-        let ring = CAShapeLayer()
-        ring.bounds = CGRect(x: 0, y: 0, width: r * 2, height: r * 2)
-        ring.position = center
-        ring.path = CGPath(ellipseIn: ring.bounds, transform: nil)
-        ring.fillColor = nil
-        ring.strokeColor = accent
-        ring.lineWidth = 8 * scale
-        ring.shadowColor = CGColor(gray: 0, alpha: 1)
-        ring.shadowOpacity = 0.6
-        ring.shadowRadius = 10 * scale
-        ring.shadowOffset = .zero
-        ring.opacity = 0
-        ring.add(keyframes("opacity", [0, 1, 1, 0],
-                           times: [spot.start, spot.start + 0.2, ringEnd - 0.3, ringEnd]), forKey: "ringFade")
-        ring.add(keyframes("transform.scale", [1.9, 1.0, 1.0],
-                           times: [spot.start, spot.start + 0.35, ringEnd]), forKey: "ringScale")
-        parent.addSublayer(ring)
-    }
-
-    /// A one-shot keyframe animation at absolute reel times.
-    private static func keyframes(_ keyPath: String, _ values: [Double], times: [Double]) -> CAKeyframeAnimation {
-        let begin = times.first ?? 0
-        let total = max(0.01, (times.last ?? 0) - begin)
-        let animation = CAKeyframeAnimation(keyPath: keyPath)
-        animation.values = values
-        animation.keyTimes = times.map { NSNumber(value: ($0 - begin) / total) }
-        animation.beginTime = AVCoreAnimationBeginTimeAtZero + begin
-        animation.duration = total
-        animation.isRemovedOnCompletion = false
-        animation.fillMode = .both
-        return animation
-    }
 }
 
 // MARK: - Card movies
 
 /// Turns a still card into a short H.264 movie, with an optional fade from or to black.
 enum CardMovieWriter {
+    /// Standard HD color tags, so every part of the reel is interpreted the same way.
+    static let colorProperties: [String: Any] = [
+        AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+        AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+        AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+    ]
+
     static func write(_ image: CGImage, size: CGSize, seconds: Double, fps: Int32,
                       fadeIn: Bool, fadeOut: Bool, to url: URL) throws {
         let width = Int(size.width), height = Int(size.height)
@@ -805,6 +780,7 @@ enum CardMovieWriter {
                 AVVideoAverageBitRateKey: width * height * 4,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
             ],
+            AVVideoColorPropertiesKey: CardMovieWriter.colorProperties,
         ]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
@@ -869,6 +845,105 @@ enum CardMovieWriter {
         context.setAlpha(alpha)
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return buffer
+    }
+}
+
+// MARK: - Spotlight movies
+
+/// A clip's first frame held for a moment: the picture dims around the athlete and a ring
+/// snaps in. Drawn frame by frame, like the cards.
+enum SpotlightMovieWriter {
+    static func write(frame: CGImage, spot: Spotlight, accent: CGColor, fill: Bool,
+                      size: CGSize, seconds: Double, fps: Int32, to url: URL) throws {
+        let width = Int(size.width), height = Int(size.height)
+        try? FileManager.default.removeItem(at: url)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [
+                AVVideoAverageBitRateKey: width * height * 6,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+            ],
+            AVVideoColorPropertiesKey: CardMovieWriter.colorProperties,
+        ])
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
+        guard writer.canAdd(input) else { throw ExportError.cardFailed }
+        writer.add(input)
+        guard writer.startWriting() else { throw ExportError.cardFailed }
+        writer.startSession(atSourceTime: .zero)
+
+        // Where the picture lands in the frame (fit, or fill when the reel fills the frame).
+        let iw = CGFloat(frame.width), ih = CGFloat(frame.height)
+        let s = fill ? max(size.width / iw, size.height / ih) : min(size.width / iw, size.height / ih)
+        let pic = CGRect(x: (size.width - iw * s) / 2, y: (size.height - ih * s) / 2, width: iw * s, height: ih * s)
+        // Spotlight in Core Graphics coordinates (origin bottom-left).
+        let center = CGPoint(x: pic.minX + spot.x * pic.width, y: size.height - (pic.minY + spot.y * pic.height))
+        let radius = max(spot.radius * pic.height, 20 * size.height / 1080)
+        let line = 8 * size.height / 1080
+
+        let total = max(1, Int(seconds * Double(fps)))
+        for i in 0..<total {
+            try Task.checkCancellation()
+            let t = Double(i) / Double(fps)
+            func ease(_ p: Double) -> Double { let c = min(1, max(0, p)); return 1 - (1 - c) * (1 - c) }
+            let dim = 0.55 * ease(t / 0.25)
+            let ringAlpha = ease(t / 0.2)
+            let scale = 1.9 - 0.9 * ease(t / 0.35)
+            guard let buffer = makeBuffer(width: width, height: height, draw: { ctx in
+                ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+                ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+                ctx.interpolationQuality = .high
+                ctx.draw(frame, in: CGRect(x: pic.minX, y: size.height - pic.maxY, width: pic.width, height: pic.height))
+                // Dim everything outside a circle around the athlete.
+                let hole = CGRect(x: center.x - radius * 1.15, y: center.y - radius * 1.15,
+                                  width: radius * 2.3, height: radius * 2.3)
+                ctx.addRect(CGRect(x: 0, y: 0, width: width, height: height))
+                ctx.addEllipse(in: hole)
+                ctx.setFillColor(CGColor(gray: 0, alpha: dim))
+                ctx.fillPath(using: .evenOdd)
+                // The ring.
+                let r = radius * scale
+                ctx.saveGState()
+                ctx.setShadow(offset: .zero, blur: 10 * size.height / 1080, color: CGColor(gray: 0, alpha: 0.6 * ringAlpha))
+                ctx.setStrokeColor(accent.copy(alpha: ringAlpha) ?? accent)
+                ctx.setLineWidth(line)
+                ctx.strokeEllipse(in: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
+                ctx.restoreGState()
+            }) else { throw ExportError.cardFailed }
+            while !input.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.002) }
+            guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: fps)) else {
+                throw ExportError.cardFailed
+            }
+        }
+        input.markAsFinished()
+        writer.endSession(atSourceTime: CMTime(value: CMTimeValue(total), timescale: fps))
+        let done = DispatchSemaphore(value: 0)
+        writer.finishWriting { done.signal() }
+        done.wait()
+        guard writer.status == .completed else { throw ExportError.cardFailed }
+    }
+
+    private static func makeBuffer(width: Int, height: Int, draw: (CGContext) -> Void) -> CVPixelBuffer? {
+        var buffer: CVPixelBuffer?
+        let attrs: [String: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+        ]
+        guard CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
+                                  attrs as CFDictionary, &buffer) == kCVReturnSuccess,
+              let buffer else { return nil }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        guard let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                          | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
+        draw(context)
         return buffer
     }
 }
