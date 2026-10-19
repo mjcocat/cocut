@@ -169,10 +169,9 @@ final class ProfileStore {
     private var profileURL: URL { directory.appending(path: "profile.json") }
     private var headshotURL: URL { directory.appending(path: "headshot.png") }
 
-    init() {
-        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Movies")
-        directory = movies.appending(path: "Cocut", directoryHint: .isDirectory)
+    /// Opens the Player Card of the project in `directory`.
+    init(directory: URL) {
+        self.directory = directory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         if let data = try? Data(contentsOf: directory.appending(path: "profile.json")),

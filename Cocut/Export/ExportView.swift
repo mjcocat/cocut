@@ -320,6 +320,7 @@ private struct FinishedCard: View {
     let url: URL
     let onDone: () -> Void
     @State private var player: AVPlayer?
+    @State private var uploading = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -332,6 +333,12 @@ private struct FinishedCard: View {
                     Text(url.lastPathComponent).foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button {
+                    uploading = true
+                } label: {
+                    Label("Upload to YouTube…", systemImage: "play.rectangle.fill")
+                }
+                .help("Upload as an unlisted video, with a description from your Player Card")
                 ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up") }
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                 Button("Done", action: onDone)
@@ -346,6 +353,7 @@ private struct FinishedCard: View {
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.green.opacity(0.08)))
         .onAppear { player = AVPlayer(url: url) }
         .onDisappear { player?.pause() }
+        .sheet(isPresented: $uploading) { YouTubeUploadSheet(file: url) }
     }
 }
 

@@ -13,11 +13,14 @@ struct ClipFilter: Equatable {
     var tagID: UUID?
     var player: Int?
     var action: PlayAction?
+    /// Only clips with at least this many stars.
+    var minStars: Int?
 
-    var isActive: Bool { tagID != nil || player != nil || action != nil }
+    var isActive: Bool { tagID != nil || player != nil || action != nil || minStars != nil }
 
     func matches(_ clip: Clip) -> Bool {
         if let tagID, !clip.tags.contains(tagID) { return false }
+        if let minStars, clip.stars < minStars { return false }
         if let action {
             return clip.playList.contains { play in
                 play.action == action && (player == nil || play.player == player)
@@ -38,6 +41,11 @@ struct ClipFilter: Equatable {
         }
         if let tagID, let tag = library.tag(withID: tagID) {
             parts.append(parts.isEmpty ? "clips tagged “\(tag.name)”" : "tagged “\(tag.name)”")
+        }
+        if let minStars {
+            let stars = String(repeating: "★", count: minStars)
+            parts.append(parts.isEmpty ? "clips rated \(stars)\(minStars < 5 ? " or better" : "")"
+                                       : "rated \(stars)\(minStars < 5 ? "+" : "")")
         }
         return parts.joined(separator: " ")
     }
@@ -85,6 +93,15 @@ struct FilterMenu: View {
                     }
                 }
             }
+            Section("Rating") {
+                ForEach([5, 4, 3], id: \.self) { n in
+                    Button {
+                        filter.minStars = filter.minStars == n ? nil : n
+                    } label: {
+                        checked(String(repeating: "★", count: n) + (n < 5 ? " or better" : " only"), filter.minStars == n)
+                    }
+                }
+            }
             if !library.tags.isEmpty {
                 Section("Tag") {
                     ForEach(library.tags) { tag in
@@ -105,7 +122,7 @@ struct FilterMenu: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Show only some clips: by player (#11), by play (Kills), or by tag. Pick a player and a play to combine them.")
-        .disabled(players.isEmpty && (!Features.playTagging || library.usedActions.isEmpty) && library.tags.isEmpty)
+        .disabled(library.clips.isEmpty)
     }
 
     @ViewBuilder
@@ -468,4 +485,29 @@ struct PlayerNumbersBar: View {
 extension String {
     /// nil for an empty string.
     var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+// MARK: - Star rating
+
+/// Five clickable stars. Clicking the current rating clears it.
+struct StarRating: View {
+    let rating: Int
+    var size: CGFloat = 14
+    let onSet: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: size * 0.15) {
+            ForEach(1...5, id: \.self) { n in
+                Button {
+                    onSet(n == rating ? 0 : n)
+                } label: {
+                    Image(systemName: n <= rating ? "star.fill" : "star")
+                        .font(.system(size: size))
+                        .foregroundStyle(n <= rating ? Color.yellow : Color.secondary.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+                .help(n == rating ? "Clear the rating" : "\(n) star\(n == 1 ? "" : "s")")
+            }
+        }
+    }
 }

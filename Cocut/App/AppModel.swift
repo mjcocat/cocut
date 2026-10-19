@@ -19,12 +19,17 @@ enum RecordingPhase: Equatable {
 @MainActor
 @Observable
 final class AppModel {
-    let library = ClipLibrary()
+    let projects: ProjectStore
+    /// The open project's clips. Replaced when another project is opened.
+    private(set) var library: ClipLibrary
     let updater = Updater()
-    let profile = ProfileStore()
+    /// The open project's Player Card.
+    private(set) var profile: ProfileStore
     let exporter = ReelExporter()
     let preview = ReelPreview()
     let rallies = RallyFinder()
+    let youtube = YouTubeAccount()
+    let uploader = YouTubeUploader()
     let settings = AppSettings()
 
     /// Lets menu commands switch the main window's sidebar section.
@@ -95,6 +100,11 @@ final class AppModel {
     }
 
     init() {
+        let projects = ProjectStore()
+        self.projects = projects
+        let dir = projects.directory(for: projects.current)
+        library = ClipLibrary(directory: dir)
+        profile = ProfileStore(directory: dir)
         lastRegion = Self.load(CaptureRegion.self, forKey: Keys.lastRegion)
         aspect = AspectPreset(rawValue: UserDefaults.standard.string(forKey: Keys.aspect) ?? "") ?? .widescreen
         captureMode = CaptureMode(rawValue: UserDefaults.standard.string(forKey: Keys.mode) ?? "") ?? .auto
@@ -130,6 +140,42 @@ final class AppModel {
         updater.isBusy = { [weak self] in self?.isBusy ?? false }
         updater.startAutomaticChecks()
         rallies.roster = { [weak self] in Set(self?.library.roster.map(\.number) ?? []) }
+    }
+
+    // MARK: Projects
+
+    /// Opens another project. Not while recording or exporting.
+    func openProject(_ id: UUID) {
+        guard id != projects.currentID, !isBusy, !exporter.isRunning else { return }
+        projects.select(id)
+        let dir = projects.directory(for: projects.current)
+        library = ClipLibrary(directory: dir)
+        profile = ProfileStore(directory: dir)
+        preview.close()
+        exporter.reset()
+        requestedSection = .clips
+        Log.info("Opened project “\(projects.current.name)”")
+    }
+
+    func createProject(name: String, copyCard: Bool) {
+        let project = projects.create(name: name, copyingCardFrom: copyCard ? projects.current : nil)
+        openProject(project.id)
+    }
+
+    func deleteProject(_ id: UUID) {
+        let wasCurrent = id == projects.currentID
+        do {
+            try projects.delete(id)
+        } catch {
+            presentError("The project couldn't be moved to the Trash. \(error.localizedDescription)", title: "Delete Project")
+            return
+        }
+        if wasCurrent {
+            let dir = projects.directory(for: projects.current)
+            library = ClipLibrary(directory: dir)
+            profile = ProfileStore(directory: dir)
+            preview.close()
+        }
     }
 
     // MARK: Permission

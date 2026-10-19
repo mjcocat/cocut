@@ -18,6 +18,11 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
+            VStack(spacing: 0) {
+            ProjectSwitcher()
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+                .padding(.bottom, 4)
             List(selection: $selection) {
                 Section("Highlight Reel") {
                     Label("Clips", systemImage: "film.stack")
@@ -30,16 +35,21 @@ struct ContentView: View {
                         .tag(SidebarItem.export)
                 }
             }
+            }
             .navigationSplitViewColumnWidth(min: 190, ideal: 214, max: 280)
         } detail: {
-            switch selection ?? .clips {
-            case .clips:
-                ClipsView()
-            case .playerCard:
-                PlayerCardEditor()
-            case .export:
-                ExportView()
+            Group {
+                switch selection ?? .clips {
+                case .clips:
+                    ClipsView()
+                case .playerCard:
+                    PlayerCardEditor()
+                case .export:
+                    ExportView()
+                }
             }
+            // Fresh screens (selection, scroll position) for each project.
+            .id(model.projects.currentID)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
