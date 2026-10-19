@@ -129,6 +129,7 @@ final class AppModel {
         updater.checkForFailedInstall()
         updater.isBusy = { [weak self] in self?.isBusy ?? false }
         updater.startAutomaticChecks()
+        rallies.roster = { [weak self] in Set(self?.library.roster.map(\.number) ?? []) }
     }
 
     // MARK: Permission
