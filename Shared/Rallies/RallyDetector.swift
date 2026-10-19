@@ -438,7 +438,8 @@ enum RallyDetector {
             let torso = CGRect(x: body.minX - body.width * 0.15, y: body.minY + body.height * 0.42,
                                width: body.width * 1.3, height: body.height * 0.48)
                 .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-            guard torso.width > 0.01, torso.height > 0.01 else { continue }
+            // Too small to hold a readable number (and text recognition errors on tiny regions).
+            guard torso.width * Double(image.width) >= 40, torso.height * Double(image.height) >= 40 else { continue }
             var reads = recognize(handler, in: torso, minimumTextHeight: 0.012, level: .accurate, rejected: &rejected, problems: &problems)
             if reads.isEmpty {
                 // The fast recognizer works character by character and catches a lone "1" the
@@ -495,10 +496,11 @@ enum RallyDetector {
         // Drop punctuation the reader adds around a number ("26:", "26.", "$26", "#12").
         let text = raw.replacingOccurrences(of: " ", with: "")
             .trimmingCharacters(in: CharacterSet.punctuationCharacters
-                .union(.symbols).union(.whitespacesAndNewlines).subtracting(CharacterSet(charactersIn: "|!][")))
+                .union(.symbols).union(.whitespacesAndNewlines).subtracting(CharacterSet(charactersIn: "|!][/\\")))
         guard (1...2).contains(text.count) else { return nil }
         let lookalikes: [Character: Character] = [
-            "I": "1", "l": "1", "|": "1", "i": "1", "!": "1", "]": "1", "[": "1", "j": "1", "J": "1",
+            // In a slanted jersey font a "1" is a single diagonal stroke: "/" or "\\".
+            "I": "1", "l": "1", "|": "1", "i": "1", "!": "1", "]": "1", "[": "1", "j": "1", "J": "1", "/": "1", "\\": "1",
             "O": "0", "o": "0", "D": "0", "Q": "0",
             "Z": "2", "z": "2", "S": "5", "s": "5", "B": "8", "G": "6", "b": "6", "g": "9", "q": "9",
         ]
@@ -506,7 +508,7 @@ enum RallyDetector {
         guard digits.allSatisfy(\.isASCII), digits.allSatisfy(\.isNumber), let n = Int(digits) else { return nil }
         // A two-letter word that maps to digits ("SO", "IO") is too risky unless it's the 1/11 case.
         let letters = text.filter { !$0.isNumber }
-        if text.count == 2, letters.count == 2, !letters.allSatisfy({ "Il|i!".contains($0) }) { return nil }
+        if text.count == 2, letters.count == 2, !letters.allSatisfy({ "Il|i!/\\".contains($0) }) { return nil }
         return n
     }
 
