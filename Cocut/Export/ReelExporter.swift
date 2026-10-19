@@ -884,7 +884,8 @@ enum CardMovieWriter {
         context.setAlpha(alpha)
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        if let (colors, fraction) = bar {
+        if let bar {
+            let (colors, fraction) = bar
             // Along the very bottom (Core Graphics' origin is bottom-left).
             let h = max(4, CGFloat(height) * 10 / 1080)
             context.setFillColor(colors.track)
