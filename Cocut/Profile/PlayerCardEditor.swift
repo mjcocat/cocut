@@ -51,10 +51,18 @@ struct PlayerCardEditor: View {
                         }
                     }
                     section("Design") {
-                        Picker("Layout", selection: $store.profile.style) {
-                            ForEach(CardStyle.allCases) { Text($0.title).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
+                        designPicker("Layout", options: CardStyle.allCases, selected: store.profile.style,
+                                     title: \.title) { style in
+                            var p = store.profile
+                            p.style = style
+                            return p
+                        } select: { store.profile.style = $0 }
+                        designPicker("Theme", options: CardTheme.allCases, selected: store.profile.theme,
+                                     title: \.title) { theme in
+                            var p = store.profile
+                            p.theme = theme
+                            return p
+                        } select: { store.profile.theme = $0 }
                         accentPicker
                         Toggle("End the reel with a contact card", isOn: $store.profile.showEndCard)
                     }
@@ -103,6 +111,47 @@ struct PlayerCardEditor: View {
         }
         .padding(.top, 18)
         .background(Color(nsColor: .underPageBackgroundColor))
+    }
+
+    // MARK: Design thumbnails
+
+    /// A row of live mini cards, one per option; click to choose.
+    private func designPicker<T: Hashable & Identifiable>(_ label: String, options: [T], selected: T,
+                                                          title: KeyPath<T, String>,
+                                                          profile: @escaping (T) -> PlayerProfile,
+                                                          select: @escaping (T) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.callout.weight(.medium))
+            ScrollView(.horizontal) {
+                HStack(spacing: 10) {
+                    ForEach(options) { option in
+                        let isOn = option == selected
+                        Button {
+                            select(option)
+                        } label: {
+                            VStack(spacing: 4) {
+                                PlayerCardView(profile: profile(option), headshot: store.headshot, kind: .intro)
+                                    .scaleEffect(120 / PlayerCardView.canvas.width, anchor: .topLeading)
+                                    .frame(width: 120, height: 67.5, alignment: .topLeading)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .strokeBorder(isOn ? Color.accentColor : Color.primary.opacity(0.15),
+                                                          lineWidth: isOn ? 3 : 1)
+                                    )
+                                Text(option[keyPath: title])
+                                    .font(.caption)
+                                    .foregroundStyle(isOn ? Color.primary : Color.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .help(option[keyPath: title])
+                    }
+                }
+                .padding(.vertical, 3)
+            }
+            .scrollIndicators(.never)
+        }
     }
 
     // MARK: Sections

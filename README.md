@@ -95,7 +95,7 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 **Find Rallies** (⇧⌘M, or the 🏐 toolbar button) takes a whole match video and finds the rallies, so an hour of film becomes about 15–25 minutes of play.
 
 1. Choose the match video (or drop it on the window). Cocut analyzes it on your Mac, which takes a few minutes for an hour of video.
-2. Review: the strip under the video shows the whole match, with each rally as a blue block. **Rallies only** plays just the kept rallies back to back. Uncheck any rally that isn't one. Select a rally to nudge its start or end, or set either to the playhead. **Add Rally Here** adds one it missed.
+2. Review: the strip under the video shows the whole match, with each rally as a blue block. **Rallies only** plays the rallies back to back, skipping dead time. Checked rallies are the ones you keep. Use **Keep: All** to start with everything and uncheck the duds, or **Keep: None** to watch them all and check only the plays you want. Select a rally to nudge its start or end, or set either to the playhead. **Add Rally Here** adds one it missed.
 3. Choose **Add to Clips** to make every kept rally a clip, in a new section named after the match, ready to tag and use in a reel. Or choose **Export Condensed Match…** to save the rallies back to back as one video.
 
 **Players in each rally.** While finding rallies, Cocut also reads jersey numbers, twice a second, using the Mac's built-in text recognition. Each rally lists the players it saw, like "#15 #50 #30".
@@ -144,7 +144,11 @@ The **Player Card** section designs the reel's intro card, and an optional end c
 - hometown, GPA, contact details
 - up to six custom stats, such as approach touch or block touch
 
-Pick a layout (Split or Centered) and a team color: one of the presets, or any color with **Custom**. The preview updates as you type, and blank fields are left off the card. Everything is saved in `~/Movies/Cocut`.
+Pick a **layout** and a **theme** from the live thumbnails, and a team color: one of the presets, or any color with **Custom**.
+- **Layouts:** Split, Centered, Poster (full-height photo with your number behind the name), Jersey (a giant number as the backdrop) and Minimal (a clean stat sheet).
+- **Themes:** Night, Light, Team Color (the whole card in your team color) and Varsity (cream with stripes and serif type).
+- Every layout works with every theme. Text colors adjust so light team colors like gold stay readable, and section divider and end cards follow the theme too.
+ The preview updates as you type, and blank fields are left off the card. Everything is saved in `~/Movies/Cocut`.
 
 ## Preview
 

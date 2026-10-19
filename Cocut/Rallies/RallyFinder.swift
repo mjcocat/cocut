@@ -49,7 +49,8 @@ final class RallyFinder {
     var includeServeSetup = true {
         didSet { if includeServeSetup != oldValue { rebuildRallies() } }
     }
-    /// Playback skips the dead time between kept rallies.
+    /// Playback skips the dead time between rallies (checked or not, so you can watch them all
+    /// and check the ones you want).
     var watchCondensed = true
     /// Show only rallies with this jersey number.
     var playerFilter: Int?
@@ -187,6 +188,14 @@ final class RallyFinder {
 
     // MARK: Editing
 
+    /// Checks or unchecks every rally in the list (only the filtered ones when a player filter is on).
+    func setAllIncluded(_ included: Bool) {
+        let ids = Set(visibleRallies.map(\.id))
+        for i in rallies.indices where ids.contains(rallies[i].id) {
+            rallies[i].isIncluded = included
+        }
+    }
+
     func toggle(_ id: Rally.ID) {
         guard let i = rallies.firstIndex(where: { $0.id == id }) else { return }
         rallies[i].isIncluded.toggle()
@@ -261,9 +270,9 @@ final class RallyFinder {
     private func tick(_ t: Double) {
         currentTime = t
         guard watchCondensed, isPlaying, !skipping else { return }
-        let kept = keptRallies
+        let kept = visibleRallies
         guard !kept.isEmpty else { return }
-        // Inside a kept rally: carry on. In dead time: jump to the next kept rally.
+        // Inside a rally: carry on. In dead time: jump to the next rally in the list.
         if kept.contains(where: { t >= $0.start - 0.05 && t < $0.end }) { return }
         if let next = kept.first(where: { $0.start > t }) {
             skipping = true
@@ -281,9 +290,9 @@ final class RallyFinder {
         if player.rate != 0 {
             player.pause()
         } else {
-            if watchCondensed, let first = keptRallies.first,
-               !keptRallies.contains(where: { currentTime >= $0.start && currentTime < $0.end }),
-               keptRallies.first(where: { $0.start > currentTime }) == nil {
+            if watchCondensed, let first = visibleRallies.first,
+               !visibleRallies.contains(where: { currentTime >= $0.start && currentTime < $0.end }),
+               visibleRallies.first(where: { $0.start > currentTime }) == nil {
                 seek(to: first.start) // past the last rally: start over
             }
             player.play()
@@ -303,7 +312,7 @@ final class RallyFinder {
     }
 
     func step(by offset: Int) {
-        let list = watchCondensed ? keptRallies : visibleRallies
+        let list = visibleRallies
         guard !list.isEmpty else { return }
         let index = list.lastIndex { $0.start <= currentTime + 0.05 }
         let target: Int

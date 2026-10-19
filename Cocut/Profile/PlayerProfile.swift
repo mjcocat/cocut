@@ -9,12 +9,29 @@ struct StatLine: Codable, Identifiable, Hashable {
 }
 
 enum CardStyle: String, Codable, CaseIterable, Identifiable {
-    case split, centered
+    case split, centered, poster, jersey, minimal
     var id: String { rawValue }
     var title: String {
         switch self {
         case .split: return "Split"
         case .centered: return "Centered"
+        case .poster: return "Poster"
+        case .jersey: return "Jersey"
+        case .minimal: return "Minimal"
+        }
+    }
+}
+
+/// The card's look: background, text colors and type.
+enum CardTheme: String, Codable, CaseIterable, Identifiable {
+    case night, light, team, varsity
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .night: return "Night"
+        case .light: return "Light"
+        case .team: return "Team Color"
+        case .varsity: return "Varsity"
         }
     }
 }
@@ -58,6 +75,7 @@ struct PlayerProfile: Codable, Equatable {
     var social = ""
     var stats: [StatLine] = []
     var style: CardStyle = .split
+    var theme: CardTheme = .night
     var accent: CardAccent = .blue
     /// A team color picked with the color picker (sRGB hex like "#1E90FF"); overrides `accent`.
     var customAccent: String?
@@ -94,6 +112,12 @@ struct PlayerProfile: Codable, Equatable {
         return out.map { (label: $0.0, value: $0.1) }
     }
 
+    /// The number to feature on the card: club number, else school number.
+    var featuredNumber: String {
+        let n = clubNumber.trimmingCharacters(in: .whitespaces)
+        return n.isEmpty ? schoolNumber.trimmingCharacters(in: .whitespaces) : n
+    }
+
     var contactLines: [(icon: String, text: String)] {
         var out: [(String, String)] = []
         if !email.isEmpty { out.append(("envelope.fill", email)) }
@@ -123,6 +147,7 @@ struct PlayerProfile: Codable, Equatable {
         social = str(.social)
         stats = (try? c.decodeIfPresent([StatLine].self, forKey: .stats)) ?? []
         style = (try? c.decodeIfPresent(CardStyle.self, forKey: .style)) ?? .split
+        theme = (try? c.decodeIfPresent(CardTheme.self, forKey: .theme)) ?? .night
         accent = (try? c.decodeIfPresent(CardAccent.self, forKey: .accent)) ?? .blue
         showEndCard = (try? c.decodeIfPresent(Bool.self, forKey: .showEndCard)) ?? true
         customAccent = try? c.decodeIfPresent(String.self, forKey: .customAccent)
