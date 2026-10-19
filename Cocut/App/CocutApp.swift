@@ -17,6 +17,14 @@ struct CocutApp: App {
         .defaultLaunchBehavior(.suppressed)
         .commands { AppCommands(model: model) }
 
+        Window("Find Rallies", id: "rallies") {
+            RallyFinderView()
+                .environment(model)
+        }
+        .defaultSize(width: 1240, height: 820)
+        .restorationBehavior(.disabled)
+        .commandsRemoved()
+
         Window("Reel Preview", id: "preview") {
             ReelPreviewView()
                 .environment(model)
@@ -68,6 +76,11 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("i", modifiers: [.command])
             .disabled(model.isBusy)
+
+            Button("Find Rallies in a Match…") {
+                openWindow(id: "rallies")
+            }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
 
             Button("Preview Reel") {
                 openWindow(id: "preview")

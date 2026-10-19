@@ -55,6 +55,13 @@ struct ContentView: View {
                 }
 
                 Button {
+                    openWindow(id: "rallies")
+                } label: {
+                    Label("Find Rallies", systemImage: "figure.volleyball")
+                }
+                .help("Find the rallies in a full match video and skip the dead time (⇧⌘M)")
+
+                Button {
                     openWindow(id: "preview")
                 } label: {
                     Label("Preview Reel", systemImage: "play.rectangle")

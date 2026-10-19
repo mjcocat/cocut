@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ClipsView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
 
     /// Selected rows: clips and/or section headings.
     @State private var selection: Set<UUID> = []
@@ -212,6 +213,11 @@ struct ClipsView: View {
 
             Button("Import Videos…") {
                 Task { await model.importVideosWithPanel() }
+            }
+            .buttonStyle(.borderless)
+
+            Button("Find Rallies in a Full Match…") {
+                openWindow(id: "rallies")
             }
             .buttonStyle(.borderless)
 

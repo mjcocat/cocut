@@ -8,6 +8,7 @@ A native macOS app for building athlete highlight reels: record plays from YouTu
 - a player card designer
 - sections with optional divider cards, plus workflow tags
 - a live reel preview that plays everything in order without rendering
+- Find Rallies: turns a full match video into just its rallies
 - MP4 export with an intro card, crossfades, captions, and an end card
 
 ## Install
@@ -88,6 +89,23 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 | Delete clips | Hover a clip and click its 🗑 button, click 🗑 under the player, or press ⌫. Select several with ⌘-click or ⇧-click to delete them together. Deleted clips go to the Trash. |
 | Leave a clip out of the reel | Uncheck **In Reel**, or right-click › **Leave Out of Reel**. |
 | Import videos | Use **Import** (⌘I), or drag .mp4/.mov files onto the list. This works for Hudl downloads. |
+
+## Find Rallies in a full match
+
+**Find Rallies** (⇧⌘M, or the 🏐 toolbar button) takes a whole match video and finds the rallies, so an hour of film becomes about 15–25 minutes of play.
+
+1. Choose the match video (or drop it on the window). Cocut analyzes it on your Mac, which takes a few minutes for an hour of video.
+2. Review: the strip under the video shows the whole match, with each rally as a blue block. **Rallies only** plays just the kept rallies back to back. Uncheck any rally that isn't one. Select a rally to nudge its start or end, or set either to the playhead. **Add Rally Here** adds one it missed.
+3. Choose **Add to Clips** to make every kept rally a clip, in a new section named after the match, ready to tag and use in a reel. Or choose **Export Condensed Match…** to save the rallies back to back as one video.
+
+How it works: from a fixed camera, the walls and ceiling above the net never move. During a rally the ball keeps crossing that area, so Cocut looks for a small, fast object there. The referee's whistle (a steady tone around 3–4 kHz) marks where each rally starts and ends. **Include serve setup** starts each rally at the serve whistle; turn it off to start just before the serve.
+
+Works best with:
+- a tripod behind the end line that doesn't pan or zoom
+- some wall or ceiling visible above the net
+- the sound kept
+
+A handheld or panning camera confuses it.
 
 ## Sections and tags
 
@@ -196,6 +214,7 @@ Cocut/
 ├── Library/                  Clip model, JSON index, thumbnails
 ├── Profile/                  Player profile, card designs, editor
 ├── Export/                   Reel composer (AVFoundation), preview, Export screen
+├── Rallies/                  Find Rallies: ball + whistle detection, review window
 ├── Updates/                  GitHub Releases updater + sheet
 └── Views/                    Main window, clip grid, preview
 ```
