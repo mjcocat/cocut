@@ -28,8 +28,6 @@ final class AppModel {
     let exporter = ReelExporter()
     let preview = ReelPreview()
     let rallies = RallyFinder()
-    let youtube = YouTubeAccount()
-    let uploader = YouTubeUploader()
     let settings = AppSettings()
 
     /// Lets menu commands switch the main window's sidebar section.
