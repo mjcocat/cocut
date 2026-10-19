@@ -171,6 +171,8 @@ Previews play at 720p. The export uses the resolution and frame rate you pick.
 
 ## Export
 
+The intro card has a thin progress bar along the bottom, in the theme's color, that fills while it's on screen, so viewers can tell the video is playing and not frozen. Turn it off under **Export › Progress bar on the intro card**.
+
 The **Export** section (⌘E) shows the reel in order (intro card, included clips, end card) and its estimated length. You can choose:
 - how long each card is shown
 - cut or crossfade between clips

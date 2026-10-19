@@ -55,6 +55,8 @@ struct ExportOptions: Codable, Equatable {
     var spotlightShape: SpotlightShape = .oval
     /// The ring's color as "#RRGGBB"; nil uses the team color.
     var spotlightColor: String? = nil
+    /// A bar along the bottom of the intro card that fills while it's on screen.
+    var introProgressBar = true
 
     static let transitionSeconds = 0.6
     /// How long a spotlight holds the first frame.
@@ -77,6 +79,7 @@ struct ExportOptions: Codable, Equatable {
         showSpotlights = (try? c.decodeIfPresent(Bool.self, forKey: .showSpotlights)) ?? d.showSpotlights
         spotlightShape = (try? c.decodeIfPresent(SpotlightShape.self, forKey: .spotlightShape)) ?? d.spotlightShape
         spotlightColor = try? c.decodeIfPresent(String.self, forKey: .spotlightColor)
+        introProgressBar = (try? c.decodeIfPresent(Bool.self, forKey: .introProgressBar)) ?? d.introProgressBar
     }
 }
 
@@ -268,7 +271,8 @@ final class ReelExporter {
         if options.includeIntro {
             status("Drawing the intro card…")
             segments.append(try await cardSegment(kind: .intro, label: "Intro card", profile: profile, headshot: headshot,
-                                                  size: renderSize, fps: fps, seconds: options.cardSeconds, work: work))
+                                                  size: renderSize, fps: fps, seconds: options.cardSeconds, work: work,
+                                                  progressBar: options.introProgressBar))
         }
         for entry in plan {
             try Task.checkCancellation()
@@ -360,16 +364,23 @@ final class ReelExporter {
     }
 
     private static func cardSegment(kind: CardKind, label: String, profile: PlayerProfile, headshot: NSImage?,
-                                    size: CGSize, fps: Int32, seconds: Double, work: URL) async throws -> ReelSegment {
+                                    size: CGSize, fps: Int32, seconds: Double, work: URL,
+                                    progressBar: Bool = false) async throws -> ReelSegment {
         guard let image = PlayerCardView.render(profile: profile, headshot: headshot, kind: kind, pixelSize: size) else {
             throw ExportError.cardFailed
+        }
+        // The progress bar uses the theme's highlight color over a faint track.
+        var bar: CardMovieWriter.ProgressBar?
+        if progressBar {
+            let palette = CardPalette(theme: profile.theme, accent: profile.accentColor)
+            bar = .init(fill: NSColor(palette.highlight).cgColor, track: NSColor(palette.text.opacity(0.15)).cgColor)
         }
         let url = work.appending(path: "card-\(UUID().uuidString).mov")
         // No fades: the very first frame is the intro card (so YouTube, Messages and Finder pick it
         // as the thumbnail), and the end card stays up until the video ends.
         try await Task.detached(priority: .userInitiated) {
             try CardMovieWriter.write(image, size: size, seconds: seconds, fps: fps,
-                                      fadeIn: false, fadeOut: false, to: url)
+                                      fadeIn: false, fadeOut: false, progress: bar, to: url)
         }.value
         return ReelSegment(url: url, start: 0, duration: seconds, title: nil, isCard: true, cardLabel: label)
     }
@@ -782,8 +793,14 @@ enum CardMovieWriter {
         AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
     ]
 
+    /// Colors for a bar that fills along the bottom while the card is up.
+    struct ProgressBar: @unchecked Sendable {
+        let fill: CGColor
+        let track: CGColor
+    }
+
     static func write(_ image: CGImage, size: CGSize, seconds: Double, fps: Int32,
-                      fadeIn: Bool, fadeOut: Bool, to url: URL) throws {
+                      fadeIn: Bool, fadeOut: Bool, progress: ProgressBar? = nil, to url: URL) throws {
         let width = Int(size.width), height = Int(size.height)
         try? FileManager.default.removeItem(at: url)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
@@ -816,7 +833,13 @@ enum CardMovieWriter {
             if fadeOut, i >= total - fadeFrames { alpha = min(alpha, CGFloat(total - i) / CGFloat(fadeFrames)) }
 
             let buffer: CVPixelBuffer
-            if alpha >= 1 {
+            if let progress {
+                // Each frame differs: the bar grows to full width over the card's time.
+                let fraction = total > 1 ? CGFloat(i) / CGFloat(total - 1) : 1
+                guard let frame = makeBuffer(image, width: width, height: height, alpha: alpha,
+                                             bar: (progress, fraction)) else { throw ExportError.cardFailed }
+                buffer = frame
+            } else if alpha >= 1 {
                 if full == nil { full = makeBuffer(image, width: width, height: height, alpha: 1) }
                 guard let full else { throw ExportError.cardFailed }
                 buffer = full
@@ -839,7 +862,8 @@ enum CardMovieWriter {
         guard writer.status == .completed else { throw ExportError.cardFailed }
     }
 
-    private static func makeBuffer(_ image: CGImage, width: Int, height: Int, alpha: CGFloat) -> CVPixelBuffer? {
+    private static func makeBuffer(_ image: CGImage, width: Int, height: Int, alpha: CGFloat,
+                                   bar: (ProgressBar, CGFloat)? = nil) -> CVPixelBuffer? {
         var buffer: CVPixelBuffer?
         let attrs: [String: Any] = [
             kCVPixelBufferCGImageCompatibilityKey as String: true,
@@ -860,6 +884,14 @@ enum CardMovieWriter {
         context.setAlpha(alpha)
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        if let (colors, fraction) = bar {
+            // Along the very bottom (Core Graphics' origin is bottom-left).
+            let h = max(4, CGFloat(height) * 10 / 1080)
+            context.setFillColor(colors.track)
+            context.fill(CGRect(x: 0, y: 0, width: CGFloat(width), height: h))
+            context.setFillColor(colors.fill)
+            context.fill(CGRect(x: 0, y: 0, width: CGFloat(width) * fraction, height: h))
+        }
         return buffer
     }
 }
