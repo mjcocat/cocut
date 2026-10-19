@@ -123,12 +123,7 @@ A handheld or panning camera confuses it.
 - Select a heading to rename it, and to turn on its **divider card**: a short title card before that section in the exported reel. It's off by default.
 - **Add new recordings and imports here** sends new clips straight into that section while you work through one kind of play.
 
-**Plays** record who did what: a kill by #11, a dig by #5. Like tags, they're for finding clips and never appear in the export.
-- Under the player, click **Add a Play** (⇧⌘P). Type a letter and a number, like `k11`, then press Return. You can add several in a row. Or click an action and a player.
-- Letters: **K** Kill · **B** Block · **A** Ace · **D** Dig · **S** Set · **P** Pass · **V** Serve · **E** Error. A letter on its own (like `b`) adds a play with no player.
-- Select several clips to add the same play to all of them.
-- **+ › Team Roster…** lists jersey numbers and names, so plays read "Kill · #11 Lilah". Numbers you type are added to it automatically.
-- The filter button in the list footer filters by **Player**, by **Play**, or both, like "Kills by #11". It can combine with a tag.
+**Players** (jersey numbers) can be listed on each clip, from Find Rallies or typed under the player. The filter button's **Player** section shows every clip with that player. **+ › Team Roster…** adds names, so numbers read "#11 Lilah".
 
 **Tags** are for your workflow and never appear in the export:
 - Click tag chips under the player, or right-click › **Tags** (works on several clips at once).
