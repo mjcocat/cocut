@@ -155,9 +155,22 @@ final class AppModel {
         Log.info("Opened project “\(projects.current.name)”")
     }
 
-    func createProject(name: String, copyCard: Bool) {
+    func createProject(name: String, copyCard: Bool, athlete: AthleteBasics? = nil) {
         let project = projects.create(name: name, copyingCardFrom: copyCard ? projects.current : nil)
         openProject(project.id)
+        // Start the new Player Card with the basics from the wizard.
+        if !copyCard, let athlete {
+            var card = profile.profile
+            card.firstName = athlete.firstName.trimmingCharacters(in: .whitespaces)
+            card.lastName = athlete.lastName.trimmingCharacters(in: .whitespaces)
+            card.clubNumber = athlete.number.trimmingCharacters(in: .whitespaces)
+            card.position = athlete.position.trimmingCharacters(in: .whitespaces)
+            if let accent = athlete.accent {
+                card.accent = accent
+                card.customAccent = nil
+            }
+            profile.profile = card
+        }
     }
 
     func deleteProject(_ id: UUID) {
