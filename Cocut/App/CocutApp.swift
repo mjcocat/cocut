@@ -17,6 +17,14 @@ struct CocutApp: App {
         .defaultLaunchBehavior(.suppressed)
         .commands { AppCommands(model: model) }
 
+        Window("Reel Preview", id: "preview") {
+            ReelPreviewView()
+                .environment(model)
+        }
+        .defaultSize(width: 1180, height: 760)
+        .restorationBehavior(.disabled)
+        .commandsRemoved()
+
         Window("Cocut Splash", id: "splash") {
             SplashView()
                 .containerBackground(.clear, for: .window)
@@ -44,6 +52,7 @@ struct CocutApp: App {
 
 struct AppCommands: Commands {
     let model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
@@ -59,6 +68,12 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("i", modifiers: [.command])
             .disabled(model.isBusy)
+
+            Button("Preview Reel") {
+                openWindow(id: "preview")
+            }
+            .keyboardShortcut("y", modifiers: [.command])
+            .disabled(model.library.includedClips.isEmpty)
 
             Button("Export Highlight Reel…") {
                 model.requestedSection = .export

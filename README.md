@@ -2,11 +2,12 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.6.** Everything from capture to a finished reel works:
+**Status: v0.7.** Everything from capture to a finished reel works:
 - play-to-record capture, including with the video in fullscreen
 - a reorderable clip library with trimming and import
 - a player card designer
 - sections with optional divider cards, plus workflow tags
+- a live reel preview that plays everything in order without rendering
 - MP4 export with an intro card, crossfades, captions, and an end card
 
 ## Install
@@ -113,6 +114,17 @@ The **Player Card** section designs the reel's intro card, and an optional end c
 
 Pick a layout (Split or Centered) and a team color: one of the presets, or any color with **Custom**. The preview updates as you type, and blank fields are left off the card. Everything is saved in `~/Movies/Cocut`.
 
+## Preview
+
+**Preview Reel** (⌘Y, or the ▶︎ button in the toolbar) plays the whole reel in its own window, just as it will export, without rendering a file. It includes the cards, the order, trims, crops, crossfades, clip-name captions and sound. It's ready in a few seconds.
+- The strip under the video shows every piece. Click or drag it to jump anywhere.
+- **Space** plays and pauses. **⌘←** and **⌘→** go to the previous or next clip.
+- The list on the right shows each card and clip. Click one to play from there.
+- Right-click a clip in the Clips list › **Preview Reel from This Clip** to start there.
+- Keep the preview open while you reorder, trim, or change settings. It notices the change and offers **Update Preview** (⌘R), then picks up where you were.
+
+Previews play at 720p. The export uses the resolution and frame rate you pick.
+
 ## Export
 
 The **Export** section (⌘E) shows the reel in order (intro card, included clips, end card) and its estimated length. You can choose:
@@ -122,7 +134,7 @@ The **Export** section (⌘E) shows the reel in order (intro card, included clip
 - whether to include sound
 - 720p, 1080p, or 4K, at 30 or 60 fps
 
-Click **Export Highlight Reel…** to save an MP4 (by default in `~/Movies/Cocut/Exports`). When it's done you can play it in place, share it, or show it in Finder.
+Click **Preview** to watch it first, or **Export Highlight Reel…** to save an MP4 (by default in `~/Movies/Cocut/Exports`). When it's done you can play it in place, share it, or show it in Finder.
 
 ## Settings
 
@@ -183,7 +195,7 @@ Cocut/
 │   └── RecordingBorder.swift Red outline around the captured area
 ├── Library/                  Clip model, JSON index, thumbnails
 ├── Profile/                  Player profile, card designs, editor
-├── Export/                   Reel composer (AVFoundation) + Export screen
+├── Export/                   Reel composer (AVFoundation), preview, Export screen
 ├── Updates/                  GitHub Releases updater + sheet
 └── Views/                    Main window, clip grid, preview
 ```

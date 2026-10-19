@@ -23,6 +23,7 @@ final class AppModel {
     let updater = Updater()
     let profile = ProfileStore()
     let exporter = ReelExporter()
+    let preview = ReelPreview()
     let settings = AppSettings()
 
     /// Lets menu commands switch the main window's sidebar section.
