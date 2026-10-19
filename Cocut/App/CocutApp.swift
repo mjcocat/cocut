@@ -32,7 +32,13 @@ struct CocutApp: App {
         .windowStyle(.plain)
         .windowResizability(.contentSize)
         .windowLevel(.floating)
-        .defaultWindowPlacement { _, _ in WindowPlacement(.center) }
+        .defaultWindowPlacement { content, context in
+            // Sized to the content so the window starts centered; the splash re-centers itself too.
+            let size = content.sizeThatFits(.unspecified)
+            let screen = context.defaultDisplay.visibleRect
+            return WindowPlacement(CGPoint(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2),
+                                   size: size)
+        }
         .defaultLaunchBehavior(.presented)
         .restorationBehavior(.disabled)
 

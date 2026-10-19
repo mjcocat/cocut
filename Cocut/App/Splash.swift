@@ -27,6 +27,7 @@ struct SplashView: View {
                     .padding(.bottom, 18)
             }
             .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .background(CenterOnScreen())
             .scaleEffect(visible ? 1 : 0.96)
             .opacity(visible ? 1 : 0)
             .task {
@@ -38,4 +39,27 @@ struct SplashView: View {
                 dismissWindow(id: "splash")
             }
     }
+}
+
+/// Centers its window on the screen with the pointer once the window exists. SwiftUI's own
+/// placement runs before a plain window knows its size, which can leave the splash off center.
+private struct CenterOnScreen: NSViewRepresentable {
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            DispatchQueue.main.async { [weak window] in
+                guard let window else { return }
+                let mouse = NSEvent.mouseLocation
+                let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? window.screen ?? NSScreen.main
+                guard let visible = screen?.visibleFrame else { return }
+                let size = window.frame.size
+                window.setFrameOrigin(NSPoint(x: (visible.midX - size.width / 2).rounded(),
+                                              y: (visible.midY - size.height / 2).rounded()))
+            }
+        }
+    }
+
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ view: Probe, context: Context) {}
 }
