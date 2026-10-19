@@ -54,8 +54,9 @@ struct SpotlightEditor: View {
                 Image(systemName: "circle.dashed")
                     .foregroundStyle(.secondary)
                 Slider(value: $spot.radius, in: 0.04...0.3)
-                    .frame(width: 160)
-                    .help("Ring size")
+                    .frame(width: 140)
+                    .help("Size")
+                SpotlightStyleControls()
                 Spacer()
                 if clip.spotlight != nil {
                     Button("Remove", role: .destructive) { onSave(nil, false) }
@@ -99,13 +100,15 @@ struct SpotlightEditor: View {
     private func ring(in picture: CGRect) -> some View {
         let c = CGPoint(x: picture.minX + spot.x * picture.width, y: picture.minY + spot.y * picture.height)
         let r = spot.radius * picture.height
-        let accent = model.profile.profile.accentColor
+        let options = model.exporter.options
+        let rx = r * options.spotlightShape.aspect
+        let accent = options.spotlightColor.flatMap { Color(hex: $0) } ?? model.profile.profile.accentColor
         return ZStack(alignment: .topLeading) {
             Canvas { context, size in
                 var dim = Path(CGRect(origin: .zero, size: size))
-                dim.addEllipse(in: CGRect(x: c.x - r * 1.15, y: c.y - r * 1.15, width: r * 2.3, height: r * 2.3))
+                dim.addEllipse(in: CGRect(x: c.x - rx * 1.15, y: c.y - r * 1.15, width: rx * 2.3, height: r * 2.3))
                 context.fill(dim, with: .color(.black.opacity(placed ? 0.5 : 0.25)), style: FillStyle(eoFill: true))
-                context.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
+                context.stroke(Path(ellipseIn: CGRect(x: c.x - rx, y: c.y - r, width: rx * 2, height: r * 2)),
                                with: .color(accent), lineWidth: max(3, picture.height / 180))
             }
             .allowsHitTesting(false)
@@ -124,5 +127,39 @@ struct SpotlightEditor: View {
         let w = CGFloat(full.width), h = CGFloat(full.height)
         let rect = CGRect(x: crop.minX * w, y: crop.minY * h, width: crop.width * w, height: crop.height * h).integral
         return full.cropping(to: rect) ?? full
+    }
+}
+
+/// Shape and color of every spotlight in the reel (saved with the export settings).
+struct SpotlightStyleControls: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var exporter = model.exporter
+        HStack(spacing: 10) {
+            Picker("Shape", selection: $exporter.options.spotlightShape) {
+                ForEach(SpotlightShape.allCases) { shape in
+                    Image(systemName: shape == .oval ? "capsule.portrait" : "circle").tag(shape)
+                        .help(shape.title)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 80)
+            .help("Oval fits a standing player; circle is classic")
+
+            ColorPicker("Color", selection: Binding(
+                get: { exporter.options.spotlightColor.flatMap { Color(hex: $0) } ?? model.profile.profile.accentColor },
+                set: { exporter.options.spotlightColor = $0.hexString }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .help("Spotlight color")
+
+            if exporter.options.spotlightColor != nil {
+                Button("Team Color") { exporter.options.spotlightColor = nil }
+                    .controlSize(.small)
+                    .help("Use the Player Card's team color")
+            }
+        }
     }
 }

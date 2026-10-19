@@ -10,6 +10,15 @@ enum ReelTransition: String, Codable, CaseIterable, Identifiable {
     var title: String { self == .cut ? "Cut" : "Crossfade" }
 }
 
+/// The spotlight's outline.
+enum SpotlightShape: String, Codable, CaseIterable, Identifiable {
+    case oval, circle
+    var id: String { rawValue }
+    var title: String { self == .oval ? "Oval" : "Circle" }
+    /// Width of the outline relative to its height (an upright oval fits a standing player).
+    var aspect: CGFloat { self == .oval ? 0.6 : 1 }
+}
+
 enum ReelResolution: String, Codable, CaseIterable, Identifiable {
     case hd720, hd1080, uhd4k
     var id: String { rawValue }
@@ -43,6 +52,9 @@ struct ExportOptions: Codable, Equatable {
     var fillFrame = false
     /// Freeze on the first frame and ring the athlete, for clips with a spotlight.
     var showSpotlights = true
+    var spotlightShape: SpotlightShape = .oval
+    /// The ring's color as "#RRGGBB"; nil uses the team color.
+    var spotlightColor: String? = nil
 
     static let transitionSeconds = 0.6
     /// How long a spotlight holds the first frame.
@@ -63,6 +75,8 @@ struct ExportOptions: Codable, Equatable {
         removeBlackBars = (try? c.decodeIfPresent(Bool.self, forKey: .removeBlackBars)) ?? d.removeBlackBars
         fillFrame = (try? c.decodeIfPresent(Bool.self, forKey: .fillFrame)) ?? d.fillFrame
         showSpotlights = (try? c.decodeIfPresent(Bool.self, forKey: .showSpotlights)) ?? d.showSpotlights
+        spotlightShape = (try? c.decodeIfPresent(SpotlightShape.self, forKey: .spotlightShape)) ?? d.spotlightShape
+        spotlightColor = try? c.decodeIfPresent(String.self, forKey: .spotlightColor)
     }
 }
 
@@ -273,7 +287,8 @@ final class ReelExporter {
                 guard duration > 0.1 else { continue }
                 if options.showSpotlights, let spot = clip.spotlight {
                     status("Drawing the spotlight on “\(clip.title)”…")
-                    if let still = await spotlightSegment(clip: clip, url: url, spot: spot, accent: NSColor(profile.accentColor).cgColor,
+                    let ringColor = options.spotlightColor.flatMap { Color(hex: $0) } ?? profile.accentColor
+                    if let still = await spotlightSegment(clip: clip, url: url, spot: spot, accent: NSColor(ringColor).cgColor,
                                                           options: options, size: renderSize, fps: fps, work: work) {
                         segments.append(still)
                     }
@@ -318,22 +333,22 @@ final class ReelExporter {
                     moved.y = (spot.y * fh - rect.minY) / rect.height
                     moved.radius = spot.radius * fh / rect.height
                     frame = cropped
-                    return await writeSpotlight(frame: frame, clip: clip, spot: moved, accent: accent, fill: options.fillFrame,
-                                                size: size, fps: fps, work: work)
+                    return await writeSpotlight(frame: frame, clip: clip, spot: moved, accent: accent, shape: options.spotlightShape,
+                                                fill: options.fillFrame, size: size, fps: fps, work: work)
                 }
             }
         }
-        return await writeSpotlight(frame: frame, clip: clip, spot: spot, accent: accent, fill: options.fillFrame,
-                                    size: size, fps: fps, work: work)
+        return await writeSpotlight(frame: frame, clip: clip, spot: spot, accent: accent, shape: options.spotlightShape,
+                                    fill: options.fillFrame, size: size, fps: fps, work: work)
     }
 
-    private static func writeSpotlight(frame: CGImage, clip: Clip, spot: Spotlight, accent: CGColor, fill: Bool,
+    private static func writeSpotlight(frame: CGImage, clip: Clip, spot: Spotlight, accent: CGColor, shape: SpotlightShape, fill: Bool,
                                        size: CGSize, fps: Int32, work: URL) async -> ReelSegment? {
         let movie = work.appending(path: "spotlight-\(UUID().uuidString).mov")
         let seconds = ExportOptions.spotlightSeconds
         do {
             try await Task.detached(priority: .userInitiated) {
-                try SpotlightMovieWriter.write(frame: frame, spot: spot, accent: accent, fill: fill,
+                try SpotlightMovieWriter.write(frame: frame, spot: spot, accent: accent, shape: shape, fill: fill,
                                                size: size, seconds: seconds, fps: fps, to: movie)
             }.value
         } catch {
@@ -350,11 +365,11 @@ final class ReelExporter {
             throw ExportError.cardFailed
         }
         let url = work.appending(path: "card-\(UUID().uuidString).mov")
-        // No fade-in on the intro: the very first frame is the card, so YouTube, Messages and
-        // Finder pick it as the video's thumbnail instead of a black frame.
+        // No fades: the very first frame is the intro card (so YouTube, Messages and Finder pick it
+        // as the thumbnail), and the end card stays up until the video ends.
         try await Task.detached(priority: .userInitiated) {
             try CardMovieWriter.write(image, size: size, seconds: seconds, fps: fps,
-                                      fadeIn: false, fadeOut: kind == .end, to: url)
+                                      fadeIn: false, fadeOut: false, to: url)
         }.value
         return ReelSegment(url: url, start: 0, duration: seconds, title: nil, isCard: true, cardLabel: label)
     }
@@ -854,7 +869,7 @@ enum CardMovieWriter {
 /// A clip's first frame held for a moment: the picture dims around the athlete and a ring
 /// snaps in. Drawn frame by frame, like the cards.
 enum SpotlightMovieWriter {
-    static func write(frame: CGImage, spot: Spotlight, accent: CGColor, fill: Bool,
+    static func write(frame: CGImage, spot: Spotlight, accent: CGColor, shape: SpotlightShape, fill: Bool,
                       size: CGSize, seconds: Double, fps: Int32, to url: URL) throws {
         let width = Int(size.width), height = Int(size.height)
         try? FileManager.default.removeItem(at: url)
@@ -899,19 +914,20 @@ enum SpotlightMovieWriter {
                 ctx.interpolationQuality = .high
                 ctx.draw(frame, in: CGRect(x: pic.minX, y: size.height - pic.maxY, width: pic.width, height: pic.height))
                 // Dim everything outside a circle around the athlete.
-                let hole = CGRect(x: center.x - radius * 1.15, y: center.y - radius * 1.15,
-                                  width: radius * 2.3, height: radius * 2.3)
+                let rx = radius * shape.aspect
+                let hole = CGRect(x: center.x - rx * 1.15, y: center.y - radius * 1.15,
+                                  width: rx * 2.3, height: radius * 2.3)
                 ctx.addRect(CGRect(x: 0, y: 0, width: width, height: height))
                 ctx.addEllipse(in: hole)
                 ctx.setFillColor(CGColor(gray: 0, alpha: dim))
                 ctx.fillPath(using: .evenOdd)
                 // The ring.
-                let r = radius * scale
+                let r = radius * scale, rxs = rx * scale
                 ctx.saveGState()
                 ctx.setShadow(offset: .zero, blur: 10 * size.height / 1080, color: CGColor(gray: 0, alpha: 0.6 * ringAlpha))
                 ctx.setStrokeColor(accent.copy(alpha: ringAlpha) ?? accent)
                 ctx.setLineWidth(line)
-                ctx.strokeEllipse(in: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
+                ctx.strokeEllipse(in: CGRect(x: center.x - rxs, y: center.y - r, width: rxs * 2, height: r * 2))
                 ctx.restoreGState()
             }) else { throw ExportError.cardFailed }
             while !input.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.002) }
