@@ -297,7 +297,7 @@ private struct MatchTransport: View {
                 Toggle("Rallies only", isOn: $finder.watchCondensed)
                     .toggleStyle(.switch)
                     .controlSize(.small)
-                    .help("Skip the dead time between kept rallies while playing")
+                    .help("Play the rallies back to back, skipping the dead time between them")
 
                 Spacer()
 
@@ -442,7 +442,7 @@ private struct RallyList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("RALLIES")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -451,6 +451,24 @@ private struct RallyList: View {
             }
             .padding(.horizontal, 14)
             .padding(.top, 14)
+            .padding(.bottom, 4)
+            HStack(spacing: 6) {
+                Text("Keep:")
+                    .foregroundStyle(.secondary)
+                Button("All") { finder.setAllIncluded(true) }
+                    .help("Check every rally\(finder.playerFilter == nil ? "" : " in the list"), then uncheck the ones you don't want")
+                Text("·").foregroundStyle(.tertiary)
+                Button("None") { finder.setAllIncluded(false) }
+                    .help("Uncheck every rally\(finder.playerFilter == nil ? "" : " in the list"), then check just the ones you want")
+                Spacer()
+                let kept = finder.visibleRallies.filter(\.isIncluded).count
+                Text("\(kept) of \(finder.visibleRallies.count)")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .buttonStyle(.borderless)
+            .font(.caption)
+            .padding(.horizontal, 14)
             .padding(.bottom, 6)
             ScrollViewReader { proxy in
                 List(selection: Binding(get: { finder.selectedID }, set: { id in
@@ -495,7 +513,7 @@ private struct RallyList: View {
                     withAnimation { proxy.scrollTo(id, anchor: .center) }
                 }
             }
-            Text("Uncheck a rally to leave it out. Double-click to play it.")
+            Text("Checked rallies are kept. Use All or None, then click checkboxes. Double-click a rally to play it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(14)
