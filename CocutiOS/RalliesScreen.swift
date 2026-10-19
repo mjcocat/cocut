@@ -73,7 +73,7 @@ struct RalliesScreen: View {
                             .disabled(finder.keptRallies.isEmpty)
                             Divider()
                             Button("Team Roster…", systemImage: "person.3") { editingRoster = true }
-                            Button("Teach a Player…", systemImage: "person.badge.plus") {
+                            Button("Identify Players…", systemImage: "person.badge.plus") {
                                 finder.pause()
                                 teaching = true
                             }

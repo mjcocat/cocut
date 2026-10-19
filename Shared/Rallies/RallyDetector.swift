@@ -694,18 +694,46 @@ enum RallyDetector {
                             region: CGRect(x: 0, y: 0, width: 1, height: 1))
     }
 
-    /// When each taught player appears, by appearance, decided per track (a player followed
-    /// through a rally) rather than per frame. Every sighting is compared with the taught examples
-    /// and with sightings of players whose number was read (up to 60 per number, spread across the
-    /// match), so a teammate in the same uniform is told apart by who they look most like. A track
-    /// goes to a taught number when, averaged over the track, that number is the closest match by
-    /// a clear margin and at least `minSimilarity`. Tracks whose number was read keep it.
-    static func matches(people: [PersonSighting], taught: [Int: [[Float]]], taughtTracks: [Int: Int],
-                        minSimilarity: Float) -> [Int: [Double]] {
-        guard !taught.isEmpty, let dims = people.first?.print.count ?? taught.values.first?.first?.count, dims > 0 else { return [:] }
+    /// Who a followed player (a track) is, and how sure Cocut is.
+    struct TrackDecision: Sendable, Hashable {
+        enum Source: Sendable, Hashable {
+            /// The user said who this is.
+            case taught
+            /// Their number was read.
+            case read
+            /// They look clearly like a known player.
+            case matched
+            /// Not sure: worth asking the user.
+            case uncertain
+            /// A number was read, but they look like someone else: worth checking.
+            case conflict
+        }
+        var track: Int
+        /// Who it is, when decided: a jersey number, or `otherTeam` for opponents and referees.
+        var number: Int?
+        var source: Source
+        /// Who they look most like, and how much (average similarity over the track).
+        var guess: Int?
+        var score: Float
+        /// How far ahead of the next-closest player the guess is.
+        var margin: Float
+        /// Frames in the track.
+        var count: Int
+    }
+
+    /// The label for "not our team" (opponents, referees, coaches).
+    static let otherTeam = -1
+
+    /// Decides who every followed player is. Tracks taught by the user keep that; tracks with a
+    /// read number keep it; every other track goes to the known player (taught, read or "other
+    /// team") it looks most like, averaged over all its frames, when that's at least
+    /// `minSimilarity` and clearly ahead of the next-closest. Examples per player: what was taught
+    /// plus up to 60 frames of their labeled tracks, spread across the match.
+    static func decide(people: [PersonSighting], taught: [Int: [[Float]]], taughtTracks: [Int: Int],
+                       minSimilarity: Float, minMargin: Float = 0.04) -> [Int: TrackDecision] {
+        guard let dims = people.first?.print.count, dims > 0 else { return [:] }
         func label(of p: PersonSighting) -> Int? { taughtTracks[p.track] ?? p.trackNumber }
 
-        // Labeled examples.
         var labels: [Int] = []
         var examples: [Float] = []
         func add(_ print: [Float], _ label: Int) {
@@ -719,14 +747,23 @@ enum RallyDetector {
             let step = max(1, list.count / 60)
             for i in stride(from: 0, to: list.count, by: step).prefix(60) { add(list[i].print, number) }
         }
+
+        let tracks = Dictionary(grouping: people.indices, by: { people[$0].track })
+        var out: [Int: TrackDecision] = [:]
         let distinct = Array(Set(labels)).sorted()
+        let u = distinct.count, l = labels.count
+        guard l > 0 else {
+            for (track, members) in tracks {
+                out[track] = TrackDecision(track: track, number: label(of: people[members[0]]), source: .uncertain,
+                                           guess: nil, score: 0, margin: 0, count: members.count)
+            }
+            return out
+        }
         let column = Dictionary(uniqueKeysWithValues: distinct.enumerated().map { ($1, $0) })
-        let l = labels.count, u = distinct.count
-        guard l > 0 else { return [:] }
         var transposed = [Float](repeating: 0, count: dims * l)
         vDSP_mtrans(examples, 1, &transposed, 1, vDSP_Length(dims), vDSP_Length(l))
 
-        // Each sighting's best similarity to each number.
+        // Each sighting's best similarity to each player.
         var best = [Float](repeating: -1, count: people.count * u)
         let chunk = 2048
         var start = 0
@@ -748,30 +785,45 @@ enum RallyDetector {
             start += rows
         }
 
-        // Decide per track (a sighting with no track stands alone, and must look more alike).
-        var groups: [Int: [Int]] = [:]
-        var alone = -1
-        for (i, p) in people.enumerated() {
-            if p.track >= 0 { groups[p.track, default: []].append(i) } else { groups[alone, default: []].append(i); alone -= 1 }
-        }
-        var out: [Int: [Double]] = [:]
-        for (_, members) in groups {
-            if let fixed = label(of: people[members[0]]) {
-                if taught[fixed] != nil { out[fixed, default: []].append(contentsOf: members.map { people[$0].time }) }
-                continue
-            }
+        for (track, members) in tracks {
             var mean = [Float](repeating: 0, count: u)
             for m in members { for c in 0..<u { mean[c] += best[m * u + c] } }
             for c in 0..<u { mean[c] /= Float(members.count) }
             let order = mean.indices.sorted { mean[$0] > mean[$1] }
-            guard let top = order.first else { continue }
-            let number = distinct[top]
-            let second = order.count > 1 ? mean[order[1]] : -1
-            let needed = minSimilarity + (members.count < 3 ? 0.05 : 0)
-            guard taught[number] != nil, mean[top] >= needed, mean[top] - second >= 0.02 else { continue }
-            out[number, default: []].append(contentsOf: members.map { people[$0].time })
+            let top = order[0]
+            let guess = distinct[top]
+            let margin = mean[top] - (order.count > 1 ? mean[order[1]] : -1)
+            var decision = TrackDecision(track: track, number: nil, source: .uncertain, guess: guess,
+                                         score: mean[top], margin: margin, count: members.count)
+            if let taughtAs = taughtTracks[track] {
+                decision.number = taughtAs
+                decision.source = .taught
+            } else if let read = people[members[0]].trackNumber {
+                decision.number = read
+                decision.source = .read
+                // Read as one number but clearly looks like another: maybe a misread.
+                if guess != read, let readColumn = column[read], members.count >= 3,
+                   mean[top] - mean[readColumn] >= 0.05 {
+                    decision.source = .conflict
+                }
+            } else if mean[top] >= minSimilarity + (members.count < 3 ? 0.05 : 0), margin >= minMargin {
+                decision.number = guess
+                decision.source = .matched
+            }
+            out[track] = decision
         }
         return out
+    }
+
+    /// Numbers of players decided in a rally (seen in at least two frames of it), leaving out the
+    /// other team and numbers not `allowed` (when given).
+    static func decidedPlayers(in span: Span, people: [PersonSighting], decisions: [Int: TrackDecision],
+                               allowed: Set<Int>) -> Set<Int> {
+        var counts: [Int: Int] = [:]
+        for p in people where p.time >= span.start && p.time <= span.end {
+            if let n = decisions[p.track]?.number ?? p.trackNumber, n >= 0 { counts[n, default: 0] += 1 }
+        }
+        return Set(counts.filter { $0.value >= 2 && (allowed.isEmpty || allowed.contains($0.key)) }.keys)
     }
 
     /// One- or two-digit numbers in `region` (unit coordinates, bottom-left origin), with where

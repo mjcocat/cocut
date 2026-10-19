@@ -273,9 +273,9 @@ struct RallyFinderView: View {
                 finder.pause()
                 teaching = true
             } label: {
-                Label("Teach a Player…", systemImage: "person.badge.plus")
+                Label("Identify Players…", systemImage: "person.badge.plus")
             }
-            .help("Click a player and type their number; Cocut finds them in every rally by how they look")
+            .help("Answer \"Who's this?\" for the players Cocut isn't sure of, or click any player on a frame")
             .disabled(isBusy || !finder.canTeach)
 
             Button {

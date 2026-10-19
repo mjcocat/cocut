@@ -156,62 +156,103 @@ final class RallyFinder {
     }
     #endif
 
-    // MARK: Teach a player
+    // MARK: Identify players
 
-    /// Players taught by clicking them: number → appearance examples. Per match.
+    /// Appearance examples per player: number (or `RallyDetector.otherTeam`) → examples. Per match.
     private(set) var taught: [Int: [[Float]]] = [:]
-    /// Tracks the user clicked: track → number (the whole stretch they were followed).
-    @ObservationIgnored private var taughtTracks: [Int: Int] = [:]
-    /// How many times each number was taught (clicks), for the list.
+    /// Tracks the user identified: track → number (the whole stretch they were followed).
+    private(set) var taughtTracks: [Int: Int] = [:]
+    /// How many times each number was taught (answers and clicks), for the list.
     private(set) var taughtClicks: [Int: Int] = [:]
-    /// How alike a player must look to a taught example to count as them (cosine similarity).
+    /// How alike a player must look to a known player to count as them (cosine similarity).
     var matchSimilarity: Double = UserDefaults.standard.object(forKey: "rallyMatchSimilarity") as? Double ?? 0.8 {
         didSet {
             UserDefaults.standard.set(matchSimilarity, forKey: "rallyMatchSimilarity")
-            if matchSimilarity != oldValue { refreshTaught() }
+            if matchSimilarity != oldValue { refreshDecisions() }
         }
     }
+    /// Who each followed player is (by track), and how sure Cocut is.
+    private(set) var decisions: [Int: RallyDetector.TrackDecision] = [:]
     /// How many rallies each taught player was found in.
     private(set) var taughtFound: [Int: Int] = [:]
-    /// Matching is running (it takes a moment on a long match).
+    /// Deciding is running (it takes a moment on a long match).
     private(set) var isMatching = false
-    @ObservationIgnored private var taughtTimes: [Int: [Double]] = [:]
+    /// Tracks the user skipped in "Who's this?".
+    private(set) var skippedTracks: Set<Int> = []
     @ObservationIgnored private var matchTask: Task<Void, Never>?
 
-    /// Whether this analysis has appearance data to teach from.
+    /// Whether this analysis has appearance data to identify players from.
     var canTeach: Bool { !(analysis?.people.isEmpty ?? true) }
 
-    /// Teaches `number` from a player clicked at `time` (box in unit, bottom-left coordinates).
-    /// When that player was followed during analysis, every frame of their track becomes an
-    /// example too.
-    func teach(_ number: Int, print: [Float], box: CGRect, time: Double) {
-        taught[number, default: []].append(print)
+    /// Followed players worth asking about, most useful first: ones Cocut couldn't decide, and
+    /// ones whose read number disagrees with how they look. Short glimpses are left out.
+    var reviewQueue: [RallyDetector.TrackDecision] {
+        decisions.values
+            .filter { ($0.source == .uncertain || $0.source == .conflict) && $0.count >= 4 && !skippedTracks.contains($0.track) }
+            .sorted { a, b in
+                if (a.source == .conflict) != (b.source == .conflict) { return a.source == .conflict }
+                return a.count > b.count
+            }
+    }
+
+    /// How many followed players have been identified (any way) vs. not, counting only tracks
+    /// long enough to ask about.
+    var identifiedCounts: (identified: Int, unknown: Int) {
+        let long = decisions.values.filter { $0.count >= 4 }
+        let known = long.filter { $0.number != nil && $0.source != .conflict }.count
+        return (known, long.count - known)
+    }
+
+    /// The frames of one followed player.
+    func sightings(ofTrack track: Int) -> [RallyDetector.PersonSighting] {
+        analysis?.people.filter { $0.track == track } ?? []
+    }
+
+    /// The user says who a followed player is: `number`, or `RallyDetector.otherTeam`.
+    func identify(track: Int, as number: Int) {
+        let frames = sightings(ofTrack: track)
+        guard !frames.isEmpty else { return }
+        taughtTracks[track] = number
+        let step = max(1, frames.count / 30)
+        taught[number, default: []].append(contentsOf: stride(from: 0, to: frames.count, by: step).prefix(30).map { frames[$0].print })
         taughtClicks[number, default: 0] += 1
-        var trackNote = "not followed"
+        Log.info("Identified a player as \(number == RallyDetector.otherTeam ? "other team" : "#\(number)") (\(frames.count) frames)")
+        refreshDecisions()
+    }
+
+    func skip(track: Int) {
+        skippedTracks.insert(track)
+    }
+
+    /// Teaches `number` from a player clicked at `time` (box in unit, bottom-left coordinates).
+    /// When that player was followed during analysis, their whole track is identified too.
+    func teach(_ number: Int, print: [Float], box: CGRect, time: Double) {
         if let people = analysis?.people,
            let match = people.filter({ abs($0.time - time) <= 0.6 && $0.track >= 0 })
                .max(by: { RallyDetector.overlap($0.box, box) < RallyDetector.overlap($1.box, box) }),
            RallyDetector.overlap(match.box, box) > 0.4 {
-            taughtTracks[match.track] = number
-            let frames = people.filter { $0.track == match.track }
-            taught[number, default: []].append(contentsOf: frames.prefix(30).map(\.print))
-            trackNote = "followed for \(frames.count) frames"
+            taught[number, default: []].append(print)
+            identify(track: match.track, as: number)
+            return
         }
-        Log.info("Taught #\(number) (\(taughtClicks[number] ?? 0) click(s), \(trackNote))")
-        refreshTaught()
+        taught[number, default: []].append(print)
+        taughtClicks[number, default: 0] += 1
+        Log.info("Taught #\(number) from a frame (not followed)")
+        refreshDecisions()
     }
 
     func forget(_ number: Int) {
         taught[number] = nil
         taughtClicks[number] = nil
         taughtTracks = taughtTracks.filter { $0.value != number }
-        refreshTaught()
+        refreshDecisions()
     }
 
-    private func refreshTaught() {
+    /// Re-decides who every followed player is, in the background, then updates the rallies.
+    private func refreshDecisions() {
         matchTask?.cancel()
-        guard let people = analysis?.people, !taught.isEmpty else {
-            taughtTimes = [:]
+        guard let people = analysis?.people, !people.isEmpty else {
+            decisions = [:]
             taughtFound = [:]
             isMatching = false
             rebuildRallies()
@@ -222,13 +263,15 @@ final class RallyFinder {
         let similarity = Float(matchSimilarity)
         isMatching = true
         matchTask = Task {
-            let times = await Task.detached(priority: .userInitiated) {
-                RallyDetector.matches(people: people, taught: taught, taughtTracks: tracks, minSimilarity: similarity)
+            let result = await Task.detached(priority: .userInitiated) {
+                RallyDetector.decide(people: people, taught: taught, taughtTracks: tracks, minSimilarity: similarity)
             }.value
             guard !Task.isCancelled else { return }
-            taughtTimes = times
+            decisions = result
             isMatching = false
             rebuildRallies()
+            let counts = identifiedCounts
+            Log.info("Players: \(counts.identified) identified, \(counts.unknown) not (\(reviewQueue.count) to ask about)")
         }
     }
 
@@ -263,10 +306,11 @@ final class RallyFinder {
         rallies = []
         selectedID = nil
         taught = [:]
-        taughtTimes = [:]
+        decisions = [:]
         taughtFound = [:]
         taughtTracks = [:]
         taughtClicks = [:]
+        skippedTracks = []
         undoStack.removeAll()
         redoStack.removeAll()
         state = .analyzing(0)
@@ -286,6 +330,7 @@ final class RallyFinder {
                 try Task.checkCancellation()
                 analysis = result
                 rebuildRallies()
+                refreshDecisions()
                 makePlayer(url: url)
                 state = .review
                 Log.info("Found \(rallies.count) rallies: \(Int(keptSeconds))s of \(Int(result.duration))s")
@@ -313,10 +358,11 @@ final class RallyFinder {
         rallies = []
         selectedID = nil
         taught = [:]
-        taughtTimes = [:]
+        decisions = [:]
         taughtFound = [:]
         taughtTracks = [:]
         taughtClicks = [:]
+        skippedTracks = []
         state = .empty
     }
 
@@ -336,17 +382,16 @@ final class RallyFinder {
         let frequent = RallyDetector.frequentNumbers(spans: spans, reads: analysis.numbers)
         let roster = self.roster()
         var found: [Int: Int] = [:]
+        let taughtNumbers = Set(taught.keys.filter { $0 >= 0 })
         var fresh = spans.map { span -> Rally in
             var rally = Rally(start: span.start, end: span.end)
             var players = Set(RallyDetector.players(in: span, reads: analysis.numbers, roster: roster, frequent: frequent))
-            // Players followed through the rally whose number was read at some point.
-            players.formUnion(RallyDetector.trackPlayers(in: span, people: analysis.people,
-                                                         allowed: roster.isEmpty ? frequent : roster))
-            // Taught players found by appearance.
-            for (number, times) in taughtTimes where times.contains(where: { $0 >= span.start && $0 <= span.end }) {
-                players.insert(number)
-                found[number, default: 0] += 1
-            }
+            // Players followed through the rally: their number was read at some point, the user
+            // said who they are, or they clearly look like someone known.
+            let followed = RallyDetector.decidedPlayers(in: span, people: analysis.people, decisions: decisions,
+                                                        allowed: roster.isEmpty ? frequent.union(taughtNumbers) : roster)
+            players.formUnion(followed)
+            for number in followed where taughtNumbers.contains(number) { found[number, default: 0] += 1 }
             rally.players = players.sorted()
             return rally
         }
