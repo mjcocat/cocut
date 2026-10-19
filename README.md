@@ -2,7 +2,7 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.15.4.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
+**Status: v0.16.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
 - play-to-record capture, including with the video in fullscreen
 - a reorderable clip library with trimming and import
 - a player card designer
@@ -116,6 +116,7 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 - **All Players › #15** in the rally list shows only rallies with #15. **Rallies only** playback, **Add to Clips**, and **Export Condensed Match** then use just those.
 - A number has to be read at least twice in a rally to count. With a **Team Roster**, only roster numbers count; without one, only numbers seen in at least two rallies do. That leaves out referees and passers-by.
 - Missed someone? Select the rally and type their number in the players row. Remove a wrong one with its ×.
+- **Teach a Player…** finds a player whose number is hard to read (a lone "1", a libero's number). Pause on a moment they're in, choose **Teach a Player…**, click them, type their number and choose **Teach**. Cocut finds them in every rally by how they look, comparing against the players whose numbers it did read, so teammates in the same uniform are told apart. Teach the same player at two or three moments (facing toward and away) for better matches. The **Looser/Stricter** slider shows how many rallies each taught player is found in.
 - Rallies added to Clips keep their players. In Clips, the filter's **Player** section finds every clip with that player.
 - Numbers on backs facing the camera read best. Import matches at **1080p or better**: at 720p, front-row numbers are often too small to read.
 
