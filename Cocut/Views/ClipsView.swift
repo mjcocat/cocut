@@ -751,23 +751,24 @@ private struct ClipDetailPane: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 12) {
+                    // Name and details on their own row, so they don't squeeze into a column.
+                    VStack(alignment: .leading, spacing: 3) {
+                        TextField("Clip name", text: $titleDraft)
+                            .textFieldStyle(.plain)
+                            .font(.title3.weight(.semibold))
+                            .focused($titleFocused)
+                            .onSubmit { commitTitle(clip) }
+                            .onChange(of: titleFocused) { _, focused in
+                                if !focused { commitTitle(clip) }
+                            }
+                        Text(details(clip))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
                     HStack(alignment: .center, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            TextField("Clip name", text: $titleDraft)
-                                .textFieldStyle(.plain)
-                                .font(.title3.weight(.semibold))
-                                .focused($titleFocused)
-                                .onSubmit { commitTitle(clip) }
-                                .onChange(of: titleFocused) { _, focused in
-                                    if !focused { commitTitle(clip) }
-                                }
-                            Text(details(clip))
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        Spacer(minLength: 12)
-
                         StarRating(rating: clip.stars, size: 15) { library.setRating($0, for: [clip.id]) }
                             .help("Rate this play (or press 1–5 in the list). Order by Rating puts the best first.")
 
@@ -798,6 +799,7 @@ private struct ClipDetailPane: View {
                         }
                         .help("Circle the athlete on the clip's first frame. The reel holds that frame for a moment with a ring around them.")
                         .disabled(spotlighting)
+                        .fixedSize()
 
                         Button(role: .destructive) {
                             deleting = [clip]
@@ -805,6 +807,8 @@ private struct ClipDetailPane: View {
                             Image(systemName: "trash")
                         }
                         .help("Move this clip to the Trash (⌫)")
+
+                        Spacer(minLength: 0)
 
                         Menu {
                             Menu("Move to Section") {
