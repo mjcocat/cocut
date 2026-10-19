@@ -40,6 +40,15 @@ struct RallyFinderView: View {
         .onChange(of: model.isBusy) { _, busy in
             if busy { finder.pause() }
         }
+        .sheet(item: Binding(get: { finder.pendingMatch }, set: { finder.pendingMatch = $0 })) { url in
+            CourtAreaScreen(url: url) { area in
+                finder.pendingMatch = nil
+                finder.courtArea = area
+                finder.analyze(url)
+            } onCancel: {
+                finder.pendingMatch = nil
+            }
+        }
     }
 
     private var isBusy: Bool {
@@ -92,6 +101,7 @@ struct RallyFinderView: View {
             VStack(alignment: .leading, spacing: 8) {
                 tip("camera.fill", "Works best with a camera on a tripod, behind the end line, that doesn't pan or zoom.")
                 tip("arrow.up.and.down", "Leave some wall or ceiling above the net in the picture. That's where Cocut looks for the ball.")
+                tip("rectangle.dashed", "Before it starts, you mark the air above your court, so other courts and the crowd are ignored.")
                 tip("speaker.wave.2", "Keep the sound: the referee's whistle marks where rallies start and end.")
                 tip("hand.tap", "You review every rally before anything is saved, and can fix or add any it got wrong.")
             }
@@ -105,7 +115,7 @@ struct RallyFinderView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .dropDestination(for: URL.self) { urls, _ in
             guard let url = urls.first(where: \.isFileURL) else { return false }
-            finder.analyze(url)
+            finder.pendingMatch = url
             return true
         }
     }
@@ -236,6 +246,14 @@ struct RallyFinderView: View {
                 .monospacedDigit()
 
             Spacer()
+
+            Button {
+                finder.pendingMatch = finder.sourceURL
+            } label: {
+                Label("Court Area…", systemImage: "rectangle.dashed")
+            }
+            .help("Mark the air above your court again and find the rallies again (replaces your changes to the rallies)")
+            .disabled(isBusy)
 
             Button {
                 finder.exportCondensed()

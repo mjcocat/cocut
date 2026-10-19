@@ -52,7 +52,11 @@ struct CourtAreaScreen: View {
             }
             .padding()
             .navigationTitle("Mark Your Court")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #else
+            .frame(minWidth: 820, minHeight: 600)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { onCancel() } }
                 ToolbarItem(placement: .confirmationAction) {

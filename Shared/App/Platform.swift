@@ -140,6 +140,11 @@ enum Platform {
     }
 }
 
+/// Lets a file URL drive a sheet (`.sheet(item:)`).
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
+}
+
 extension Image {
     /// SwiftUI image from an NSImage (Mac) or UIImage (iOS).
     init(platformImage: PlatformImage) {

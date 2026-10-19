@@ -151,9 +151,13 @@ final class RallyFinder {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = [.movie, .mpeg4Movie, .quickTimeMovie]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        analyze(url)
+        pendingMatch = url
     }
     #endif
+
+    /// A match waiting for its court area to be marked; the window shows the marking step and
+    /// then calls `analyze`.
+    var pendingMatch: URL?
 
     /// The air above the user's court (unit coordinates, top-left origin), marked on a frame of
     /// the match. Nil looks for the ball automatically across the top of the picture.

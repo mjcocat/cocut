@@ -191,9 +191,6 @@ struct RalliesScreen: View {
     }
 }
 
-extension URL: @retroactive Identifiable {
-    public var id: String { absoluteString }
-}
 
 /// Review: the match player, the timeline, and the rally list.
 private struct RallyReview: View {
