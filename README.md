@@ -24,6 +24,8 @@ CI builds aren't notarized, which requires a paid Apple Developer account. The i
 - Run `xattr -dr com.apple.quarantine /Applications/Cocut.app`.
 - Or open **System Settings › Privacy & Security** and click **Open Anyway**.
 
+**If the Dock icon just keeps bouncing** after you click **Open Anyway**, a copy held back by the first, blocked launch is still stuck and blocks new launches. Run `pkill -9 -x Cocut`, then open Cocut again.
+
 ## Recording
 
 1. Open the game film in your browser. Pause it just before the first play.
