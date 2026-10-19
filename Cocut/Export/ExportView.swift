@@ -199,6 +199,10 @@ struct ExportView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                if exporter.options.showSpotlights {
+                    SpotlightStyleControls()
+                        .padding(.leading, 20)
+                }
                 Toggle("Include sound", isOn: $exporter.options.includeSound)
             }
             group("Video") {
