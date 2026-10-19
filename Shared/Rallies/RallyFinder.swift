@@ -320,6 +320,12 @@ final class RallyFinder {
         state = .empty
     }
 
+    /// Re-decides who's in each rally, e.g. after the team roster changes. No new analysis needed.
+    func refreshPlayers() {
+        guard analysis != nil else { return }
+        rebuildRallies()
+    }
+
     /// Recomputes rallies from the analysis (keeps hand-added rallies and unchecked ones).
     private func rebuildRallies() {
         guard let analysis else { return }

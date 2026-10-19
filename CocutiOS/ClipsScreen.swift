@@ -13,6 +13,7 @@ struct ClipsScreen: View {
     @State private var importProblem: String?
     @State private var newSectionName = ""
     @State private var namingSection = false
+    @State private var editingRoster = false
 
     var body: some View {
         let library = model.library
@@ -90,6 +91,7 @@ struct ClipsScreen: View {
                             newSectionName = ""
                             namingSection = true
                         }
+                        Button("Team Roster…", systemImage: "person.3") { editingRoster = true }
                         Button("Best Rated First", systemImage: "star") { library.orderByRating() }
                             .disabled(library.clips.isEmpty)
                         Divider()
@@ -126,6 +128,7 @@ struct ClipsScreen: View {
             } message: {
                 Text(importProblem ?? "")
             }
+            .sheet(isPresented: $editingRoster) { RosterScreen() }
             .alert("New Section", isPresented: $namingSection) {
                 TextField("e.g. Kills", text: $newSectionName)
                 Button("Cancel", role: .cancel) {}

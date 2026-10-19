@@ -9,6 +9,7 @@ struct RallyFinderView: View {
 
     private var finder: RallyFinder { model.rallies }
     @State private var teaching = false
+    @State private var editingRoster = false
 
     var body: some View {
         Group {
@@ -40,6 +41,11 @@ struct RallyFinderView: View {
         }
         .onChange(of: model.isBusy) { _, busy in
             if busy { finder.pause() }
+        }
+        .onChange(of: model.library.roster) { _, _ in finder.refreshPlayers() }
+        .sheet(isPresented: $editingRoster) {
+            RosterView()
+                .frame(minWidth: 420, minHeight: 460)
         }
         .sheet(isPresented: $teaching) {
             if let url = finder.sourceURL {
@@ -103,6 +109,9 @@ struct RallyFinderView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+
+            Button("Team Roster…") { editingRoster = true }
+                .help("Your team's jersey numbers: only these are listed on rallies, so opponents and misreads are left out")
 
             VStack(alignment: .leading, spacing: 8) {
                 tip("camera.fill", "Works best with a camera on a tripod, behind the end line, that doesn't pan or zoom.")
@@ -252,6 +261,13 @@ struct RallyFinderView: View {
                 .monospacedDigit()
 
             Spacer()
+
+            Button {
+                editingRoster = true
+            } label: {
+                Label("Team Roster…", systemImage: "person.3")
+            }
+            .help("Your team's jersey numbers: only these are listed on rallies, so opponents and misreads are left out. Changes apply right away.")
 
             Button {
                 finder.pause()
