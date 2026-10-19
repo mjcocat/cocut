@@ -353,7 +353,9 @@ enum RallyDetector {
             try Task.checkCancellation()
             if i % 20 == 0 { progress(Double(i) / Double(times.count)) }
             guard let image = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image else { continue }
-            for found in numbers(in: image, rejected: &rejected) {
+            // Once a second, also look closely at each nearby player's torso.
+            var seen: Set<Int> = []
+            for found in numbers(in: image, closeUps: i % 2 == 0, rejected: &rejected) where seen.insert(found.number).inserted {
                 reads.append(NumberRead(time: t, number: found.number, x: found.x, y: found.y))
             }
         }
@@ -380,14 +382,55 @@ enum RallyDetector {
 
     /// One- or two-digit numbers in the lower part of the picture (where the near team is), with
     /// where each was read. Short text that isn't a number is counted in `rejected` for the log.
-    static func numbers(in image: CGImage, rejected: inout [String: Int]) -> [(number: Int, x: Double, y: Double)] {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        // Vision's origin is bottom-left: the lower 65% of the frame.
-        request.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 0.65)
-        request.minimumTextHeight = 0.012
+    static func numbers(in image: CGImage, closeUps: Bool = false,
+                        rejected: inout [String: Int]) -> [(number: Int, x: Double, y: Double)] {
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        // The whole lower part of the picture (Vision's origin is bottom-left: the lower 65%).
+        var found = recognize(handler, in: CGRect(x: 0, y: 0, width: 1, height: 0.65),
+                              minimumTextHeight: 0.012, level: .accurate, rejected: &rejected)
+        guard closeUps else { return found }
+
+        // Close-ups: find the people, then read each nearby player's torso on its own. Text
+        // recognition finds a lone "1" or "11" far more readily when it fills the region it's
+        // given than as a sliver in a whole gym.
+        let people = VNDetectHumanRectanglesRequest()
+        people.upperBodyOnly = false
+        try? handler.perform([people])
+        let bodies = (people.results ?? [])
+            .map(\.boundingBox)
+            .filter { $0.height >= 0.12 && $0.midY < 0.75 } // near enough for a readable number
+            .sorted { $0.height > $1.height }
+            .prefix(8)
+        let already = Set(found.map(\.number))
+        for body in bodies {
+            // From the hips to the shoulders, a little wider than the body.
+            let torso = CGRect(x: body.minX - body.width * 0.15, y: body.minY + body.height * 0.42,
+                               width: body.width * 1.3, height: body.height * 0.48)
+                .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+            guard torso.width > 0.01, torso.height > 0.01 else { continue }
+            var reads = recognize(handler, in: torso, minimumTextHeight: 0.012, level: .accurate, rejected: &rejected)
+            if reads.isEmpty {
+                // The fast recognizer works character by character and catches a lone "1" the
+                // accurate one sometimes skips.
+                reads = recognize(handler, in: torso, minimumTextHeight: 0.012, level: .fast, rejected: &rejected)
+            }
+            for read in reads where !already.contains(read.number) {
+                found.append(read)
+            }
+        }
+        return found
+    }
+
+    /// One- or two-digit numbers in `region` (unit coordinates, bottom-left origin), with where
+    /// each was read in the whole picture.
+    private static func recognize(_ handler: VNImageRequestHandler, in region: CGRect, minimumTextHeight: Float,
+                                  level: VNRequestTextRecognitionLevel,
+                                  rejected: inout [String: Int]) -> [(number: Int, x: Double, y: Double)] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = level
+        request.usesLanguageCorrection = false
+        request.regionOfInterest = region
+        request.minimumTextHeight = minimumTextHeight
         do {
             try handler.perform([request])
         } catch {
@@ -395,11 +438,14 @@ enum RallyDetector {
         }
         var found: [(Int, Double, Double)] = []
         for observation in request.results ?? [] {
+            // Boxes are relative to the region; place them in the whole picture.
             let box = observation.boundingBox
+            let x = region.minX + box.midX * region.width
+            let y = region.minY + box.midY * region.height
             var taken = false
             for candidate in observation.topCandidates(3) where candidate.confidence >= 0.3 {
                 if let n = jerseyNumber(from: candidate.string) {
-                    found.append((n, Double(box.midX), Double(box.midY)))
+                    found.append((n, Double(x), Double(y)))
                     taken = true
                     break
                 }
@@ -604,7 +650,12 @@ enum RallyDetector {
         // Join bursts split by a low pass or dig; drop blips (a stray ball, a warm-up toss).
         var merged: [Span] = []
         for b in result.bursts {
-            if var last = merged.last, b.start - last.end < 3.5 {
+            // A whistle in the gap means the rally ended there (the ball going back to the
+            // server isn't part of it).
+            let whistleInGap = merged.last.map { last in
+                b.start - last.end >= 1.5 && result.whistles.contains { $0 > last.end && $0 < b.start }
+            } ?? false
+            if var last = merged.last, b.start - last.end < 3.5, !whistleInGap {
                 last.end = b.end
                 merged[merged.count - 1] = last
             } else {
@@ -617,12 +668,14 @@ enum RallyDetector {
         for b in merged {
             var start: Double
             if includeSetup {
-                let serve = result.whistles.last { $0 >= b.start - 9 && $0 <= b.start }
-                start = serve.map { $0 - 0.5 } ?? b.start - 3
+                // The serve whistle, but never more than 5 seconds of setup: in a busy hall the
+                // nearest whistle before the serve is often another court's.
+                let serve = result.whistles.last { $0 >= b.start - 8 && $0 <= b.start }
+                start = max(serve.map { $0 - 0.5 } ?? b.start - 3, b.start - 5)
             } else {
                 start = b.start - 1.5
             }
-            let whistle = result.whistles.first { $0 >= b.end && $0 <= b.end + 4 }
+            let whistle = result.whistles.first { $0 >= b.end && $0 <= b.end + 3 }
             var end = whistle.map { $0 + 0.5 } ?? b.end + 1.5
             start = max(0, start)
             end = min(result.duration, end)
