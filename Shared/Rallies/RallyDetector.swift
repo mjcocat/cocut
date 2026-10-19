@@ -341,25 +341,52 @@ enum RallyDetector {
             }
         }
         guard !times.isEmpty else { return [] }
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 2560, height: 2560)
-        generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 10)
-        generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 10)
+        func makeGenerator() -> AVAssetImageGenerator {
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 2560, height: 2560)
+            generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 10)
+            generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 10)
+            return generator
+        }
+        var generator = makeGenerator()
 
         var reads: [NumberRead] = []
         var rejected: [String: Int] = [:]
+        var problems: [String: Int] = [:]
+        var unreadFrames = 0
         for (i, t) in times.enumerated() {
             try Task.checkCancellation()
             if i % 20 == 0 { progress(Double(i) / Double(times.count)) }
-            guard let image = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image else { continue }
+            let at = CMTime(seconds: t, preferredTimescale: 600)
+            var image: CGImage?
+            do {
+                image = try await generator.image(at: at).image
+            } catch {
+                // The decoder sometimes gives up partway through a long video (and then fails
+                // every frame after). Start a fresh one and try again.
+                problems["Frame: \(error.localizedDescription) (\((error as NSError).code))", default: 0] += 1
+                try? await Task.sleep(for: .milliseconds(200))
+                generator = makeGenerator()
+                image = try? await generator.image(at: at).image
+            }
+            guard let image else {
+                unreadFrames += 1
+                continue
+            }
             // Once a second, also look closely at each nearby player's torso.
             var seen: Set<Int> = []
-            for found in numbers(in: image, closeUps: i % 2 == 0, rejected: &rejected) where seen.insert(found.number).inserted {
+            for found in numbers(in: image, closeUps: i % 2 == 0, rejected: &rejected, problems: &problems)
+            where seen.insert(found.number).inserted {
                 reads.append(NumberRead(time: t, number: found.number, x: found.x, y: found.y))
             }
         }
         progress(1)
+        Log.info("Number pass: \(times.count) frames, \(unreadFrames) couldn't be read")
+        if !problems.isEmpty {
+            let list = problems.sorted { $0.value > $1.value }.prefix(6).map { "\($0.key) ×\($0.value)" }
+            Log.error("Number pass problems: \(list.joined(separator: "; "))")
+        }
         let common = rejected.sorted { $0.value > $1.value }.prefix(15).map { "\"\($0.key)\"×\($0.value)" }
         if !common.isEmpty { Log.info("Short text read but not taken as a number: \(common.joined(separator: ", "))") }
         return dropStationary(reads)
@@ -382,12 +409,12 @@ enum RallyDetector {
 
     /// One- or two-digit numbers in the lower part of the picture (where the near team is), with
     /// where each was read. Short text that isn't a number is counted in `rejected` for the log.
-    static func numbers(in image: CGImage, closeUps: Bool = false,
-                        rejected: inout [String: Int]) -> [(number: Int, x: Double, y: Double)] {
+    static func numbers(in image: CGImage, closeUps: Bool = false, rejected: inout [String: Int],
+                        problems: inout [String: Int]) -> [(number: Int, x: Double, y: Double)] {
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         // The whole lower part of the picture (Vision's origin is bottom-left: the lower 65%).
         var found = recognize(handler, in: CGRect(x: 0, y: 0, width: 1, height: 0.65),
-                              minimumTextHeight: 0.012, level: .accurate, rejected: &rejected)
+                              minimumTextHeight: 0.012, level: .accurate, rejected: &rejected, problems: &problems)
         guard closeUps else { return found }
 
         // Close-ups: find the people, then read each nearby player's torso on its own. Text
@@ -395,7 +422,11 @@ enum RallyDetector {
         // given than as a sliver in a whole gym.
         let people = VNDetectHumanRectanglesRequest()
         people.upperBodyOnly = false
-        try? handler.perform([people])
+        do {
+            try handler.perform([people])
+        } catch {
+            problems["People: \(error.localizedDescription)", default: 0] += 1
+        }
         let bodies = (people.results ?? [])
             .map(\.boundingBox)
             .filter { $0.height >= 0.12 && $0.midY < 0.75 } // near enough for a readable number
@@ -408,11 +439,11 @@ enum RallyDetector {
                                width: body.width * 1.3, height: body.height * 0.48)
                 .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
             guard torso.width > 0.01, torso.height > 0.01 else { continue }
-            var reads = recognize(handler, in: torso, minimumTextHeight: 0.012, level: .accurate, rejected: &rejected)
+            var reads = recognize(handler, in: torso, minimumTextHeight: 0.012, level: .accurate, rejected: &rejected, problems: &problems)
             if reads.isEmpty {
                 // The fast recognizer works character by character and catches a lone "1" the
                 // accurate one sometimes skips.
-                reads = recognize(handler, in: torso, minimumTextHeight: 0.012, level: .fast, rejected: &rejected)
+                reads = recognize(handler, in: torso, minimumTextHeight: 0.012, level: .fast, rejected: &rejected, problems: &problems)
             }
             for read in reads where !already.contains(read.number) {
                 found.append(read)
@@ -424,8 +455,8 @@ enum RallyDetector {
     /// One- or two-digit numbers in `region` (unit coordinates, bottom-left origin), with where
     /// each was read in the whole picture.
     private static func recognize(_ handler: VNImageRequestHandler, in region: CGRect, minimumTextHeight: Float,
-                                  level: VNRequestTextRecognitionLevel,
-                                  rejected: inout [String: Int]) -> [(number: Int, x: Double, y: Double)] {
+                                  level: VNRequestTextRecognitionLevel, rejected: inout [String: Int],
+                                  problems: inout [String: Int]) -> [(number: Int, x: Double, y: Double)] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = level
         request.usesLanguageCorrection = false
@@ -434,6 +465,7 @@ enum RallyDetector {
         do {
             try handler.perform([request])
         } catch {
+            problems["Text: \(error.localizedDescription)", default: 0] += 1
             return []
         }
         var found: [(Int, Double, Double)] = []

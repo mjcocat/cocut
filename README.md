@@ -2,7 +2,7 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.15.2.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
+**Status: v0.15.3.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
 - play-to-record capture, including with the video in fullscreen
 - a reorderable clip library with trimming and import
 - a player card designer
