@@ -537,13 +537,20 @@ enum RallyDetector {
         } catch {
             problems["People: \(error.localizedDescription)", default: 0] += 1
         }
-        for box in (rectangles.results ?? []).map(\.boundingBox) where !out.contains(where: { overlap($0.box, box) > 0.3 }) {
+        for box in (rectangles.results ?? []).map(\.boundingBox)
+        where !out.contains(where: { overlap($0.box, box) > 0.3 }) && !looksLikeGroup(box) {
             out.append((box, torsoGuess(box)))
         }
         return Array(out
             .filter { $0.box.height >= minHeight && $0.box.midY < maxMidY }
             .sorted { $0.box.height > $1.box.height }
             .prefix(10))
+    }
+
+    /// Wider than one standing or crouching person (in a 16:9 frame): the rectangle detector
+    /// sometimes boxes a whole cluster of people.
+    static func looksLikeGroup(_ box: CGRect) -> Bool {
+        box.height > 0 && box.width * 16 / 9 / box.height > 0.9
     }
 
     /// Intersection over union of two boxes.
@@ -719,6 +726,8 @@ enum RallyDetector {
         var margin: Float
         /// Frames in the track.
         var count: Int
+        /// Usually boxed as a cluster of people rather than one player: never asked about.
+        var isGroup = false
     }
 
     /// The label for "not our team" (opponents, referees, coaches).
@@ -726,11 +735,13 @@ enum RallyDetector {
 
     /// Decides who every followed player is. Tracks taught by the user keep that; tracks with a
     /// read number keep it; every other track goes to the known player (taught, read or "other
-    /// team") it looks most like, averaged over all its frames, when that's at least
-    /// `minSimilarity` and clearly ahead of the next-closest. Examples per player: what was taught
+    /// team") most of its frames look like (see `agreement`). Examples per player: what was taught
     /// plus up to 60 frames of their labeled tracks, spread across the match.
+    /// Each frame votes for the players of its `neighbors` closest examples; a track is decided
+    /// when at least `agreement` of its votes go to one player. Votes don't depend on how the
+    /// appearance features happen to scale, unlike a similarity threshold.
     static func decide(people: [PersonSighting], taught: [Int: [[Float]]], taughtTracks: [Int: Int],
-                       minSimilarity: Float, minMargin: Float = 0.04) -> [Int: TrackDecision] {
+                       agreement: Float, neighbors: Int = 7) -> [Int: TrackDecision] {
         guard let dims = people.first?.print.count, dims > 0 else { return [:] }
         func label(of p: PersonSighting) -> Int? { taughtTracks[p.track] ?? p.trackNumber }
 
@@ -742,7 +753,7 @@ enum RallyDetector {
             examples.append(contentsOf: print)
         }
         for (number, prints) in taught { prints.forEach { add($0, number) } }
-        let known = Dictionary(grouping: people.filter { label(of: $0) != nil }, by: { label(of: $0)! })
+        let known = Dictionary(grouping: people.filter { label(of: $0) != nil && !looksLikeGroup($0.box) }, by: { label(of: $0)! })
         for (number, list) in known where list.count >= 5 || taught[number] != nil {
             let step = max(1, list.count / 60)
             for i in stride(from: 0, to: list.count, by: step).prefix(60) { add(list[i].print, number) }
@@ -763,8 +774,10 @@ enum RallyDetector {
         var transposed = [Float](repeating: 0, count: dims * l)
         vDSP_mtrans(examples, 1, &transposed, 1, vDSP_Length(dims), vDSP_Length(l))
 
-        // Each sighting's best similarity to each player.
+        // Each sighting's best similarity to each player, and its nearest examples' votes.
         var best = [Float](repeating: -1, count: people.count * u)
+        var votes = [Float](repeating: 0, count: people.count * u)
+        let k = min(neighbors, l)
         let chunk = 2048
         var start = 0
         while start < people.count {
@@ -775,38 +788,67 @@ enum RallyDetector {
             }
             var sims = [Float](repeating: 0, count: rows * l)
             vDSP_mmul(block, 1, transposed, 1, &sims, 1, vDSP_Length(rows), vDSP_Length(l), vDSP_Length(dims))
+            var topSims = [Float](repeating: -2, count: k)
+            var topCols = [Int](repeating: 0, count: k)
             for r in 0..<rows {
                 let base = (start + r) * u
+                for i in 0..<k { topSims[i] = -2 }
                 for c in 0..<l {
-                    let k = base + column[labels[c]]!
-                    if sims[r * l + c] > best[k] { best[k] = sims[r * l + c] }
+                    let sim = sims[r * l + c]
+                    let slot = base + column[labels[c]]!
+                    if sim > best[slot] { best[slot] = sim }
+                    // Keep the k closest examples (insertion into a short sorted list).
+                    if sim > topSims[k - 1] {
+                        var i = k - 1
+                        while i > 0 && topSims[i - 1] < sim {
+                            topSims[i] = topSims[i - 1]
+                            topCols[i] = topCols[i - 1]
+                            i -= 1
+                        }
+                        topSims[i] = sim
+                        topCols[i] = c
+                    }
                 }
+                for i in 0..<k where topSims[i] > -2 { votes[base + column[labels[topCols[i]]]!] += 1 }
             }
             start += rows
         }
 
         for (track, members) in tracks {
             var mean = [Float](repeating: 0, count: u)
-            for m in members { for c in 0..<u { mean[c] += best[m * u + c] } }
-            for c in 0..<u { mean[c] /= Float(members.count) }
-            let order = mean.indices.sorted { mean[$0] > mean[$1] }
+            var share = [Float](repeating: 0, count: u)
+            for m in members {
+                for c in 0..<u {
+                    mean[c] += best[m * u + c]
+                    share[c] += votes[m * u + c]
+                }
+            }
+            let total = max(1, share.reduce(0, +))
+            for c in 0..<u {
+                mean[c] /= Float(members.count)
+                share[c] /= total
+            }
+            let order = share.indices.sorted { share[$0] > share[$1] }
             let top = order[0]
             let guess = distinct[top]
-            let margin = mean[top] - (order.count > 1 ? mean[order[1]] : -1)
+            let margin = share[top] - (order.count > 1 ? share[order[1]] : 0)
+            let widths = members.filter { looksLikeGroup(people[$0].box) }.count
             var decision = TrackDecision(track: track, number: nil, source: .uncertain, guess: guess,
-                                         score: mean[top], margin: margin, count: members.count)
+                                         score: share[top], margin: margin, count: members.count,
+                                         isGroup: widths * 2 > members.count)
             if let taughtAs = taughtTracks[track] {
                 decision.number = taughtAs
                 decision.source = .taught
             } else if let read = people[members[0]].trackNumber {
                 decision.number = read
                 decision.source = .read
-                // Read as one number but clearly looks like another: maybe a misread.
-                if guess != read, let readColumn = column[read], members.count >= 3,
-                   mean[top] - mean[readColumn] >= 0.05 {
+                // Read as one number but clearly looks like someone else: maybe a misread.
+                if guess != read, members.count >= 3, share[top] >= 0.6,
+                   (column[read].map { share[$0] } ?? 0) < 0.2 {
                     decision.source = .conflict
                 }
-            } else if mean[top] >= minSimilarity + (members.count < 3 ? 0.05 : 0), margin >= minMargin {
+            } else if !decision.isGroup, share[top] >= agreement + (members.count < 3 ? 0.1 : 0),
+                      mean[top] >= 0.3 {
                 decision.number = guess
                 decision.source = .matched
             }

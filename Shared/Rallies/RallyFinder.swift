@@ -164,10 +164,11 @@ final class RallyFinder {
     private(set) var taughtTracks: [Int: Int] = [:]
     /// How many times each number was taught (answers and clicks), for the list.
     private(set) var taughtClicks: [Int: Int] = [:]
-    /// How alike a player must look to a known player to count as them (cosine similarity).
-    var matchSimilarity: Double = UserDefaults.standard.object(forKey: "rallyMatchSimilarity") as? Double ?? 0.8 {
+    /// How much of a followed player's frames must agree on who they look like for Cocut to
+    /// decide on its own (0.5 = a simple majority; higher is stricter and asks about more).
+    var matchSimilarity: Double = UserDefaults.standard.object(forKey: "rallyMatchAgreement") as? Double ?? 0.65 {
         didSet {
-            UserDefaults.standard.set(matchSimilarity, forKey: "rallyMatchSimilarity")
+            UserDefaults.standard.set(matchSimilarity, forKey: "rallyMatchAgreement")
             if matchSimilarity != oldValue { refreshDecisions() }
         }
     }
@@ -188,7 +189,8 @@ final class RallyFinder {
     /// ones whose read number disagrees with how they look. Short glimpses are left out.
     var reviewQueue: [RallyDetector.TrackDecision] {
         decisions.values
-            .filter { ($0.source == .uncertain || $0.source == .conflict) && $0.count >= 4 && !skippedTracks.contains($0.track) }
+            .filter { ($0.source == .uncertain || $0.source == .conflict) && $0.count >= 4 && !$0.isGroup
+                && !skippedTracks.contains($0.track) }
             .sorted { a, b in
                 if (a.source == .conflict) != (b.source == .conflict) { return a.source == .conflict }
                 return a.count > b.count
@@ -198,7 +200,7 @@ final class RallyFinder {
     /// How many followed players have been identified (any way) vs. not, counting only tracks
     /// long enough to ask about.
     var identifiedCounts: (identified: Int, unknown: Int) {
-        let long = decisions.values.filter { $0.count >= 4 }
+        let long = decisions.values.filter { $0.count >= 4 && !$0.isGroup }
         let known = long.filter { $0.number != nil && $0.source != .conflict }.count
         return (known, long.count - known)
     }
@@ -260,11 +262,11 @@ final class RallyFinder {
         }
         let taught = self.taught
         let tracks = self.taughtTracks
-        let similarity = Float(matchSimilarity)
+        let agreement = Float(matchSimilarity)
         isMatching = true
         matchTask = Task {
             let result = await Task.detached(priority: .userInitiated) {
-                RallyDetector.decide(people: people, taught: taught, taughtTracks: tracks, minSimilarity: similarity)
+                RallyDetector.decide(people: people, taught: taught, taughtTracks: tracks, agreement: agreement)
             }.value
             guard !Task.isCancelled else { return }
             decisions = result

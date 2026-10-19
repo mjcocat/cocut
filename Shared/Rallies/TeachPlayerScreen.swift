@@ -54,7 +54,7 @@ struct TeachPlayerScreen: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #else
-            .frame(minWidth: 860, minHeight: 700)
+            .frame(minWidth: 1080, minHeight: 640)
             #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done", action: onClose) }
@@ -97,8 +97,7 @@ struct TeachPlayerScreen: View {
     @ViewBuilder private var identifiedList: some View {
         @Bindable var finder = finder
                     if !finder.taught.isEmpty {
-                        Divider()
-                        Text("Identified").font(.headline)
+                        DisclosureGroup("Identified (\(finder.taught.keys.count))") {
                         ForEach(finder.taught.keys.sorted(), id: \.self) { number in
                             HStack {
                                 Text(number == RallyDetector.otherTeam ? "Other team" : "#\(number)")
@@ -118,12 +117,13 @@ struct TeachPlayerScreen: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text("Looser")
-                                Slider(value: $finder.matchSimilarity, in: 0.6...0.95)
+                                Slider(value: $finder.matchSimilarity, in: 0.5...0.9)
                                 Text("Stricter")
                             }
-                            Text("Looser finds more rallies but may mix up teammates; stricter misses some and asks about more.")
+                            Text("Looser decides more players on its own but may mix up teammates; stricter asks about more.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                        }
                         }
                     }
     }
@@ -266,6 +266,13 @@ private struct WhoIsThisPane: View {
     @State private var otherNumber = ""
     @State private var answeredCount = 0
 
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    private var wide: Bool { sizeClass == .regular }
+    #else
+    private let wide = true
+    #endif
+
     var body: some View {
         let queue = finder.reviewQueue.filter { !answered.contains($0.track) }
         let counts = finder.identifiedCounts
@@ -279,24 +286,34 @@ private struct WhoIsThisPane: View {
                     .monospacedDigit()
             }
             if let current {
-                Text(prompt(for: current))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                mainPicture
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                if !closeUps.isEmpty {
-                    HStack(spacing: 8) {
-                        ForEach(closeUps.indices, id: \.self) { i in
-                            Image(decorative: closeUps[i], scale: 1)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(height: 130)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                        }
+                let layout = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+                                  : AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                layout {
+                    VStack(alignment: .leading, spacing: 8) {
+                        mainPicture
+                            .aspectRatio(16 / 9, contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        Text(prompt(for: current))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity)
+                    VStack(alignment: .leading, spacing: 12) {
+                        if !closeUps.isEmpty {
+                            HStack(spacing: 6) {
+                                ForEach(closeUps.indices, id: \.self) { i in
+                                    Image(decorative: closeUps[i], scale: 1)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(height: 120)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                            }
+                        }
+                        answerButtons(for: current)
+                    }
+                    .frame(width: wide ? 340 : nil)
                 }
-                answerButtons(for: current)
             } else if queue.isEmpty {
                 Text(finder.isMatching ? "Working out who everyone is…" : "Nothing left to ask about. Use Pick from a Frame for anyone still missing.")
                     .foregroundStyle(.secondary)
@@ -346,7 +363,7 @@ private struct WhoIsThisPane: View {
                 }
             }
         }
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             TextField("Other #", text: $otherNumber)
                 .frame(width: 80)
                 .textFieldStyle(.roundedBorder)
@@ -356,10 +373,12 @@ private struct WhoIsThisPane: View {
                 .onSubmit { if let n = Int(otherNumber) { answer(n) } }
             Button("Use") { if let n = Int(otherNumber) { answer(n) } }
                 .disabled(Int(otherNumber) == nil)
-            Spacer()
+        }
+        HStack(spacing: 8) {
             Button("Not Our Team") { answer(RallyDetector.otherTeam) }
                 .help("An opponent, referee or coach: players who look like this won't be listed")
             Button("Skip") { advance(skipping: true) }
+                .help("Not a single player, or can't tell")
         }
         if answeredCount > 0 {
             Text("\(answeredCount) answered. Each answer teaches Cocut, so similar players are worked out on their own.")
@@ -426,7 +445,7 @@ private struct WhoIsThisPane: View {
                 picture = (image, main.box, main.time)
             }
             var crops: [CGImage] = []
-            for s in others.prefix(4) {
+            for s in others.prefix(3) {
                 if let image = await VideoFrames.firstFrame(url: url, at: s.time, crop: nil),
                    let crop = Self.crop(image, around: s.box) {
                     crops.append(crop)
