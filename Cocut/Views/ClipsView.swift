@@ -336,9 +336,11 @@ private struct ClipListPane: View {
         case .section(let section):
             SectionRow(section: section,
                        clipCount: library.clips(in: section.id).count,
-                       isNewClipsTarget: library.newClipsSectionID == section.id)
+                       isNewClipsTarget: library.newClipsSectionID == section.id,
+                       canReorder: filterTagID == nil)
         case .clip(let clip):
             ClipRow(clip: clip,
+                    canReorder: filterTagID == nil,
                     number: library.number(of: clip),
                     url: library.url(for: clip),
                     tags: clip.tags.compactMap { library.tag(withID: $0) },
@@ -522,9 +524,11 @@ private struct SectionRow: View {
     let section: ReelSection
     let clipCount: Int
     let isNewClipsTarget: Bool
+    var canReorder = true
 
     var body: some View {
         HStack(spacing: 8) {
+            if canReorder { DragHandle(help: "Drag to move this section and its clips") }
             Image(systemName: "rectangle.split.1x2")
                 .foregroundStyle(Color.accentColor)
             Text(section.title.uppercased())
@@ -558,8 +562,29 @@ private struct SectionRow: View {
     }
 }
 
+/// The ☰ grip on a row: shows that rows can be dragged to reorder.
+private struct DragHandle: View {
+    let help: String
+    @State private var hovering = false
+
+    var body: some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(hovering ? Color.primary : Color.secondary.opacity(0.55))
+            .frame(width: 16, height: 28)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                hovering = inside
+                if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
+            }
+            .onDisappear { if hovering { NSCursor.pop() } }
+            .help(help)
+    }
+}
+
 private struct ClipRow: View {
     let clip: Clip
+    var canReorder = true
     let number: Int
     let url: URL
     let tags: [ClipTag]
@@ -570,7 +595,8 @@ private struct ClipRow: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            if canReorder { DragHandle(help: "Drag to change where this clip plays in the reel") }
             Text("\(number)")
                 .font(.system(.callout, design: .rounded).weight(.semibold))
                 .monospacedDigit()

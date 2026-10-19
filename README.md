@@ -81,7 +81,7 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 
 | To | Do this |
 |---|---|
-| Reorder clips | Drag them in the list. The list order is the reel order. |
+| Reorder clips | Drag them in the list by the ☰ grip (or anywhere on the row). The list order is the reel order. |
 | Watch a clip | Select it, and it plays in the player on the right. |
 | Rename a clip | Click its name under the player, or right-click › **Rename…**. |
 | Trim a clip | Click **Trim** and drag the yellow handles. The original file is kept, so **Reset Trim** undoes it. |
