@@ -621,15 +621,16 @@ private struct ClipRow: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                if !tags.isEmpty || !clip.playList.isEmpty {
+                let plays = Features.playTagging ? clip.playList : []
+                if !tags.isEmpty || !plays.isEmpty {
                     HStack(spacing: 4) {
-                        ForEach(clip.playList.prefix(2)) { play in
+                        ForEach(plays.prefix(2)) { play in
                             PlayChip(play: play, compact: true)
                         }
-                        ForEach(tags.prefix(clip.playList.isEmpty ? 3 : 2)) { tag in
+                        ForEach(tags.prefix(plays.isEmpty ? 3 : 2)) { tag in
                             TagChip(tag: tag, compact: true)
                         }
-                        let hidden = max(0, clip.playList.count - 2) + max(0, tags.count - (clip.playList.isEmpty ? 3 : 2))
+                        let hidden = max(0, plays.count - 2) + max(0, tags.count - (plays.isEmpty ? 3 : 2))
                         if hidden > 0 {
                             Text("+\(hidden)")
                                 .font(.caption2)
@@ -802,7 +803,9 @@ private struct ClipDetailPane: View {
                     }
 
                     tagBar(clip)
-                    PlayBar(clip: clip)
+                    if Features.playTagging {
+                        PlayBar(clip: clip)
+                    }
                     PlayerNumbersBar(numbers: clip.playerList,
                                      name: { library.player($0)?.name.nilIfEmpty },
                                      onAdd: { library.setPlayers(clip.playerList + [$0], for: clip.id) },
@@ -1029,10 +1032,12 @@ private struct MultiSelectionPane: View {
             }
             HStack {
                 Button("New Tag…") { actions.newTag(ids) }
-                Button("Add a Play…") { addingPlay = true }
-                    .popover(isPresented: $addingPlay, arrowEdge: .bottom) {
-                        PlayEntry(clipIDs: ids)
-                    }
+                if Features.playTagging {
+                    Button("Add a Play…") { addingPlay = true }
+                        .popover(isPresented: $addingPlay, arrowEdge: .bottom) {
+                            PlayEntry(clipIDs: ids)
+                        }
+                }
                 Button("New Section from Selection…") { actions.newSection(ids) }
             }
             Button(role: .destructive) {

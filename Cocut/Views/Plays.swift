@@ -1,5 +1,11 @@
 import SwiftUI
 
+/// Switches for features that are built but turned off for now.
+enum Features {
+    /// Tagging plays ("Kill · #11"). Off: the UI is hidden; plays already on clips are kept.
+    static let playTagging = false
+}
+
 // MARK: - Filter
 
 /// What the clip list shows: everything, or clips matching a tag and/or a play ("Kills by #11").
@@ -68,7 +74,7 @@ struct FilterMenu: View {
                     }
                 }
             }
-            if !library.usedActions.isEmpty {
+            if Features.playTagging, !library.usedActions.isEmpty {
                 Section("Play") {
                     ForEach(library.usedActions) { action in
                         Button {
@@ -99,7 +105,7 @@ struct FilterMenu: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Show only some clips: by player (#11), by play (Kills), or by tag. Pick a player and a play to combine them.")
-        .disabled(players.isEmpty && library.usedActions.isEmpty && library.tags.isEmpty)
+        .disabled(players.isEmpty && (!Features.playTagging || library.usedActions.isEmpty) && library.tags.isEmpty)
     }
 
     @ViewBuilder
