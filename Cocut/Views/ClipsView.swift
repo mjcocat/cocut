@@ -192,46 +192,59 @@ struct ClipsView: View {
     // MARK: Empty state
 
     private var emptyState: some View {
-        ContentUnavailableView {
-            VStack(spacing: 14) {
-                Image("Logo")
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 104, height: 104)
-                    .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
-                Text("No Clips Yet")
-                    .font(.title2.weight(.semibold))
-            }
-        } description: {
+        // Built by hand: ContentUnavailableView lays its actions out in a row on macOS 26, which
+        // pushed the tip off the edge.
+        VStack(spacing: 16) {
+            Image("Logo")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 104, height: 104)
+                .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+            Text("No Clips Yet")
+                .font(.title2.weight(.semibold))
             Text("Open game film on YouTube or Hudl and select the video. Cocut records a clip each time you press play and saves it when you pause.")
-        } actions: {
-            Button {
-                Task { await model.recordNewRegion() }
-            } label: {
-                Label("Record Region", systemImage: "record.circle")
-                    .padding(.horizontal, 6)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 460)
+
+            HStack(spacing: 10) {
+                Button {
+                    Task { await model.recordNewRegion() }
+                } label: {
+                    Label("Record Region", systemImage: "record.circle")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                Button {
+                    Task { await model.recordFullScreen() }
+                } label: {
+                    Label("Record Full Screen", systemImage: "rectangle.dashed")
+                        .padding(.horizontal, 6)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
             .controlSize(.large)
             .disabled(model.isBusy)
+            .padding(.top, 6)
 
-            Button("Import Videos…") {
-                Task { await model.importVideosWithPanel() }
+            HStack(spacing: 18) {
+                Button("Import Videos…") {
+                    Task { await model.importVideosWithPanel() }
+                }
+                Button("Find Rallies in a Full Match…") {
+                    openWindow(id: "rallies")
+                }
             }
-            .buttonStyle(.borderless)
-
-            Button("Find Rallies in a Full Match…") {
-                openWindow(id: "rallies")
-            }
-            .buttonStyle(.borderless)
+            .buttonStyle(.link)
 
             Text("From any app, even with the video in fullscreen: ⌥⌘N picks a region, ⌥⌘F records the full screen, ⌥⌘R repeats the last region. Press the same keys to finish.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.top, 6)
+                .frame(maxWidth: 460)
+                .padding(.top, 8)
         }
+        .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .dropDestination(for: URL.self) { urls, _ in
             let videos = urls.filter { $0.isFileURL }
@@ -447,18 +460,27 @@ private struct ClipListPane: View {
                 Divider()
                 Button("Manage Tags…") { actions.manageTags() }
                 Button("Team Roster…") { actions.managePlayers() }
-                Divider()
-                Button("Order by Rating (Best First)") { library.orderByRating() }
-                    .disabled(!library.clips.contains { $0.rating != nil })
             } label: {
                 Image(systemName: "plus")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Add a section or a tag")
+            .help("New section, new tag, tags and roster")
 
             FilterMenu(filter: $filter)
+
+            Menu {
+                Button("Best Rated First") { library.orderByRating() }
+                    .disabled(!library.clips.contains { $0.rating != nil })
+                Text("Sorts within each section. Unrated clips go last.")
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Sort clips: best-rated first, so the reel opens with your strongest plays")
 
             if let target = library.section(withID: library.newClipsSectionID) {
                 HStack(spacing: 4) {
@@ -1036,12 +1058,19 @@ private struct MultiSelectionPane: View {
     var body: some View {
         let library = model.library
         let ids = Set(clips.map(\.id))
-        ContentUnavailableView {
-            Label("\(clips.count) Clips Selected", systemImage: "square.stack.3d.up")
-        } description: {
+        VStack(spacing: 14) {
+            Image(systemName: "square.stack.3d.up")
+                .font(.system(size: 44, weight: .light))
+                .foregroundStyle(.secondary)
+            Text("\(clips.count) Clips Selected").font(.title2.weight(.semibold))
             Text("\(Clip.format(clips.reduce(0) { $0 + $1.effectiveDuration })) total")
-        } actions: {
+                .foregroundStyle(.secondary)
+            StarRating(rating: clips.allSatisfy { $0.stars == clips.first?.stars } ? (clips.first?.stars ?? 0) : 0, size: 18) {
+                library.setRating($0, for: ids)
+            }
+            .help("Rate all the selected clips")
             if !library.tags.isEmpty {
+                ScrollView(.horizontal) {
                 HStack(spacing: 6) {
                     ForEach(library.tags) { tag in
                         let all = clips.allSatisfy { $0.tags.contains(tag.id) }
@@ -1054,6 +1083,10 @@ private struct MultiSelectionPane: View {
                         .help(all ? "Remove “\(tag.name)” from these clips" : "Tag these clips “\(tag.name)”")
                     }
                 }
+                }
+                .scrollIndicators(.never)
+                .frame(maxWidth: 460)
+                .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 Button("New Tag…") { actions.newTag(ids) }
@@ -1074,6 +1107,8 @@ private struct MultiSelectionPane: View {
             Button("Deselect All", action: clearSelection)
                 .buttonStyle(.borderless)
         }
+        .padding(30)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
