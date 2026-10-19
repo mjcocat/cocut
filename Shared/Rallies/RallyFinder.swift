@@ -156,6 +156,61 @@ final class RallyFinder {
     }
     #endif
 
+    // MARK: Teach a player
+
+    /// Players taught by clicking them: number → appearance examples. Per match.
+    private(set) var taught: [Int: [[Float]]] = [:]
+    /// How alike a player must look to a taught example to count as them (cosine similarity).
+    var matchSimilarity: Double = UserDefaults.standard.object(forKey: "rallyMatchSimilarity") as? Double ?? 0.8 {
+        didSet {
+            UserDefaults.standard.set(matchSimilarity, forKey: "rallyMatchSimilarity")
+            if matchSimilarity != oldValue { refreshTaught() }
+        }
+    }
+    /// How many rallies each taught player was found in.
+    private(set) var taughtFound: [Int: Int] = [:]
+    /// Matching is running (it takes a moment on a long match).
+    private(set) var isMatching = false
+    @ObservationIgnored private var taughtTimes: [Int: [Double]] = [:]
+    @ObservationIgnored private var matchTask: Task<Void, Never>?
+
+    /// Whether this analysis has appearance data to teach from.
+    var canTeach: Bool { !(analysis?.people.isEmpty ?? true) }
+
+    func teach(_ number: Int, print: [Float]) {
+        taught[number, default: []].append(print)
+        Log.info("Taught #\(number) (\(taught[number]?.count ?? 0) example(s))")
+        refreshTaught()
+    }
+
+    func forget(_ number: Int) {
+        taught[number] = nil
+        refreshTaught()
+    }
+
+    private func refreshTaught() {
+        matchTask?.cancel()
+        guard let people = analysis?.people, !taught.isEmpty else {
+            taughtTimes = [:]
+            taughtFound = [:]
+            isMatching = false
+            rebuildRallies()
+            return
+        }
+        let taught = self.taught
+        let similarity = Float(matchSimilarity)
+        isMatching = true
+        matchTask = Task {
+            let times = await Task.detached(priority: .userInitiated) {
+                RallyDetector.matches(people: people, taught: taught, minSimilarity: similarity)
+            }.value
+            guard !Task.isCancelled else { return }
+            taughtTimes = times
+            isMatching = false
+            rebuildRallies()
+        }
+    }
+
     /// A match waiting for its court area to be marked; the window shows the marking step and
     /// then calls `analyze`.
     var pendingMatch: URL?
@@ -186,6 +241,9 @@ final class RallyFinder {
         analysis = nil
         rallies = []
         selectedID = nil
+        taught = [:]
+        taughtTimes = [:]
+        taughtFound = [:]
         undoStack.removeAll()
         redoStack.removeAll()
         state = .analyzing(0)
@@ -231,6 +289,9 @@ final class RallyFinder {
         analysis = nil
         rallies = []
         selectedID = nil
+        taught = [:]
+        taughtTimes = [:]
+        taughtFound = [:]
         state = .empty
     }
 
@@ -243,11 +304,19 @@ final class RallyFinder {
         let spans = RallyDetector.rallies(from: analysis, includeSetup: includeServeSetup)
         let frequent = RallyDetector.frequentNumbers(spans: spans, reads: analysis.numbers)
         let roster = self.roster()
+        var found: [Int: Int] = [:]
         var fresh = spans.map { span -> Rally in
             var rally = Rally(start: span.start, end: span.end)
-            rally.players = RallyDetector.players(in: span, reads: analysis.numbers, roster: roster, frequent: frequent)
+            var players = Set(RallyDetector.players(in: span, reads: analysis.numbers, roster: roster, frequent: frequent))
+            // Taught players found by appearance.
+            for (number, times) in taughtTimes where times.contains(where: { $0 >= span.start && $0 <= span.end }) {
+                players.insert(number)
+                found[number, default: 0] += 1
+            }
+            rally.players = players.sorted()
             return rally
         }
+        taughtFound = found
         for i in fresh.indices where unchecked.contains(where: { Self.overlap($0, fresh[i]) > 0.5 * fresh[i].duration }) {
             fresh[i].isIncluded = false
         }

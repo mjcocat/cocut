@@ -8,6 +8,7 @@ struct RallyFinderView: View {
     @Environment(\.openWindow) private var openWindow
 
     private var finder: RallyFinder { model.rallies }
+    @State private var teaching = false
 
     var body: some View {
         Group {
@@ -39,6 +40,11 @@ struct RallyFinderView: View {
         }
         .onChange(of: model.isBusy) { _, busy in
             if busy { finder.pause() }
+        }
+        .sheet(isPresented: $teaching) {
+            if let url = finder.sourceURL {
+                TeachPlayerScreen(finder: finder, url: url, time: finder.currentTime) { teaching = false }
+            }
         }
         .sheet(item: Binding(get: { finder.pendingMatch }, set: { finder.pendingMatch = $0 })) { url in
             CourtAreaScreen(url: url) { area in
@@ -246,6 +252,15 @@ struct RallyFinderView: View {
                 .monospacedDigit()
 
             Spacer()
+
+            Button {
+                finder.pause()
+                teaching = true
+            } label: {
+                Label("Teach a Player…", systemImage: "person.badge.plus")
+            }
+            .help("Click a player and type their number; Cocut finds them in every rally by how they look")
+            .disabled(isBusy || !finder.canTeach)
 
             Button {
                 finder.pendingMatch = finder.sourceURL

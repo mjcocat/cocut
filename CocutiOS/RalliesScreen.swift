@@ -17,6 +17,7 @@ struct RalliesScreen: View {
     @State private var loadProblem: String?
     /// A match waiting for its court area to be marked before analysis.
     @State private var pendingMatch: URL?
+    @State private var teaching = false
 
     var body: some View {
         let finder = model.rallies
@@ -70,6 +71,11 @@ struct RalliesScreen: View {
                             }
                             .disabled(finder.keptRallies.isEmpty)
                             Divider()
+                            Button("Teach a Player…", systemImage: "person.badge.plus") {
+                                finder.pause()
+                                teaching = true
+                            }
+                            .disabled(!finder.canTeach)
                             Button("Change Court Area…", systemImage: "rectangle.dashed") {
                                 pendingMatch = finder.sourceURL
                             }
@@ -117,6 +123,11 @@ struct RalliesScreen: View {
                 Button("OK") { loadProblem = nil }
             } message: {
                 Text(loadProblem ?? "")
+            }
+            .fullScreenCover(isPresented: $teaching) {
+                if let url = finder.sourceURL {
+                    TeachPlayerScreen(finder: finder, url: url, time: finder.currentTime) { teaching = false }
+                }
             }
             .fullScreenCover(item: $pendingMatch) { url in
                 CourtAreaScreen(url: url) { area in
