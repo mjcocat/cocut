@@ -155,6 +155,25 @@ final class RallyFinder {
     }
     #endif
 
+    /// The air above the user's court (unit coordinates, top-left origin), marked on a frame of
+    /// the match. Nil looks for the ball automatically across the top of the picture.
+    var courtArea: CGRect? {
+        didSet {
+            if let a = courtArea {
+                UserDefaults.standard.set([a.minX, a.minY, a.width, a.height], forKey: Self.courtAreaKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.courtAreaKey)
+            }
+        }
+    }
+    private static let courtAreaKey = "rallyCourtArea"
+
+    /// The court area marked last time (the same camera spot is common).
+    static var savedCourtArea: CGRect? {
+        guard let v = UserDefaults.standard.array(forKey: courtAreaKey) as? [Double], v.count == 4 else { return nil }
+        return CGRect(x: v[0], y: v[1], width: v[2], height: v[3])
+    }
+
     func analyze(_ url: URL) {
         task?.cancel()
         tearDownPlayer()
@@ -166,11 +185,12 @@ final class RallyFinder {
         redoStack.removeAll()
         state = .analyzing(0)
         Log.info("Finding rallies in \(url.lastPathComponent)")
+        let area = courtArea
 
         task = Task {
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try await RallyDetector.analyze(url: url) { fraction in
+                    try await RallyDetector.analyze(url: url, courtArea: area) { fraction in
                         Task { @MainActor [weak self] in
                             guard let self, case .analyzing = self.state else { return }
                             self.state = .analyzing(fraction)

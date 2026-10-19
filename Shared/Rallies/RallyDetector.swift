@@ -55,28 +55,31 @@ enum RallyDetector {
     static let analysisFPS: Int32 = 10
 
     /// Runs both passes. `progress` gets 0...1 (from the video pass, which takes longest).
-    static func analyze(url: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> Result {
+    /// `courtArea` is the air above the user's court (unit coordinates, top-left origin): when set,
+    /// the ball is only looked for there, which ignores neighboring courts, crowds and walkers.
+    static func analyze(url: URL, courtArea: CGRect? = nil,
+                        progress: @escaping @Sendable (Double) -> Void) async throws -> Result {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw DetectError.noVideo }
         let duration = try await asset.load(.duration).seconds
         let audioTrack = try await asset.loadTracks(withMediaType: .audio).first
 
         // The ball pass is most of the work (0–80%); reading jersey numbers is the rest.
-        async let videoPart = videoPass(asset: asset, track: track, duration: duration) { progress($0 * 0.8) }
+        async let videoPart = videoPass(asset: asset, track: track, duration: duration, courtArea: courtArea) { progress($0 * 0.8) }
         async let audioPart = whistles(asset: asset, track: audioTrack)
         let (bursts, zone) = try await videoPart
         let whistles = await audioPart
         var result = Result(duration: duration, bursts: bursts, whistles: whistles, ballZone: zone)
         let spans = rallies(from: result, includeSetup: true)
         result.numbers = try await readNumbers(asset: asset, spans: spans) { progress(0.8 + $0 * 0.2) }
-        Log.info("Rally analysis: \(bursts.count) ball bursts, \(whistles.count) whistles, ball zone \(Int(zone * 100))% of height, \(Int(duration))s")
+        Log.info("Rally analysis\(courtArea.map { " (court area \(Int($0.minX * 100))–\(Int($0.maxX * 100))% across, \(Int($0.minY * 100))–\(Int($0.maxY * 100))% down)" } ?? " (automatic area)"): \(bursts.count) ball bursts, \(whistles.count) whistles, ball zone \(Int(zone * 100))% of height, \(Int(duration))s")
         Log.info("Read \(result.numbers.count) jersey numbers in \(spans.count) rallies: \(Set(result.numbers.map(\.number)).sorted())")
         return result
     }
 
     // MARK: - Video: the ball above the players
 
-    private static func videoPass(asset: AVURLAsset, track: AVAssetTrack, duration: Double,
+    private static func videoPass(asset: AVURLAsset, track: AVAssetTrack, duration: Double, courtArea: CGRect?,
                                   progress: @escaping @Sendable (Double) -> Void) async throws -> ([Span], Double) {
         let natural = try await track.load(.naturalSize)
         let transform = try await track.load(.preferredTransform)
@@ -114,7 +117,7 @@ enum RallyDetector {
             throw DetectError.unreadable(reader.error?.localizedDescription ?? "")
         }
 
-        var finder = BallFinder(width: w, height: h)
+        var finder = BallFinder(width: w, height: h, area: courtArea)
         var lastReport = -1.0
         while let sample = output.copyNextSampleBuffer() {
             try Task.checkCancellation()
@@ -160,6 +163,11 @@ enum RallyDetector {
         static let threshold = 25        // luma change that counts as movement
         static let maxBlobArea = 45      // pixels, at 320 wide
         static let maxBlobSide = 10
+        /// A ball moves at least this far between frames (pixels at 320 wide, 10 fps). A head of
+        /// someone walking on the far side moves 1–2; a hit or passed ball moves 5–20.
+        static let minStep: Float = 3
+        /// The user's court area in analysis pixels, if they marked one.
+        let area: CGRect?
 
         private var older: [UInt8]?
         private var previous: [UInt8]?
@@ -169,10 +177,18 @@ enum RallyDetector {
         private var rowActivity: [Double]
         private var activityFrames = 0
 
-        init(width: Int, height: Int) {
+        init(width: Int, height: Int, area unit: CGRect? = nil) {
             w = width
             h = height
-            searchRows = Int(Double(height) * 0.6)
+            if let unit {
+                let r = CGRect(x: unit.minX * Double(width), y: unit.minY * Double(height),
+                               width: unit.width * Double(width), height: unit.height * Double(height))
+                area = r
+                searchRows = max(1, min(height, Int(r.maxY.rounded(.up))))
+            } else {
+                area = nil
+                searchRows = Int(Double(height) * 0.6)
+            }
             rowActivity = [Double](repeating: 0, count: height)
         }
 
@@ -237,7 +253,9 @@ enum RallyDetector {
                 }
                 if area >= 2, area <= Self.maxBlobArea,
                    maxX - minX + 1 <= Self.maxBlobSide, maxY - minY + 1 <= Self.maxBlobSide {
-                    found.append(SIMD2(Float(sx) / Float(area), Float(sy) / Float(area)))
+                    let center = SIMD2(Float(sx) / Float(area), Float(sy) / Float(area))
+                    if let court = self.area, !court.contains(CGPoint(x: Double(center.x), y: Double(center.y))) { continue }
+                    found.append(center)
                 }
             }
             return found
@@ -245,7 +263,7 @@ enum RallyDetector {
 
         /// Decides the ball zone, keeps blobs that move like a ball, and groups them into bursts.
         func finish() -> ([Span], Double) {
-            let zoneRows = ballZoneRows()
+            let zoneRows = area.map { Int($0.maxY.rounded(.up)) } ?? ballZoneRows()
             let limit = Float(zoneRows)
             let n = detections.count
             // A frame "has the ball" when a blob in the zone continues one from the previous frame.
@@ -255,7 +273,7 @@ enum RallyDetector {
                     let prev = detections[i - 1].filter { $0.y < limit }
                     guard !prev.isEmpty else { continue }
                     for p in detections[i] where p.y < limit {
-                        if prev.contains(where: { let d = simd_distance($0, p); return d > 1.5 && d < 25 }) {
+                        if prev.contains(where: { let d = simd_distance($0, p); return d >= Self.minStep && d < 25 }) {
                             hit[i] = 1
                             break
                         }

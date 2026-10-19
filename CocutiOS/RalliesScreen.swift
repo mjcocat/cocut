@@ -15,6 +15,8 @@ struct RalliesScreen: View {
     @State private var loadingMatch = false
     @State private var sharing: URL?
     @State private var loadProblem: String?
+    /// A match waiting for its court area to be marked before analysis.
+    @State private var pendingMatch: URL?
 
     var body: some View {
         let finder = model.rallies
@@ -68,6 +70,9 @@ struct RalliesScreen: View {
                             }
                             .disabled(finder.keptRallies.isEmpty)
                             Divider()
+                            Button("Change Court Area…", systemImage: "rectangle.dashed") {
+                                pendingMatch = finder.sourceURL
+                            }
                             Button("Choose Another Match…", systemImage: "arrow.triangle.2.circlepath") {
                                 finder.reset()
                             }
@@ -91,7 +96,7 @@ struct RalliesScreen: View {
             .fileImporter(isPresented: $showingFiles, allowedContentTypes: [.movie, .mpeg4Movie, .quickTimeMovie]) { result in
                 if case .success(let url) = result {
                     do {
-                        finder.analyze(try MatchFiles.keep(url, move: false))
+                        pendingMatch = try MatchFiles.keep(url, move: false)
                     } catch {
                         Log.error("Couldn't copy the match: \(error.localizedDescription)")
                     }
@@ -112,6 +117,15 @@ struct RalliesScreen: View {
                 Button("OK") { loadProblem = nil }
             } message: {
                 Text(loadProblem ?? "")
+            }
+            .fullScreenCover(item: $pendingMatch) { url in
+                CourtAreaScreen(url: url) { area in
+                    pendingMatch = nil
+                    finder.courtArea = area
+                    finder.analyze(url)
+                } onCancel: {
+                    pendingMatch = nil
+                }
             }
             .sheet(item: $sharing) { url in
                 FinishedVideoSheet(url: url, title: "Condensed Match")
@@ -170,7 +184,7 @@ struct RalliesScreen: View {
         do {
             let kept = try MatchFiles.keep(temp, move: true)
             PickedMovie.cleanUp([temp])
-            model.rallies.analyze(kept)
+            pendingMatch = kept
         } catch {
             Log.error("Couldn't keep the match: \(error.localizedDescription)")
         }
