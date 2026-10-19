@@ -63,6 +63,19 @@ struct ContentView: View {
             UpdateView(updater: model.updater)
                 .interactiveDismissDisabled()
         }
+        .sheet(isPresented: Binding(
+            get: { model.showingSetupGuide },
+            set: { model.showingSetupGuide = $0 }
+        )) {
+            SetupGuideView()
+                .environment(model)
+        }
+        .onAppear {
+            // First launch: walk through the one-time setup.
+            if !model.settings.hasCompletedSetup || !model.hasScreenPermission {
+                model.showingSetupGuide = true
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refreshPermission()
         }

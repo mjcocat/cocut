@@ -112,6 +112,7 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(after: .help) {
+            Button("Setup Guide…") { model.showingSetupGuide = true }
             Button("Show Log") { Log.reveal() }
         }
     }

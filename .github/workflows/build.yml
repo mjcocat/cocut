@@ -127,3 +127,22 @@ jobs:
           target_commitish: ${{ github.sha }}
           files: Cocut.zip
           generate_release_notes: true
+          body: |
+            ## Installing Cocut
+
+            **Already have Cocut?** It updates itself. Choose **Cocut › Check for Updates…**.
+
+            **New Mac, easiest way.** Open **Terminal**, paste this line, and press Return:
+            ```
+            curl -fsSL https://raw.githubusercontent.com/mjcocat/cocut/main/scripts/install.sh | bash
+            ```
+            It downloads Cocut into Applications and opens it. Cocut's **Setup Guide** then walks you through the two permissions it needs.
+
+            **New Mac, by hand.**
+            1. Download **Cocut.zip** below, double-click it, and drag **Cocut** into **Applications**.
+            2. Open Cocut. macOS says it can't verify the app, because Cocut isn't from the App Store. Click **Done**.
+            3. Open **System Settings › Privacy & Security**, scroll down, click **Open Anyway** next to Cocut, and confirm.
+            4. If the Dock icon just keeps bouncing, open Terminal and run `pkill -9 -x Cocut`, then open Cocut again.
+            5. Follow the **Setup Guide** that opens: allow **Screen Recording** (then reopen Cocut) and **App Management** (for automatic updates).
+
+            Requires macOS 26 or later.

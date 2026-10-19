@@ -91,6 +91,10 @@ struct MenuBarMenu: View {
         }
         .disabled(model.isBusy)
         SettingsLink { Text("Settings…") }
+        Button("Setup Guide…") {
+            showMainWindow()
+            model.showingSetupGuide = true
+        }
         Button("Show Log") { Log.reveal() }
 
         Divider()

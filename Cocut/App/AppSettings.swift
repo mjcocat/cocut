@@ -14,6 +14,14 @@ final class AppSettings {
     var playSoundOnSave: Bool {
         didSet { UserDefaults.standard.set(playSoundOnSave, forKey: Keys.sound) }
     }
+    /// The Setup Guide has been finished (or dismissed) once.
+    var hasCompletedSetup: Bool {
+        didSet { UserDefaults.standard.set(hasCompletedSetup, forKey: Keys.setupDone) }
+    }
+    /// The user says they've allowed App Management (macOS doesn't let apps check this directly).
+    var appManagementConfirmed: Bool {
+        didSet { UserDefaults.standard.set(appManagementConfirmed, forKey: Keys.appManagement) }
+    }
 
     var tuning: CaptureTuning {
         CaptureTuning(stillSeconds: stillSeconds, minimumClipSeconds: minimumClipSeconds)
@@ -23,6 +31,8 @@ final class AppSettings {
         static let still = "settings.stillSeconds"
         static let minClip = "settings.minimumClipSeconds"
         static let sound = "settings.playSoundOnSave"
+        static let setupDone = "settings.hasCompletedSetup"
+        static let appManagement = "settings.appManagementConfirmed"
     }
 
     init() {
@@ -30,6 +40,8 @@ final class AppSettings {
         stillSeconds = defaults.object(forKey: Keys.still) as? Double ?? CaptureTuning().stillSeconds
         minimumClipSeconds = defaults.object(forKey: Keys.minClip) as? Double ?? CaptureTuning().minimumClipSeconds
         playSoundOnSave = defaults.object(forKey: Keys.sound) as? Bool ?? true
+        hasCompletedSetup = defaults.bool(forKey: Keys.setupDone)
+        appManagementConfirmed = defaults.bool(forKey: Keys.appManagement)
     }
 
     func resetRecordingDefaults() {
