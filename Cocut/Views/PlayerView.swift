@@ -25,7 +25,8 @@ struct PlayerView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
-        view.controlsStyle = .floating
+        // A bar under the picture (the floating panel covered the video).
+        view.controlsStyle = .inline
         view.videoGravity = .resizeAspect
         view.showsFullScreenToggleButton = true
         view.allowsPictureInPicturePlayback = false
