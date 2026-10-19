@@ -5,7 +5,7 @@ PROJECT := Cocut.xcodeproj
 SCHEME  := Cocut
 APP     := build/Build/Products/Release/Cocut.app
 
-.PHONY: project open build run install clean
+.PHONY: project open build run install clean ios
 
 ## Generate the Xcode project from project.yml
 project:
@@ -33,3 +33,7 @@ install: build
 
 clean:
 	rm -rf build $(PROJECT)
+
+## iPhone/iPad: generate the project and open it in Xcode (pick the CocutiOS scheme and your device)
+ios: project
+	open $(PROJECT)

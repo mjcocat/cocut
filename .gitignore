@@ -2,6 +2,7 @@
 *.xcodeproj/
 Cocut/Info.plist
 Cocut/Cocut.entitlements
+CocutiOS/Info.plist
 
 # Build output
 build/

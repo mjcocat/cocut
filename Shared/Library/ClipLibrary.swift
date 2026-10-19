@@ -1,5 +1,4 @@
 import AVFoundation
-import AppKit
 import Foundation
 import SwiftUI
 
@@ -348,10 +347,8 @@ final class ClipLibrary {
     }
 
     private func trashFile(of clip: Clip) {
-        var result: NSURL?
         do {
-            try FileManager.default.trashItem(at: url(for: clip), resultingItemURL: &result)
-            if let result { trashed[clip.fileName] = result as URL }
+            if let result = try Platform.moveToTrash(url(for: clip)) { trashed[clip.fileName] = result }
         } catch {
             Log.error("Couldn't move \(clip.fileName) to the Trash: \(error.localizedDescription)")
         }
@@ -575,9 +572,9 @@ final class ClipLibrary {
 
     func revealInFinder(_ clip: Clip? = nil) {
         if let clip {
-            NSWorkspace.shared.activateFileViewerSelecting([url(for: clip)])
+            Platform.reveal([url(for: clip)])
         } else {
-            NSWorkspace.shared.open(clipsDirectory)
+            Platform.openFolder(clipsDirectory)
         }
     }
 

@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 
 /// A reel project: its own clips, sections, tags, roster and Player Card, in its own folder.
@@ -26,8 +25,7 @@ final class ProjectStore {
 
     init() {
         let fm = FileManager.default
-        let movies = fm.urls(for: .moviesDirectory, in: .userDomainMask).first
-            ?? fm.homeDirectoryForCurrentUser.appending(path: "Movies")
+        let movies = Platform.moviesRoot
         rootDirectory = movies.appending(path: "Cocut", directoryHint: .isDirectory)
 
         // Carry everything over from the app's previous name.
@@ -125,7 +123,7 @@ final class ProjectStore {
         guard projects.count > 1, let project = projects.first(where: { $0.id == id }) else { return }
         let dir = directory(for: project)
         if FileManager.default.fileExists(atPath: dir.path(percentEncoded: false)) {
-            try FileManager.default.trashItem(at: dir, resultingItemURL: nil)
+            try Platform.moveToTrash(dir)
         }
         projects.removeAll { $0.id == id }
         if currentID == id { select(projects[0].id) }
@@ -134,7 +132,7 @@ final class ProjectStore {
     }
 
     func revealInFinder(_ project: Project) {
-        NSWorkspace.shared.activateFileViewerSelecting([directory(for: project)])
+        Platform.reveal([directory(for: project)])
     }
 
     private func save() {

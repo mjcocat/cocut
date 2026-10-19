@@ -1,4 +1,3 @@
-import AppKit
 import AVFoundation
 import CoreMedia
 import QuartzCore
@@ -158,9 +157,7 @@ final class ReelExporter {
     }
 
     var exportsDirectory: URL {
-        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Movies")
-        let dir = movies.appending(path: "Cocut/Exports", directoryHint: .isDirectory)
+        let dir = Platform.moviesRoot.appending(path: "Cocut/Exports", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -194,7 +191,7 @@ final class ReelExporter {
         task?.cancel()
     }
 
-    func export(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: NSImage?, to output: URL) {
+    func export(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: PlatformImage?, to output: URL) {
         guard !isRunning else { return }
         let options = self.options
         task = Task {
@@ -217,7 +214,7 @@ final class ReelExporter {
 
     // MARK: Pipeline
 
-    private func run(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: NSImage?,
+    private func run(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: PlatformImage?,
                      options: ExportOptions, output: URL) async throws {
         let clipCount = plan.filter { if case .clip = $0 { return true } else { return false } }.count
         guard clipCount > 0 else { throw ExportError.noClips }
@@ -236,7 +233,7 @@ final class ReelExporter {
 
         // 2. Assemble.
         state = .preparing("Assembling \(clipCount) clips…")
-        let accent = NSColor(profile.accentColor).cgColor
+        let accent = Platform.cgColor(profile.accentColor)
         let built = try await ReelComposer.build(segments: segments, options: options,
                                                  renderSize: renderSize, accent: accent)
         try Task.checkCancellation()
@@ -264,7 +261,7 @@ final class ReelExporter {
     }
 
     /// The reel's pieces in order: cards drawn to short movies in `work`, and trimmed clips.
-    static func makeSegments(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: NSImage?,
+    static func makeSegments(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: PlatformImage?,
                              options: ExportOptions, renderSize: CGSize, fps: Int32, work: URL,
                              status: (String) -> Void) async throws -> [ReelSegment] {
         var segments: [ReelSegment] = []
@@ -292,7 +289,7 @@ final class ReelExporter {
                 if options.showSpotlights, let spot = clip.spotlight {
                     status("Drawing the spotlight on “\(clip.title)”…")
                     let ringColor = options.spotlightColor.flatMap { Color(hex: $0) } ?? profile.accentColor
-                    if let still = await spotlightSegment(clip: clip, url: url, spot: spot, accent: NSColor(ringColor).cgColor,
+                    if let still = await spotlightSegment(clip: clip, url: url, spot: spot, accent: Platform.cgColor(ringColor),
                                                           options: options, size: renderSize, fps: fps, work: work) {
                         segments.append(still)
                     }
@@ -314,7 +311,7 @@ final class ReelExporter {
     /// into frames), so it needs no video overlay. Nil if the frame can't be read.
     private static func spotlightSegment(clip: Clip, url: URL, spot: Spotlight, accent: CGColor, options: ExportOptions,
                                          size: CGSize, fps: Int32, work: URL) async -> ReelSegment? {
-        guard var frame = await SpotlightEditor.firstFrame(url: url, at: clip.trimStartSeconds, crop: clip.unitCrop) else {
+        guard var frame = await VideoFrames.firstFrame(url: url, at: clip.trimStartSeconds, crop: clip.unitCrop) else {
             Log.error("Couldn't read the first frame of \(clip.fileName) for its spotlight")
             return nil
         }
@@ -363,7 +360,7 @@ final class ReelExporter {
                            cardLabel: "Spotlight", clipID: clip.id, isSpotlight: true)
     }
 
-    private static func cardSegment(kind: CardKind, label: String, profile: PlayerProfile, headshot: NSImage?,
+    private static func cardSegment(kind: CardKind, label: String, profile: PlayerProfile, headshot: PlatformImage?,
                                     size: CGSize, fps: Int32, seconds: Double, work: URL,
                                     progressBar: Bool = false) async throws -> ReelSegment {
         guard let image = PlayerCardView.render(profile: profile, headshot: headshot, kind: kind, pixelSize: size) else {
@@ -373,7 +370,7 @@ final class ReelExporter {
         var bar: CardMovieWriter.ProgressBar?
         if progressBar {
             let palette = CardPalette(theme: profile.theme, accent: profile.accentColor)
-            bar = .init(fill: NSColor(palette.highlight).cgColor, track: NSColor(palette.text.opacity(0.15)).cgColor)
+            bar = .init(fill: Platform.cgColor(palette.highlight), track: Platform.cgColor(palette.text.opacity(0.15)))
         }
         let url = work.appending(path: "card-\(UUID().uuidString).mov")
         // No fades: the very first frame is the intro card (so YouTube, Messages and Finder pick it
@@ -736,7 +733,7 @@ enum ReelComposer {
                                        duration: item.segment.duration)
             let visibleStart = timing.start, visibleFor = timing.duration
 
-            let font = NSFont.systemFont(ofSize: 40 * scale, weight: .bold)
+            let font = PlatformFont.systemFont(ofSize: 40 * scale, weight: .bold)
             let textSize = (title as NSString).size(withAttributes: [.font: font])
             let padX = 28 * scale, barW = 8 * scale
             let height = 76 * scale

@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 /// The intro and end cards, designed on a 1920×1080 canvas. The editor shows them scaled down;
@@ -82,20 +81,22 @@ struct CardPalette {
     }
 
     static func luminance(_ color: Color) -> Double {
-        guard let c = NSColor(color).usingColorSpace(.sRGB) else { return 0.5 }
-        return 0.2126 * c.redComponent + 0.7152 * c.greenComponent + 0.0722 * c.blueComponent
+        guard let c = Platform.sRGB(color) else { return 0.5 }
+        return 0.2126 * c.red + 0.7152 * c.green + 0.0722 * c.blue
     }
 
     static func mix(_ a: Color, _ b: Color, _ t: Double) -> Color {
-        guard let x = NSColor(a).usingColorSpace(.sRGB), let y = NSColor(b).usingColorSpace(.sRGB),
-              let m = x.blended(withFraction: t, of: y) else { return a }
-        return Color(nsColor: m)
+        guard let x = Platform.sRGB(a), let y = Platform.sRGB(b) else { return a }
+        let f = min(1, max(0, t))
+        func lerp(_ p: Double, _ q: Double) -> Double { p + (q - p) * f }
+        return Color(.sRGB, red: lerp(x.red, y.red), green: lerp(x.green, y.green), blue: lerp(x.blue, y.blue),
+                     opacity: lerp(x.alpha, y.alpha))
     }
 }
 
 struct PlayerCardView: View {
     let profile: PlayerProfile
-    let headshot: NSImage?
+    let headshot: PlatformImage?
     let kind: CardKind
 
     static let canvas = CGSize(width: 1920, height: 1080)
@@ -204,7 +205,7 @@ struct PlayerCardView: View {
     @ViewBuilder
     private func photoContent(fontSize: CGFloat) -> some View {
         if let headshot {
-            Image(nsImage: headshot)
+            Image(platformImage: headshot)
                 .resizable()
                 .interpolation(.high)
                 .scaledToFill()
@@ -584,7 +585,7 @@ private struct SlantedEdgeLine: Shape {
 extension PlayerCardView {
     /// Renders the card to a bitmap of the given pixel size (16:9).
     @MainActor
-    static func render(profile: PlayerProfile, headshot: NSImage?, kind: CardKind, pixelSize: CGSize) -> CGImage? {
+    static func render(profile: PlayerProfile, headshot: PlatformImage?, kind: CardKind, pixelSize: CGSize) -> CGImage? {
         let renderer = ImageRenderer(content: PlayerCardView(profile: profile, headshot: headshot, kind: kind))
         renderer.proposedSize = ProposedViewSize(canvas)
         renderer.scale = pixelSize.width / canvas.width

@@ -1,4 +1,6 @@
+#if os(macOS)
 import AppKit
+#endif
 import AVFoundation
 import Foundation
 import UniformTypeIdentifiers
@@ -139,6 +141,7 @@ final class RallyFinder {
 
     // MARK: Analysis
 
+    #if os(macOS)
     func chooseMatch() {
         let panel = NSOpenPanel()
         panel.title = "Choose a Match Video"
@@ -150,6 +153,7 @@ final class RallyFinder {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         analyze(url)
     }
+    #endif
 
     func analyze(_ url: URL) {
         task?.cancel()
@@ -439,15 +443,28 @@ final class RallyFinder {
     /// Set after rallies are added to Clips, so the window can confirm it.
     var lastAddedCount: Int?
 
-    /// Exports the kept rallies back to back as one movie.
+    #if os(macOS)
+    /// Asks where to save, then exports the kept rallies back to back as one movie.
     func exportCondensed() {
-        guard let sourceURL, !keptRallies.isEmpty else { return }
+        guard sourceURL != nil, !keptRallies.isEmpty else { return }
         let panel = NSSavePanel()
         panel.title = "Export Condensed Match"
         panel.allowedContentTypes = [.mpeg4Movie]
-        panel.nameFieldStringValue = "\(matchName) – Rallies.mp4"
+        panel.nameFieldStringValue = condensedFileName
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let output = panel.url else { return }
+        exportCondensed(to: output)
+    }
+    #endif
+
+    var condensedFileName: String { "\(matchName) – Rallies.mp4" }
+
+    /// Set when a condensed export finishes, so the window can offer to share or show it.
+    var lastCondensedURL: URL?
+
+    /// Exports the kept rallies back to back as one movie at `output`.
+    func exportCondensed(to output: URL) {
+        guard let sourceURL, !keptRallies.isEmpty else { return }
         let kept = keptRallies
         pause()
         state = .working("Putting the rallies together…", nil)
@@ -457,8 +474,9 @@ final class RallyFinder {
                     self?.state = .working("Exporting… \(Int(fraction * 100))%", fraction)
                 }
                 state = .review
+                lastCondensedURL = output
                 Log.info("Exported condensed match to \(output.path(percentEncoded: false))")
-                NSWorkspace.shared.activateFileViewerSelecting([output])
+                Platform.reveal([output])
             } catch is CancellationError {
                 try? FileManager.default.removeItem(at: output)
                 state = .review
