@@ -2,7 +2,7 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.17.2.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
+**Status: v0.18.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
 - play-to-record capture, including with the video in fullscreen
 - a reorderable clip library with trimming and import
 - a player card designer
@@ -117,7 +117,7 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 - With a **Team Roster**, only roster numbers count, which leaves out opponents, referees and misreads. Set it up before or after finding rallies: **Team Roster…** is in the Find Rallies window, and changes apply right away without finding the rallies again. Without a roster, only numbers seen across several rallies count.
 - Missed someone? Select the rally and type their number in the players row. Remove a wrong one with its ×.
 - Cocut follows each nearby player through the rally (body-pose detection plus appearance), so a number read once labels that player for as long as they're followed.
-- **Teach a Player…** finds a player whose number is hard to read (a lone "1", a libero's number). Pause on a moment they're in, choose **Teach a Player…**, click them (or drag a box around them), type their number and choose **Teach**. Every frame they were followed in that rally becomes an example. Cocut finds them in every rally by how they look, comparing against the players whose numbers it did read, so teammates in the same uniform are told apart. Teach the same player at two or three moments (facing toward and away) for better matches. The **Looser/Stricter** slider shows how many rallies each taught player is found in.
+- **Identify Players…** fills in the rest. **Who's This?** shows the followed players Cocut isn't sure of, most useful first, and ones whose read number disagrees with how they look: the frame they're biggest in, close-ups from other moments, and Cocut's guess. Tap their number (your roster is offered), **Not Our Team** for opponents and referees, or **Skip**. Each answer teaches Cocut, so similar players are worked out on their own and the list shrinks as you go. **Pick from a Frame** lets you click (or drag a box around) any player on any frame. The **Looser/Stricter** slider sets how alike a player must look to count; stricter asks about more.
 - Rallies added to Clips keep their players. In Clips, the filter's **Player** section finds every clip with that player.
 - Numbers on backs facing the camera read best. Import matches at **1080p or better**: at 720p, front-row numbers are often too small to read.
 
