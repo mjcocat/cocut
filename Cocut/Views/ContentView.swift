@@ -7,6 +7,7 @@ enum SidebarItem: Hashable {
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
     @State private var selection: SidebarItem? = .clips
 
     var body: some View {
@@ -36,6 +37,14 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    openWindow(id: "preview")
+                } label: {
+                    Label("Preview Reel", systemImage: "play.rectangle")
+                }
+                .help("Play the whole reel as it will export, without rendering it (⌘Y)")
+                .disabled(model.library.includedClips.isEmpty)
+
                 Button {
                     Task { await model.recordLastRegion() }
                 } label: {

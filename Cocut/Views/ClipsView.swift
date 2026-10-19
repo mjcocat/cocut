@@ -235,6 +235,7 @@ struct ClipActions {
 
 private struct ClipListPane: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
     @Binding var selection: Set<UUID>
     @Binding var deleting: [Clip]
     @Binding var filterTagID: UUID?
@@ -328,6 +329,13 @@ private struct ClipListPane: View {
         let clipIDs = Set(clips.map(\.id))
 
         if !clips.isEmpty {
+            if clips.count == 1, let clip = clips.first, clip.isIncluded {
+                Button("Preview Reel from This Clip") {
+                    model.preview.startAt(clipID: clip.id)
+                    openWindow(id: "preview")
+                }
+                Divider()
+            }
             if clips.contains(where: { !$0.isIncluded }) {
                 Button("Include in Reel") { library.setIncluded(clipIDs, true) }
             }

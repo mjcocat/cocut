@@ -82,12 +82,16 @@ enum ExportError: LocalizedError {
 /// One piece of the reel: a clip (or a rendered card) and the part of it to use.
 struct ReelSegment: Sendable {
     let url: URL
-    let start: Double
-    let duration: Double
+    var start: Double
+    var duration: Double
     let title: String?
     let isCard: Bool
     /// The clip's own crop to the video (pixels, top-left), if it has one.
     var crop: CGRect? = nil
+    /// What a card shows ("Intro card", a section title), for the preview's list.
+    var cardLabel: String? = nil
+    /// The library clip this came from.
+    var clipID: UUID? = nil
 }
 
 /// Builds the highlight reel: intro card, clips in order (trimmed), end card, with optional
@@ -136,7 +140,8 @@ final class ReelExporter {
     }
 
     /// Divider cards are shorter than the intro and end cards.
-    var sectionCardSeconds: Double { min(options.cardSeconds, 3) }
+    var sectionCardSeconds: Double { Self.sectionCardSeconds(for: options) }
+    nonisolated static func sectionCardSeconds(for options: ExportOptions) -> Double { min(options.cardSeconds, 3) }
 
     /// Estimated running time of the finished reel.
     func estimatedDuration(plan: [ReelEntry], profile: PlayerProfile) -> Double {
@@ -195,33 +200,9 @@ final class ReelExporter {
         defer { try? FileManager.default.removeItem(at: work) }
 
         // 1. Cards → short movies.
-        var segments: [ReelSegment] = []
-        if options.includeIntro {
-            state = .preparing("Drawing the intro card…")
-            segments.append(try await cardSegment(kind: .intro, profile: profile, headshot: headshot,
-                                                  size: renderSize, fps: fps, seconds: options.cardSeconds, work: work))
-        }
-        for entry in plan {
-            switch entry {
-            case .section(let section):
-                state = .preparing("Drawing the “\(section.title)” card…")
-                segments.append(try await cardSegment(kind: .section(section.title), profile: profile, headshot: headshot,
-                                                      size: renderSize, fps: fps, seconds: sectionCardSeconds, work: work))
-            case .clip(let clip):
-                let url = library.url(for: clip)
-                guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else {
-                    throw ExportError.unreadable(clip.title)
-                }
-                let duration = clip.trimEndSeconds - clip.trimStartSeconds
-                guard duration > 0.1 else { continue }
-                segments.append(ReelSegment(url: url, start: clip.trimStartSeconds, duration: duration,
-                                            title: clip.title, isCard: false, crop: clip.cropRect))
-            }
-        }
-        if profile.showEndCard {
-            state = .preparing("Drawing the end card…")
-            segments.append(try await cardSegment(kind: .end, profile: profile, headshot: headshot,
-                                                  size: renderSize, fps: fps, seconds: options.cardSeconds, work: work))
+        let segments = try await Self.makeSegments(plan: plan, library: library, profile: profile, headshot: headshot,
+                                                   options: options, renderSize: renderSize, fps: fps, work: work) {
+            [weak self] message in self?.state = .preparing(message)
         }
         try Task.checkCancellation()
 
@@ -254,8 +235,45 @@ final class ReelExporter {
         try await session.export(to: output, as: .mp4)
     }
 
-    private func cardSegment(kind: CardKind, profile: PlayerProfile, headshot: NSImage?,
-                             size: CGSize, fps: Int32, seconds: Double, work: URL) async throws -> ReelSegment {
+    /// The reel's pieces in order: cards drawn to short movies in `work`, and trimmed clips.
+    static func makeSegments(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: NSImage?,
+                             options: ExportOptions, renderSize: CGSize, fps: Int32, work: URL,
+                             status: (String) -> Void) async throws -> [ReelSegment] {
+        var segments: [ReelSegment] = []
+        if options.includeIntro {
+            status("Drawing the intro card…")
+            segments.append(try await cardSegment(kind: .intro, label: "Intro card", profile: profile, headshot: headshot,
+                                                  size: renderSize, fps: fps, seconds: options.cardSeconds, work: work))
+        }
+        for entry in plan {
+            try Task.checkCancellation()
+            switch entry {
+            case .section(let section):
+                status("Drawing the “\(section.title)” card…")
+                segments.append(try await cardSegment(kind: .section(section.title), label: section.title,
+                                                      profile: profile, headshot: headshot, size: renderSize, fps: fps,
+                                                      seconds: sectionCardSeconds(for: options), work: work))
+            case .clip(let clip):
+                let url = library.url(for: clip)
+                guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else {
+                    throw ExportError.unreadable(clip.title)
+                }
+                let duration = clip.trimEndSeconds - clip.trimStartSeconds
+                guard duration > 0.1 else { continue }
+                segments.append(ReelSegment(url: url, start: clip.trimStartSeconds, duration: duration,
+                                            title: clip.title, isCard: false, crop: clip.cropRect, clipID: clip.id))
+            }
+        }
+        if profile.showEndCard {
+            status("Drawing the end card…")
+            segments.append(try await cardSegment(kind: .end, label: "End card", profile: profile, headshot: headshot,
+                                                  size: renderSize, fps: fps, seconds: options.cardSeconds, work: work))
+        }
+        return segments
+    }
+
+    private static func cardSegment(kind: CardKind, label: String, profile: PlayerProfile, headshot: NSImage?,
+                                    size: CGSize, fps: Int32, seconds: Double, work: URL) async throws -> ReelSegment {
         guard let image = PlayerCardView.render(profile: profile, headshot: headshot, kind: kind, pixelSize: size) else {
             throw ExportError.cardFailed
         }
@@ -264,7 +282,7 @@ final class ReelExporter {
             try CardMovieWriter.write(image, size: size, seconds: seconds, fps: fps,
                                       fadeIn: kind == .intro, fadeOut: kind == .end, to: url)
         }.value
-        return ReelSegment(url: url, start: 0, duration: seconds, title: nil, isCard: true)
+        return ReelSegment(url: url, start: 0, duration: seconds, title: nil, isCard: true, cardLabel: label)
     }
 
     private func saveOptions() {
@@ -281,6 +299,25 @@ enum ReelComposer {
         let composition: AVMutableComposition
         let videoComposition: AVMutableVideoComposition
         let audioMix: AVMutableAudioMix?
+        /// Where each piece sits on the reel's timeline.
+        let pieces: [Piece]
+    }
+
+    struct Piece: Identifiable {
+        let id: Int
+        let segment: ReelSegment
+        /// When the piece starts on the timeline (the start of its crossfade in, if any).
+        let start: Double
+        /// When it's fully on screen, after any crossfade in.
+        let visibleStart: Double
+        let duration: Double
+        /// When its name caption shows, for clips with a name.
+        let caption: (start: Double, duration: Double)?
+    }
+
+    /// Caption timing: shortly after the clip is fully on screen, for up to three seconds.
+    static func captionTiming(visibleStart: Double, duration: Double) -> (start: Double, duration: Double) {
+        (visibleStart + 0.3, min(3.0, max(1.0, duration - 0.8)))
     }
 
     private struct Loaded {
@@ -298,8 +335,10 @@ enum ReelComposer {
         let crop: CGRect?
     }
 
+    /// `forPlayback` leaves out the Core Animation captions, which only work when exporting
+    /// (the preview draws them itself from `pieces`).
     static func build(segments: [ReelSegment], options: ExportOptions,
-                      renderSize: CGSize, accent: CGColor) async throws -> Built {
+                      renderSize: CGSize, accent: CGColor, forPlayback: Bool = false) async throws -> Built {
         let timescale: CMTimeScale = 600
         func time(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: timescale) }
 
@@ -332,8 +371,9 @@ enum ReelComposer {
                 continue
             }
             let source = CMTimeRange(start: start, end: end)
-            let fixed = ReelSegment(url: segment.url, start: start.seconds, duration: source.duration.seconds,
-                                    title: segment.title, isCard: segment.isCard, crop: segment.crop)
+            var fixed = segment
+            fixed.start = start.seconds
+            fixed.duration = source.duration.seconds
             var crop: CGRect? = segment.crop
             if crop == nil, !segment.isCard, options.removeBlackBars, preferred.isIdentity {
                 crop = await contentRect(asset: asset, natural: natural, range: source)
@@ -457,7 +497,7 @@ enum ReelComposer {
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(options.frameRate))
         videoComposition.instructions = instructions
 
-        if options.showClipNames {
+        if options.showClipNames, !forPlayback {
             videoComposition.animationTool = captionTool(loaded: loaded, starts: starts, overlaps: overlaps,
                                                          renderSize: renderSize, accent: accent)
         }
@@ -477,8 +517,19 @@ enum ReelComposer {
             audioMix = mix
         }
 
-        Log.info("Composed reel: \(n) pieces, \(String(format: "%.1f", total))s at \(Int(renderSize.width))x\(Int(renderSize.height))")
-        return Built(composition: composition, videoComposition: videoComposition, audioMix: audioMix)
+        let pieces = loaded.enumerated().map { i, item -> Piece in
+            let visible = starts[i] + (i > 0 ? overlaps[i - 1] : 0)
+            var caption: (start: Double, duration: Double)?
+            if options.showClipNames, !item.segment.isCard,
+               let title = item.segment.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty {
+                caption = captionTiming(visibleStart: visible, duration: item.segment.duration)
+            }
+            return Piece(id: i, segment: item.segment, start: starts[i], visibleStart: visible,
+                         duration: item.segment.duration, caption: caption)
+        }
+
+        Log.info("Composed reel\(forPlayback ? " for preview" : ""): \(n) pieces, \(String(format: "%.1f", total))s at \(Int(renderSize.width))x\(Int(renderSize.height))")
+        return Built(composition: composition, videoComposition: videoComposition, audioMix: audioMix, pieces: pieces)
     }
 
     /// Scales a source to fit the frame (letterboxed), honoring its rotation.
@@ -577,8 +628,9 @@ enum ReelComposer {
 
         for (i, item) in loaded.enumerated() where !item.segment.isCard {
             guard let title = item.segment.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty else { continue }
-            let visibleStart = starts[i] + (i > 0 ? overlaps[i - 1] : 0) + 0.3
-            let visibleFor = min(3.0, max(1.0, item.segment.duration - 0.8))
+            let timing = captionTiming(visibleStart: starts[i] + (i > 0 ? overlaps[i - 1] : 0),
+                                       duration: item.segment.duration)
+            let visibleStart = timing.start, visibleFor = timing.duration
 
             let font = NSFont.systemFont(ofSize: 40 * scale, weight: .bold)
             let textSize = (title as NSString).size(withAttributes: [.font: font])

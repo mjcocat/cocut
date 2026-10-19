@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct ExportView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
 
     private var exporter: ReelExporter { model.exporter }
     private var clips: [Clip] { model.library.includedClips }
@@ -227,6 +228,16 @@ struct ExportView: View {
 
             HStack {
                 Spacer()
+                Button {
+                    openWindow(id: "preview")
+                } label: {
+                    Label("Preview", systemImage: "play.rectangle")
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                }
+                .controlSize(.large)
+                .help("Watch the reel with these settings before exporting (⌘Y)")
+                .disabled(clips.isEmpty)
                 Button {
                     startExport()
                 } label: {
