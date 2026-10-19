@@ -16,7 +16,7 @@ struct PlayerCardView: View {
 
     static let canvas = CGSize(width: 1920, height: 1080)
 
-    private var accent: Color { profile.accent.color }
+    private var accent: Color { profile.accentColor }
 
     var body: some View {
         ZStack {

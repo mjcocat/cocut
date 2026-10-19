@@ -59,7 +59,15 @@ struct PlayerProfile: Codable, Equatable {
     var stats: [StatLine] = []
     var style: CardStyle = .split
     var accent: CardAccent = .blue
+    /// A team color picked with the color picker (sRGB hex like "#1E90FF"); overrides `accent`.
+    var customAccent: String?
     var showEndCard = true
+
+    /// The card's accent: the custom color when one is set, else the preset.
+    var accentColor: Color {
+        if let hex = customAccent, let color = Color(hex: hex) { return color }
+        return accent.color
+    }
 
     init() {}
 
@@ -117,6 +125,7 @@ struct PlayerProfile: Codable, Equatable {
         style = (try? c.decodeIfPresent(CardStyle.self, forKey: .style)) ?? .split
         accent = (try? c.decodeIfPresent(CardAccent.self, forKey: .accent)) ?? .blue
         showEndCard = (try? c.decodeIfPresent(Bool.self, forKey: .showEndCard)) ?? true
+        customAccent = try? c.decodeIfPresent(String.self, forKey: .customAccent)
     }
 }
 
@@ -209,5 +218,27 @@ final class ProfileStore {
         ctx.draw(cg, in: CGRect(origin: .zero, size: size))
         guard let out = ctx.makeImage() else { return nil }
         return NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])
+    }
+}
+
+extension Color {
+    /// Parses "#RRGGBB" (sRGB).
+    init?(hex: String) {
+        var text = hex.trimmingCharacters(in: .whitespaces)
+        if text.hasPrefix("#") { text.removeFirst() }
+        guard text.count == 6, let value = UInt32(text, radix: 16) else { return nil }
+        self.init(.sRGB,
+                  red: Double((value >> 16) & 0xFF) / 255,
+                  green: Double((value >> 8) & 0xFF) / 255,
+                  blue: Double(value & 0xFF) / 255)
+    }
+
+    /// "#RRGGBB" in sRGB.
+    var hexString: String {
+        let ns = NSColor(self).usingColorSpace(.sRGB) ?? NSColor(self)
+        let r = Int((ns.redComponent * 255).rounded())
+        let g = Int((ns.greenComponent * 255).rounded())
+        let b = Int((ns.blueComponent * 255).rounded())
+        return String(format: "#%02X%02X%02X", max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
     }
 }

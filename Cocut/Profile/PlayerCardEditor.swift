@@ -175,20 +175,41 @@ struct PlayerCardEditor: View {
 
     private var accentPicker: some View {
         @Bindable var store = self.store
-        return HStack(spacing: 8) {
-            Text("Team color")
-            Spacer()
-            ForEach(CardAccent.allCases) { accent in
-                Button {
-                    store.profile.accent = accent
-                } label: {
-                    Circle()
-                        .fill(accent.color)
-                        .frame(width: 20, height: 20)
-                        .overlay(Circle().strokeBorder(Color.primary.opacity(store.profile.accent == accent ? 0.9 : 0), lineWidth: 2).padding(-3))
+        let isCustom = store.profile.customAccent != nil
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Team color")
+                Spacer()
+                ColorPicker(selection: Binding(
+                    get: { store.profile.accentColor },
+                    set: { store.profile.customAccent = $0.hexString }
+                ), supportsOpacity: false) {
+                    Text("Custom")
                 }
-                .buttonStyle(.plain)
-                .help(accent.rawValue.capitalized)
+                .help("Pick any color, such as your club's exact color")
+                if isCustom {
+                    Text(store.profile.customAccent ?? "")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            HStack(spacing: 8) {
+                ForEach(CardAccent.allCases) { accent in
+                    Button {
+                        store.profile.accent = accent
+                        store.profile.customAccent = nil
+                    } label: {
+                        Circle()
+                            .fill(accent.color)
+                            .frame(width: 20, height: 20)
+                            .overlay(Circle()
+                                .strokeBorder(Color.primary.opacity(!isCustom && store.profile.accent == accent ? 0.9 : 0),
+                                              lineWidth: 2)
+                                .padding(-3))
+                    }
+                    .buttonStyle(.plain)
+                    .help(accent.rawValue.capitalized)
+                }
             }
         }
     }

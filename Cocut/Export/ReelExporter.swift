@@ -227,7 +227,7 @@ final class ReelExporter {
 
         // 2. Assemble.
         state = .preparing("Assembling \(clipCount) clips…")
-        let accent = NSColor(profile.accent.color).cgColor
+        let accent = NSColor(profile.accentColor).cgColor
         let built = try await ReelComposer.build(segments: segments, options: options,
                                                  renderSize: renderSize, accent: accent)
         try Task.checkCancellation()

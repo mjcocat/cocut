@@ -97,7 +97,7 @@ The **Player Card** section designs the reel's intro card, and an optional end c
 - hometown, GPA, contact details
 - up to six custom stats, such as approach touch or block touch
 
-Pick a layout (Split or Centered) and a team color. The preview updates as you type, and blank fields are left off the card. Everything is saved in `~/Movies/Cocut`.
+Pick a layout (Split or Centered) and a team color: one of the presets, or any color with **Custom**. The preview updates as you type, and blank fields are left off the card. Everything is saved in `~/Movies/Cocut`.
 
 ## Export
 
