@@ -180,9 +180,7 @@ Click **Preview** to watch it first, or **Export Highlight Reel…** to save an 
 
 ### Upload to YouTube
 
-When an export finishes, **Upload to YouTube…** uploads it, unlisted by default, with the title and description filled in from the Player Card (position, class, height, club, school, stats, contact). You can edit both before uploading. When it's done, copy the link to send to coaches.
-
-The first time, Cocut needs your own Google sign-in key. **Settings › YouTube** walks through a 10-minute, free setup in Google Cloud: make a project, turn on YouTube Data API v3, set up the consent screen with your account as a test user, and create a "Desktop app" OAuth client. Then paste the Client ID and secret and click **Sign In with Google**. The sign-in is kept in your Keychain. While the Google project is in Testing mode, Google asks you to sign in again about once a week.
+When an export finishes, click **Upload to YouTube…**. Cocut writes a title and a description from the Player Card (position, class, height, club, school, stats, contact), each with a **Copy** button. **Open YouTube Upload** opens YouTube's upload page in your browser and shows the video in Finder: drag it in, paste the title and description, and choose **Unlisted** so coaches can watch with the link but it won't show up in search. No setup or sign-in to Cocut needed.
 
 ## Settings
 

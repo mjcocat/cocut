@@ -59,8 +59,6 @@ struct SettingsView: View {
                 .tabItem { Label("Recording", systemImage: "record.circle") }
             ShortcutsSettings()
                 .tabItem { Label("Shortcuts", systemImage: "keyboard") }
-            YouTubeSettings(account: model.youtube)
-                .tabItem { Label("YouTube", systemImage: "play.rectangle") }
             UpdateSettings(updater: model.updater)
                 .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
         }

@@ -278,9 +278,11 @@ final class ReelExporter {
             throw ExportError.cardFailed
         }
         let url = work.appending(path: "card-\(UUID().uuidString).mov")
+        // No fade-in on the intro: the very first frame is the card, so YouTube, Messages and
+        // Finder pick it as the video's thumbnail instead of a black frame.
         try await Task.detached(priority: .userInitiated) {
             try CardMovieWriter.write(image, size: size, seconds: seconds, fps: fps,
-                                      fadeIn: kind == .intro, fadeOut: kind == .end, to: url)
+                                      fadeIn: false, fadeOut: kind == .end, to: url)
         }.value
         return ReelSegment(url: url, start: 0, duration: seconds, title: nil, isCard: true, cardLabel: label)
     }
