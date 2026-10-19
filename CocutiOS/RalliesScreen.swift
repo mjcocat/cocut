@@ -97,6 +97,7 @@ struct RalliesScreen: View {
             .onChange(of: finder.lastAddedCount) { _, count in
                 if let count, count > 0 {
                     finder.lastAddedCount = nil
+                    model.showNotice(count == 1 ? "Added 1 rally to Clips" : "Added \(count) rallies to Clips")
                     onAddedToClips()
                 }
             }
@@ -314,6 +315,17 @@ private struct RallyListView: View {
     var body: some View {
         @Bindable var finder = model.rallies
         List(selection: $finder.selectedID) {
+            if let number = finder.playerFilter {
+                HStack {
+                    Label("Only rallies with \(model.library.playerLabel(number))", systemImage: "person.fill")
+                        .font(.subheadline)
+                    Spacer()
+                    Button("Show All") { finder.playerFilter = nil }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+                .listRowBackground(Color.accentColor.opacity(0.12))
+            }
             Section {
                 ForEach(finder.visibleRallies) { rally in
                     HStack(spacing: 10) {
@@ -359,11 +371,19 @@ private struct RallyListView: View {
                         Button("Keep All") { finder.setAllIncluded(true) }
                         Button("Keep None") { finder.setAllIncluded(false) }
                     }
-                    Menu(finder.playerFilter.map { "#\($0)" } ?? "All Players") {
-                        Button("All Players") { finder.playerFilter = nil }
-                        ForEach(finder.playerCounts, id: \.number) { entry in
-                            Button("#\(entry.number) · \(entry.rallies) rallies") { finder.playerFilter = entry.number }
+                    Menu {
+                        Picker("Player", selection: $finder.playerFilter) {
+                            Text("All Players").tag(Int?.none)
+                            ForEach(finder.playerCounts, id: \.number) { entry in
+                                Text("\(model.library.playerLabel(entry.number)) · \(entry.rallies) rallies").tag(Int?.some(entry.number))
+                            }
                         }
+                        .pickerStyle(.inline)
+                    } label: {
+                        Label(finder.playerFilter.map { "#\($0)" } ?? "All Players",
+                              systemImage: finder.playerFilter == nil
+                                ? "line.3.horizontal.decrease.circle"
+                                : "line.3.horizontal.decrease.circle.fill")
                     }
                 }
                 .textCase(nil)

@@ -158,6 +158,9 @@ struct ClipsScreen: View {
     /// Says what happened, so an import never just silently does nothing.
     private func report(imported: Int, of count: Int, problems: [String]) {
         Log.info("Imported \(imported) of \(count) video(s)")
+        if imported > 0 {
+            model.showNotice(imported == 1 ? "Imported 1 video" : "Imported \(imported) videos")
+        }
         guard imported < count else { return }
         var lines = [imported == 0 ? "No videos were imported." : "Imported \(imported) of \(count) videos."]
         lines += Array(Set(problems)).sorted()

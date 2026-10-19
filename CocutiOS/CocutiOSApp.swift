@@ -24,6 +24,20 @@ final class IOSModel {
     let preview = ReelPreview()
     let rallies = RallyFinder()
 
+    /// A short confirmation shown at the top of the screen ("Imported 2 videos").
+    private(set) var notice: String?
+    @ObservationIgnored private var noticeTask: Task<Void, Never>?
+
+    func showNotice(_ text: String) {
+        notice = text
+        noticeTask?.cancel()
+        noticeTask = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            notice = nil
+        }
+    }
+
     init() {
         let projects = ProjectStore()
         self.projects = projects

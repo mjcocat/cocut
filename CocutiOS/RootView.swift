@@ -23,6 +23,19 @@ struct RootView: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
+        .overlay(alignment: .top) {
+            if let notice = model.notice {
+                Label(notice, systemImage: "checkmark.circle.fill")
+                    .font(.callout.weight(.medium))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.regularMaterial, in: Capsule())
+                    .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .id(notice)
+            }
+        }
+        .animation(.spring(duration: 0.35), value: model.notice)
     }
 }
 
