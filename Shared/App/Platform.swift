@@ -126,7 +126,7 @@ enum Platform {
     static func sRGB(_ color: Color) -> (red: Double, green: Double, blue: Double, alpha: Double)? {
         #if os(macOS)
         guard let c = NSColor(color).usingColorSpace(.sRGB) else { return nil }
-        return (c.redComponent, c.greenComponent, c.blueComponent, c.alphaComponent)
+        return (Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent), Double(c.alphaComponent))
         #else
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         guard UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }

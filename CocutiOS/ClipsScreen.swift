@@ -229,14 +229,14 @@ struct ClipDetailScreen: View {
                 }
                 Section("Trim") {
                     LabeledContent("Start", value: Clip.format(trimStart))
-                    Slider(value: $trimStart, in: 0...max(0.1, clip.duration)) { editing in
+                    Slider(value: $trimStart, in: 0...max(0.1, clip.duration), onEditingChanged: { editing in
                         if !editing { applyTrim(clip) } else { seek(trimStart) }
-                    }
+                    })
                     .onChange(of: trimStart) { _, v in seek(v) }
                     LabeledContent("End", value: Clip.format(trimEnd))
-                    Slider(value: $trimEnd, in: 0...max(0.1, clip.duration)) { editing in
+                    Slider(value: $trimEnd, in: 0...max(0.1, clip.duration), onEditingChanged: { editing in
                         if !editing { applyTrim(clip) } else { seek(trimEnd) }
-                    }
+                    })
                     .onChange(of: trimEnd) { _, v in seek(v) }
                     if clip.isTrimmed {
                         Button("Reset Trim") {
