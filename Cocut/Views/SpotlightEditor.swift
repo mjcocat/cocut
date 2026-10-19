@@ -117,16 +117,7 @@ struct SpotlightEditor: View {
 
     /// The clip's first frame (at its trim start), cropped like the clip.
     static func firstFrame(url: URL, at seconds: Double, crop: CGRect?) async -> CGImage? {
-        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 1920, height: 1920)
-        generator.requestedTimeToleranceBefore = .zero
-        generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 30)
-        guard let full = try? await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image else { return nil }
-        guard let crop else { return full }
-        let w = CGFloat(full.width), h = CGFloat(full.height)
-        let rect = CGRect(x: crop.minX * w, y: crop.minY * h, width: crop.width * w, height: crop.height * h).integral
-        return full.cropping(to: rect) ?? full
+        await VideoFrames.firstFrame(url: url, at: seconds, crop: crop)
     }
 }
 

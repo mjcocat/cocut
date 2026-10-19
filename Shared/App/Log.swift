@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import os
 
@@ -9,8 +8,7 @@ enum Log {
     private static let queue = DispatchQueue(label: "com.mjcocat.Cocut.log")
 
     static let fileURL: URL = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Logs/Cocut", directoryHint: .isDirectory)
+        let dir = Platform.logsDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appending(path: "Cocut.log")
     }()
@@ -30,7 +28,7 @@ enum Log {
             append("INFO  Log created")
         }
         queue.sync {}
-        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        Platform.reveal([fileURL])
     }
 
     private static func append(_ line: String) {

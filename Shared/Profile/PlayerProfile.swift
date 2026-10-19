@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import SwiftUI
 
@@ -161,7 +160,7 @@ final class ProfileStore {
     var profile: PlayerProfile {
         didSet { if profile != oldValue { scheduleSave() } }
     }
-    private(set) var headshot: NSImage?
+    private(set) var headshot: PlatformImage?
 
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -180,24 +179,24 @@ final class ProfileStore {
         } else {
             profile = PlayerProfile()
         }
-        headshot = NSImage(contentsOf: directory.appending(path: "headshot.png"))
+        headshot = Platform.loadImage(at: directory.appending(path: "headshot.png"))
     }
 
     func setHeadshot(from url: URL) {
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        guard let image = NSImage(contentsOf: url) else {
+        guard let image = Platform.loadImage(at: url) else {
             Log.error("Couldn't read headshot at \(url.lastPathComponent)")
             return
         }
         setHeadshot(image)
     }
 
-    func setHeadshot(_ image: NSImage) {
-        guard let png = Self.normalizedPNG(image, maxSide: 1200) else { return }
+    func setHeadshot(_ image: PlatformImage) {
+        guard let png = Platform.normalizedPNG(image, maxSide: 1200) else { return }
         do {
             try png.write(to: headshotURL, options: .atomic)
-            headshot = NSImage(data: png)
+            headshot = Platform.image(from: png)
         } catch {
             Log.error("Couldn't save headshot: \(error.localizedDescription)")
         }
@@ -226,23 +225,6 @@ final class ProfileStore {
             }
         }
     }
-
-    /// Redraws the image (applying orientation, dropping huge sizes) and encodes it as PNG.
-    private static func normalizedPNG(_ image: NSImage, maxSide: CGFloat) -> Data? {
-        var rect = CGRect(origin: .zero, size: image.size)
-        guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return nil }
-        let w = CGFloat(cg.width), h = CGFloat(cg.height)
-        let scale = min(1, maxSide / max(w, h))
-        let size = CGSize(width: (w * scale).rounded(), height: (h * scale).rounded())
-        guard let ctx = CGContext(data: nil, width: Int(size.width), height: Int(size.height),
-                                  bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        ctx.interpolationQuality = .high
-        ctx.draw(cg, in: CGRect(origin: .zero, size: size))
-        guard let out = ctx.makeImage() else { return nil }
-        return NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])
-    }
 }
 
 extension Color {
@@ -259,10 +241,10 @@ extension Color {
 
     /// "#RRGGBB" in sRGB.
     var hexString: String {
-        let ns = NSColor(self).usingColorSpace(.sRGB) ?? NSColor(self)
-        let r = Int((ns.redComponent * 255).rounded())
-        let g = Int((ns.greenComponent * 255).rounded())
-        let b = Int((ns.blueComponent * 255).rounded())
+        let c = Platform.sRGB(self) ?? (0, 0, 0, 1)
+        let r = Int((c.red * 255).rounded())
+        let g = Int((c.green * 255).rounded())
+        let b = Int((c.blue * 255).rounded())
         return String(format: "#%02X%02X%02X", max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
     }
 }

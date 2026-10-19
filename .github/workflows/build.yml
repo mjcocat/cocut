@@ -146,3 +146,35 @@ jobs:
             5. Follow the **Setup Guide** that opens: allow **Screen Recording** (then reopen Cocut) and **App Management** (for automatic updates).
 
             Requires macOS 26 or later.
+
+  build-ios:
+    name: Build iOS app (unsigned)
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Generate Xcode project
+        run: xcodegen
+
+      # Compile check only: iOS installs need Apple-issued signing, done from Xcode for now.
+      - name: Build (Debug, generic iOS device)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Cocut.xcodeproj \
+            -scheme CocutiOS \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build | xcbeautify --renderer github-actions

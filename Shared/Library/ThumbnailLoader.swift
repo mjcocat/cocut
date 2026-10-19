@@ -1,5 +1,4 @@
 import AVFoundation
-import AppKit
 
 /// Generates and caches a poster frame for each clip.
 actor ThumbnailLoader {

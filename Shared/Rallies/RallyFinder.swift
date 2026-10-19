@@ -1,4 +1,6 @@
+#if os(macOS)
 import AppKit
+#endif
 import AVFoundation
 import Foundation
 import UniformTypeIdentifiers
@@ -139,6 +141,7 @@ final class RallyFinder {
 
     // MARK: Analysis
 
+    #if os(macOS)
     func chooseMatch() {
         let panel = NSOpenPanel()
         panel.title = "Choose a Match Video"
@@ -148,7 +151,31 @@ final class RallyFinder {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = [.movie, .mpeg4Movie, .quickTimeMovie]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        analyze(url)
+        pendingMatch = url
+    }
+    #endif
+
+    /// A match waiting for its court area to be marked; the window shows the marking step and
+    /// then calls `analyze`.
+    var pendingMatch: URL?
+
+    /// The air above the user's court (unit coordinates, top-left origin), marked on a frame of
+    /// the match. Nil looks for the ball automatically across the top of the picture.
+    var courtArea: CGRect? {
+        didSet {
+            if let a = courtArea {
+                UserDefaults.standard.set([a.minX, a.minY, a.width, a.height], forKey: Self.courtAreaKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.courtAreaKey)
+            }
+        }
+    }
+    private static let courtAreaKey = "rallyCourtArea"
+
+    /// The court area marked last time (the same camera spot is common).
+    static var savedCourtArea: CGRect? {
+        guard let v = UserDefaults.standard.array(forKey: courtAreaKey) as? [Double], v.count == 4 else { return nil }
+        return CGRect(x: v[0], y: v[1], width: v[2], height: v[3])
     }
 
     func analyze(_ url: URL) {
@@ -162,11 +189,12 @@ final class RallyFinder {
         redoStack.removeAll()
         state = .analyzing(0)
         Log.info("Finding rallies in \(url.lastPathComponent)")
+        let area = courtArea
 
         task = Task {
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try await RallyDetector.analyze(url: url) { fraction in
+                    try await RallyDetector.analyze(url: url, courtArea: area) { fraction in
                         Task { @MainActor [weak self] in
                             guard let self, case .analyzing = self.state else { return }
                             self.state = .analyzing(fraction)
@@ -439,15 +467,28 @@ final class RallyFinder {
     /// Set after rallies are added to Clips, so the window can confirm it.
     var lastAddedCount: Int?
 
-    /// Exports the kept rallies back to back as one movie.
+    #if os(macOS)
+    /// Asks where to save, then exports the kept rallies back to back as one movie.
     func exportCondensed() {
-        guard let sourceURL, !keptRallies.isEmpty else { return }
+        guard sourceURL != nil, !keptRallies.isEmpty else { return }
         let panel = NSSavePanel()
         panel.title = "Export Condensed Match"
         panel.allowedContentTypes = [.mpeg4Movie]
-        panel.nameFieldStringValue = "\(matchName) – Rallies.mp4"
+        panel.nameFieldStringValue = condensedFileName
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let output = panel.url else { return }
+        exportCondensed(to: output)
+    }
+    #endif
+
+    var condensedFileName: String { "\(matchName) – Rallies.mp4" }
+
+    /// Set when a condensed export finishes, so the window can offer to share or show it.
+    var lastCondensedURL: URL?
+
+    /// Exports the kept rallies back to back as one movie at `output`.
+    func exportCondensed(to output: URL) {
+        guard let sourceURL, !keptRallies.isEmpty else { return }
         let kept = keptRallies
         pause()
         state = .working("Putting the rallies together…", nil)
@@ -457,8 +498,9 @@ final class RallyFinder {
                     self?.state = .working("Exporting… \(Int(fraction * 100))%", fraction)
                 }
                 state = .review
+                lastCondensedURL = output
                 Log.info("Exported condensed match to \(output.path(percentEncoded: false))")
-                NSWorkspace.shared.activateFileViewerSelecting([output])
+                Platform.reveal([output])
             } catch is CancellationError {
                 try? FileManager.default.removeItem(at: output)
                 state = .review

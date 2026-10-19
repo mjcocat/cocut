@@ -1,4 +1,3 @@
-import AppKit
 import AVFoundation
 import SwiftUI
 
@@ -50,7 +49,7 @@ final class ReelPreview {
     }
 
     static func signature(plan: [ReelEntry], options: ExportOptions, profile: PlayerProfile,
-                          headshot: NSImage?) -> Signature {
+                          headshot: PlatformImage?) -> Signature {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         let entries = plan.map { entry -> Data in
@@ -67,7 +66,7 @@ final class ReelPreview {
 
     var isBuilding: Bool { if case .building = state { return true } else { return false } }
 
-    func build(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: NSImage?,
+    func build(plan: [ReelEntry], library: ClipLibrary, profile: PlayerProfile, headshot: PlatformImage?,
                options: ExportOptions) {
         task?.cancel()
         let options = Self.previewOptions(options)
@@ -89,7 +88,7 @@ final class ReelPreview {
                 ) { [weak self] message in self?.state = .building(message) }
                 try Task.checkCancellation()
                 state = .building("Putting the clips together…")
-                let accent = NSColor(profile.accentColor).cgColor
+                let accent = Platform.cgColor(profile.accentColor)
                 let built = try await ReelComposer.build(segments: segments, options: options,
                                                          renderSize: Self.renderSize, accent: accent, forPlayback: true)
                 try Task.checkCancellation()
