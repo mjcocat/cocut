@@ -192,66 +192,7 @@ struct ClipsView: View {
     // MARK: Empty state
 
     private var emptyState: some View {
-        // Built by hand: ContentUnavailableView lays its actions out in a row on macOS 26, which
-        // pushed the tip off the edge.
-        VStack(spacing: 16) {
-            Image("Logo")
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 104, height: 104)
-                .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
-            Text("No Clips Yet")
-                .font(.title2.weight(.semibold))
-            Text("Open game film on YouTube or Hudl and select the video. Cocut records a clip each time you press play and saves it when you pause.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 460)
-
-            HStack(spacing: 10) {
-                Button {
-                    Task { await model.recordNewRegion() }
-                } label: {
-                    Label("Record Region", systemImage: "record.circle")
-                        .padding(.horizontal, 6)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                Button {
-                    Task { await model.recordFullScreen() }
-                } label: {
-                    Label("Record Full Screen", systemImage: "rectangle.dashed")
-                        .padding(.horizontal, 6)
-                }
-            }
-            .controlSize(.large)
-            .disabled(model.isBusy)
-            .padding(.top, 6)
-
-            HStack(spacing: 18) {
-                Button("Import Videos…") {
-                    Task { await model.importVideosWithPanel() }
-                }
-                Button("Find Rallies in a Full Match…") {
-                    openWindow(id: "rallies")
-                }
-            }
-            .buttonStyle(.link)
-
-            Text("From any app, even with the video in fullscreen: ⌥⌘N picks a region, ⌥⌘F records the full screen, ⌥⌘R repeats the last region. Press the same keys to finish.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 460)
-                .padding(.top, 8)
-        }
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .dropDestination(for: URL.self) { urls, _ in
-            let videos = urls.filter { $0.isFileURL }
-            guard !videos.isEmpty else { return false }
-            Task { await model.importVideos(videos) }
-            return true
-        }
+        GetStartedView()
     }
 }
 

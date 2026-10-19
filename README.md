@@ -42,6 +42,15 @@ CI builds aren't notarized, which requires a paid Apple Developer account. The i
 
 **If the Dock icon just keeps bouncing** after you click **Open Anyway**, a copy held back by the first, blocked launch is still stuck and blocks new launches. Run `pkill -9 -x Cocut`, then open Cocut again.
 
+## Getting started
+
+An empty project opens on **Get Started**, which shows the three ways to get film in:
+- **A full match video** (camera, phone, Hudl download): opens **Find Rallies**, which cuts out the dead time.
+- **Clips you already have:** opens **Import**.
+- **Film on YouTube or Hudl:** starts **Record Region**.
+
+It also shows what comes after: rate, spotlight, Player Card, Preview, Export. **New Project…** is a two-step wizard. First, name the project and either keep the same athlete or enter a new one (name, number, position, team color), which pre-fills the Player Card. Then pick where your film is, and **Create** goes straight into it.
+
 ## Projects
 
 Each **project** has its own clips, sections, tags, roster and Player Card, for example one per season, team or athlete ("Fall 2026 Club", "HS Season"). Use the project menu at the top of the sidebar to switch, create, rename, show in Finder, or delete (to the Trash). A new project can start with a copy of the current Player Card. Your existing library becomes the first project automatically. Projects live in `~/Movies/Cocut/Projects`.
