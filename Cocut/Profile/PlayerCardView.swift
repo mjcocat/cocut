@@ -149,17 +149,16 @@ struct PlayerCardView: View {
             ZStack {
                 Color(white: 0.965)
                 diagonalLines(.black.opacity(0.03))
-                // A bold band of team color across the top-right corner.
-                Rectangle()
-                    .fill(palette.highlight)
-                    .frame(width: 2600, height: 150)
-                    .rotationEffect(.degrees(-24))
-                    .offset(x: 900, y: -560)
-                Rectangle()
-                    .fill(palette.highlight.opacity(0.35))
-                    .frame(width: 2600, height: 26)
-                    .rotationEffect(.degrees(-24))
-                    .offset(x: 980, y: -430)
+                // Drawn in a Canvas so the decoration never changes the card's layout: a soft glow
+                // of team color in the top-right corner, a rail down the left edge, a band along the bottom.
+                let highlight = palette.highlight
+                Canvas { context, size in
+                    context.fill(Path(ellipseIn: CGRect(x: size.width - 760, y: -560, width: 1200, height: 1200)),
+                                 with: .color(highlight.opacity(0.09)))
+                    context.fill(Path(CGRect(x: 0, y: 0, width: 24, height: size.height)), with: .color(highlight))
+                    context.fill(Path(CGRect(x: 0, y: size.height - 16, width: size.width, height: 16)),
+                                 with: .color(highlight.opacity(0.85)))
+                }
             }
         case .team:
             ZStack {
