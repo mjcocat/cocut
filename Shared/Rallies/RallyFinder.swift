@@ -160,6 +160,10 @@ final class RallyFinder {
 
     /// Players taught by clicking them: number → appearance examples. Per match.
     private(set) var taught: [Int: [[Float]]] = [:]
+    /// Tracks the user clicked: track → number (the whole stretch they were followed).
+    @ObservationIgnored private var taughtTracks: [Int: Int] = [:]
+    /// How many times each number was taught (clicks), for the list.
+    private(set) var taughtClicks: [Int: Int] = [:]
     /// How alike a player must look to a taught example to count as them (cosine similarity).
     var matchSimilarity: Double = UserDefaults.standard.object(forKey: "rallyMatchSimilarity") as? Double ?? 0.8 {
         didSet {
@@ -177,14 +181,30 @@ final class RallyFinder {
     /// Whether this analysis has appearance data to teach from.
     var canTeach: Bool { !(analysis?.people.isEmpty ?? true) }
 
-    func teach(_ number: Int, print: [Float]) {
+    /// Teaches `number` from a player clicked at `time` (box in unit, bottom-left coordinates).
+    /// When that player was followed during analysis, every frame of their track becomes an
+    /// example too.
+    func teach(_ number: Int, print: [Float], box: CGRect, time: Double) {
         taught[number, default: []].append(print)
-        Log.info("Taught #\(number) (\(taught[number]?.count ?? 0) example(s))")
+        taughtClicks[number, default: 0] += 1
+        var trackNote = "not followed"
+        if let people = analysis?.people,
+           let match = people.filter({ abs($0.time - time) <= 0.6 && $0.track >= 0 })
+               .max(by: { RallyDetector.overlap($0.box, box) < RallyDetector.overlap($1.box, box) }),
+           RallyDetector.overlap(match.box, box) > 0.4 {
+            taughtTracks[match.track] = number
+            let frames = people.filter { $0.track == match.track }
+            taught[number, default: []].append(contentsOf: frames.prefix(30).map(\.print))
+            trackNote = "followed for \(frames.count) frames"
+        }
+        Log.info("Taught #\(number) (\(taughtClicks[number] ?? 0) click(s), \(trackNote))")
         refreshTaught()
     }
 
     func forget(_ number: Int) {
         taught[number] = nil
+        taughtClicks[number] = nil
+        taughtTracks = taughtTracks.filter { $0.value != number }
         refreshTaught()
     }
 
@@ -198,11 +218,12 @@ final class RallyFinder {
             return
         }
         let taught = self.taught
+        let tracks = self.taughtTracks
         let similarity = Float(matchSimilarity)
         isMatching = true
         matchTask = Task {
             let times = await Task.detached(priority: .userInitiated) {
-                RallyDetector.matches(people: people, taught: taught, minSimilarity: similarity)
+                RallyDetector.matches(people: people, taught: taught, taughtTracks: tracks, minSimilarity: similarity)
             }.value
             guard !Task.isCancelled else { return }
             taughtTimes = times
@@ -244,6 +265,8 @@ final class RallyFinder {
         taught = [:]
         taughtTimes = [:]
         taughtFound = [:]
+        taughtTracks = [:]
+        taughtClicks = [:]
         undoStack.removeAll()
         redoStack.removeAll()
         state = .analyzing(0)
@@ -292,6 +315,8 @@ final class RallyFinder {
         taught = [:]
         taughtTimes = [:]
         taughtFound = [:]
+        taughtTracks = [:]
+        taughtClicks = [:]
         state = .empty
     }
 
@@ -308,6 +333,9 @@ final class RallyFinder {
         var fresh = spans.map { span -> Rally in
             var rally = Rally(start: span.start, end: span.end)
             var players = Set(RallyDetector.players(in: span, reads: analysis.numbers, roster: roster, frequent: frequent))
+            // Players followed through the rally whose number was read at some point.
+            players.formUnion(RallyDetector.trackPlayers(in: span, people: analysis.people,
+                                                         allowed: roster.isEmpty ? frequent : roster))
             // Taught players found by appearance.
             for (number, times) in taughtTimes where times.contains(where: { $0 >= span.start && $0 <= span.end }) {
                 players.insert(number)

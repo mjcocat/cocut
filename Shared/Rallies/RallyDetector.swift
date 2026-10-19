@@ -35,7 +35,12 @@ enum RallyDetector {
         var box: CGRect
         /// Unit-length appearance features (Vision image feature print).
         var print: [Float]
+        /// The number read on this player in this frame, if any.
         var number: Int?
+        /// Which track (the same player followed through a rally) this is part of; -1 for none.
+        var track: Int = -1
+        /// The number read anywhere on this track: labels every frame of it.
+        var trackNumber: Int?
     }
 
     struct NumberRead: Codable, Sendable, Hashable {
@@ -347,14 +352,17 @@ enum RallyDetector {
     private static func readNumbers(asset: AVURLAsset, spans: [Span],
                                     progress: @escaping @Sendable (Double) -> Void) async throws -> ([NumberRead], [PersonSighting]) {
         var times: [Double] = []
-        for span in spans {
+        var spanOf: [Int] = []
+        for (k, span) in spans.enumerated() {
             var t = span.start
             while t <= span.end {
                 times.append(t)
+                spanOf.append(k)
                 t += 0.5
             }
         }
         guard !times.isEmpty else { return ([], []) }
+        var tracker = Tracker()
         func makeGenerator() -> AVAssetImageGenerator {
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
@@ -389,15 +397,18 @@ enum RallyDetector {
                 unreadFrames += 1
                 continue
             }
-            // Once a second, also look closely at each nearby player's torso.
+            // Every frame: find the nearby players and how they look, and follow each one through
+            // the rally. Once a second, also read each player's torso up close.
             var seen: Set<Int> = []
-            let frame = numbers(in: image, closeUps: i % 2 == 0, rejected: &rejected, problems: &problems)
+            let frame = numbers(in: image, closeUps: i % 2 == 0, wantPeople: true, rejected: &rejected, problems: &problems)
             for found in frame.reads where seen.insert(found.number).inserted {
                 reads.append(NumberRead(time: t, number: found.number, x: found.x, y: found.y))
             }
+            let first = people.count
             for person in frame.people {
                 people.append(PersonSighting(time: t, box: person.box, print: person.print, number: person.number))
             }
+            tracker.update(&people, from: first, time: t, span: spanOf[i])
         }
         progress(1)
         Log.info("Number pass: \(times.count) frames, \(unreadFrames) couldn't be read")
@@ -413,6 +424,9 @@ enum RallyDetector {
         for i in people.indices where people[i].number.map({ !keptNumbers.contains($0) }) ?? false {
             people[i].number = nil
         }
+        let labeled = labelTracks(&people)
+        let tracks = Set(people.map(\.track)).count
+        Log.info("Followed \(people.count) player sightings as \(tracks) tracks; \(labeled) tracks have a number")
         return (kept, people)
     }
 
@@ -436,54 +450,193 @@ enum RallyDetector {
     typealias FrameNumbers = (reads: [(number: Int, x: Double, y: Double)],
                               people: [(box: CGRect, print: [Float], number: Int?)])
 
-    static func numbers(in image: CGImage, closeUps: Bool = false, rejected: inout [String: Int],
-                        problems: inout [String: Int]) -> FrameNumbers {
+    static func numbers(in image: CGImage, closeUps: Bool = false, wantPeople: Bool = false,
+                        rejected: inout [String: Int], problems: inout [String: Int]) -> FrameNumbers {
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         // The whole lower part of the picture (Vision's origin is bottom-left: the lower 65%).
         var found = recognize(image, handler, in: CGRect(x: 0, y: 0, width: 1, height: 0.65),
                               minimumTextHeight: 0.012, level: .accurate, rejected: &rejected, problems: &problems)
-        guard closeUps else { return (found, []) }
-        var seenPeople: [(box: CGRect, print: [Float], number: Int?)] = []
+        guard closeUps || wantPeople else { return (found, []) }
 
-        // Close-ups: find the people, then read each nearby player's torso on its own. Text
-        // recognition finds a lone "1" or "11" far more readily when it fills the region it's
-        // given than as a sliver in a whole gym.
-        let people = VNDetectHumanRectanglesRequest()
-        people.upperBodyOnly = false
+        // The nearby players (big enough for a readable number).
+        let bodies = playerBodies(handler, minHeight: 0.10, maxMidY: 0.8, problems: &problems)
+        var people: [(box: CGRect, print: [Float], number: Int?)] = []
+        let fullFrame = found
+        for body in bodies {
+            var reads: [(number: Int, x: Double, y: Double)] = []
+            // Close-ups: read each player's torso on its own. Text recognition finds a lone "1"
+            // or "11" far more readily when it fills the region it's given.
+            if closeUps, body.torso.width * Double(image.width) >= 40, body.torso.height * Double(image.height) >= 40 {
+                reads = recognize(image, handler, in: body.torso, minimumTextHeight: 0.012, level: .accurate,
+                                  rejected: &rejected, problems: &problems)
+                if reads.isEmpty {
+                    // The fast recognizer works character by character and catches a lone "1"
+                    // the accurate one sometimes skips.
+                    reads = recognize(image, handler, in: body.torso, minimumTextHeight: 0.012, level: .fast,
+                                      rejected: &rejected, problems: &problems)
+                }
+                for read in reads where !found.contains(where: { $0.number == read.number }) {
+                    found.append(read)
+                }
+            }
+            guard wantPeople else { continue }
+            // This player's number: read on their torso, or read in the whole frame right there.
+            let zone = body.torso.insetBy(dx: -0.01, dy: -0.01)
+            let onThem = Set(reads.map(\.number) + fullFrame.filter { zone.contains(CGPoint(x: $0.x, y: $0.y)) }.map(\.number))
+            if let print = featurePrint(handler, region: body.box) ?? featurePrint(of: image, region: body.box) {
+                people.append((body.box, print, onThem.count == 1 ? onThem.first : nil))
+            }
+        }
+        return (found, people)
+    }
+
+    /// Players in the frame (unit coordinates, bottom-left origin): the whole body and the torso
+    /// (shoulders to hips, where the number is). Body-pose detection finds several people at once
+    /// and gives their joints; human rectangles add anyone it missed.
+    static func playerBodies(_ handler: VNImageRequestHandler, minHeight: CGFloat, maxMidY: CGFloat,
+                             problems: inout [String: Int]) -> [(box: CGRect, torso: CGRect)] {
+        let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+        func torsoGuess(_ box: CGRect) -> CGRect {
+            CGRect(x: box.minX - box.width * 0.15, y: box.minY + box.height * 0.42,
+                   width: box.width * 1.3, height: box.height * 0.48).intersection(unit)
+        }
+        var out: [(box: CGRect, torso: CGRect)] = []
+
+        let pose = VNDetectHumanBodyPoseRequest()
         do {
-            try handler.perform([people])
+            try handler.perform([pose])
+        } catch {
+            problems["Pose: \(error.localizedDescription)", default: 0] += 1
+        }
+        for observation in pose.results ?? [] {
+            guard let points = try? observation.recognizedPoints(.all) else { continue }
+            let good = points.values.filter { $0.confidence > 0.2 }
+            guard good.count >= 6 else { continue }
+            let xs = good.map(\.location.x), ys = good.map(\.location.y)
+            guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { continue }
+            // Joints stop at the ankles and eyes: pad for the feet, the top of the head and arms.
+            let w = maxX - minX, h = maxY - minY
+            let box = CGRect(x: minX - w * 0.15, y: minY - h * 0.06, width: w * 1.3, height: h * 1.16).intersection(unit)
+            let joints: [VNHumanBodyPoseObservation.JointName] = [.leftShoulder, .rightShoulder, .leftHip, .rightHip]
+            let core = joints.compactMap { points[$0] }.filter { $0.confidence > 0.2 }.map(\.location)
+            var torso = torsoGuess(box)
+            if core.count >= 3, let cx0 = core.map(\.x).min(), let cx1 = core.map(\.x).max(),
+               let cy0 = core.map(\.y).min(), let cy1 = core.map(\.y).max() {
+                // A side-on player's shoulders and hips are close together: keep it a sensible width.
+                let tw = max(cx1 - cx0, box.width * 0.4), th = max(cy1 - cy0, box.height * 0.25)
+                let mid = (cx0 + cx1) / 2
+                torso = CGRect(x: mid - tw * 0.75, y: cy0 - th * 0.1, width: tw * 1.5, height: th * 1.25).intersection(unit)
+            }
+            out.append((box, torso))
+        }
+
+        let rectangles = VNDetectHumanRectanglesRequest()
+        rectangles.upperBodyOnly = false
+        do {
+            try handler.perform([rectangles])
         } catch {
             problems["People: \(error.localizedDescription)", default: 0] += 1
         }
-        let bodies = (people.results ?? [])
-            .map(\.boundingBox)
-            .filter { $0.height >= 0.12 && $0.midY < 0.75 } // near enough for a readable number
-            .sorted { $0.height > $1.height }
-            .prefix(8)
-        let already = Set(found.map(\.number))
-        for body in bodies {
-            // From the hips to the shoulders, a little wider than the body.
-            let torso = CGRect(x: body.minX - body.width * 0.15, y: body.minY + body.height * 0.42,
-                               width: body.width * 1.3, height: body.height * 0.48)
-                .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-            // Too small to hold a readable number (and text recognition errors on tiny regions).
-            guard torso.width * Double(image.width) >= 40, torso.height * Double(image.height) >= 40 else { continue }
-            var reads = recognize(image, handler, in: torso, minimumTextHeight: 0.012, level: .accurate, rejected: &rejected, problems: &problems)
-            if reads.isEmpty {
-                // The fast recognizer works character by character and catches a lone "1" the
-                // accurate one sometimes skips.
-                reads = recognize(image, handler, in: torso, minimumTextHeight: 0.012, level: .fast, rejected: &rejected, problems: &problems)
+        for box in (rectangles.results ?? []).map(\.boundingBox) where !out.contains(where: { overlap($0.box, box) > 0.3 }) {
+            out.append((box, torsoGuess(box)))
+        }
+        return Array(out
+            .filter { $0.box.height >= minHeight && $0.box.midY < maxMidY }
+            .sorted { $0.box.height > $1.box.height }
+            .prefix(10))
+    }
+
+    /// Intersection over union of two boxes.
+    static func overlap(_ a: CGRect, _ b: CGRect) -> Double {
+        let i = a.intersection(b)
+        guard !i.isNull, i.width > 0, i.height > 0 else { return 0 }
+        let inter = Double(i.width * i.height)
+        return inter / (Double(a.width * a.height) + Double(b.width * b.height) - inter)
+    }
+
+    // MARK: - Tracking
+
+    /// Follows players from frame to frame within a rally, by where they are and how they look.
+    struct Tracker {
+        private struct Active { var id: Int; var box: CGRect; var print: [Float]; var time: Double }
+        private var active: [Active] = []
+        private var span = -1
+        private var nextID = 0
+
+        /// Assigns `people[from...]` (one frame's players at `time`) to tracks.
+        mutating func update(_ people: inout [PersonSighting], from first: Int, time: Double, span: Int) {
+            if span != self.span {
+                active = []
+                self.span = span
             }
-            for read in reads where !already.contains(read.number) {
-                found.append(read)
+            active.removeAll { time - $0.time > 1.6 }
+            var pairs: [(score: Float, person: Int, track: Int)] = []
+            for p in first..<people.count {
+                let person = people[p]
+                for (a, track) in active.enumerated() {
+                    let dt = max(0.5, time - track.time)
+                    let dx = person.box.midX - track.box.midX, dy = person.box.midY - track.box.midY
+                    let distance = Double((dx * dx + dy * dy).squareRoot())
+                    // A player moves at most a few meters in half a second.
+                    guard distance < min(0.3, 0.12 * dt / 0.5) else { continue }
+                    let ratio = person.box.height / max(track.box.height, 0.001)
+                    guard ratio > 0.6, ratio < 1.6 else { continue }
+                    let similarity = RallyDetector.dot(person.print, track.print)
+                    guard similarity >= 0.5 else { continue }
+                    pairs.append((similarity - Float(distance) * 2, p, a))
+                }
             }
-            if let print = featurePrint(handler, region: body) {
-                // Label this sighting only when exactly one number was read on it.
-                let numbers = Set(reads.map(\.number))
-                seenPeople.append((body, print, numbers.count == 1 ? numbers.first : nil))
+            var usedPeople: Set<Int> = [], usedTracks: Set<Int> = []
+            for pair in pairs.sorted(by: { $0.score > $1.score })
+            where !usedPeople.contains(pair.person) && !usedTracks.contains(pair.track) {
+                usedPeople.insert(pair.person)
+                usedTracks.insert(pair.track)
+                people[pair.person].track = active[pair.track].id
+                active[pair.track].box = people[pair.person].box
+                active[pair.track].print = people[pair.person].print
+                active[pair.track].time = time
+            }
+            for p in first..<people.count where !usedPeople.contains(p) {
+                people[p].track = nextID
+                active.append(Active(id: nextID, box: people[p].box, print: people[p].print, time: time))
+                nextID += 1
             }
         }
-        return (found, seenPeople)
+    }
+
+    static func dot(_ a: [Float], _ b: [Float]) -> Float {
+        guard a.count == b.count, !a.isEmpty else { return 0 }
+        var result: Float = 0
+        vDSP_dotpr(a, 1, b, 1, &result, vDSP_Length(a.count))
+        return result
+    }
+
+    /// Gives each track the number read on it (when one number clearly wins), so a number read
+    /// once labels the player for the whole stretch they were followed. Returns how many tracks
+    /// got a number.
+    @discardableResult
+    static func labelTracks(_ people: inout [PersonSighting]) -> Int {
+        var votes: [Int: [Int: Int]] = [:]
+        for p in people where p.track >= 0 {
+            if let n = p.number { votes[p.track, default: [:]][n, default: 0] += 1 }
+        }
+        var label: [Int: Int] = [:]
+        for (track, counts) in votes {
+            let sorted = counts.sorted { $0.value > $1.value }
+            let second = sorted.count > 1 ? sorted[1].value : 0
+            if let top = sorted.first, top.value >= 1, top.value >= 2 * second { label[track] = top.key }
+        }
+        for i in people.indices { people[i].trackNumber = label[people[i].track] }
+        return label.count
+    }
+
+    /// Numbers of players followed in a rally: a track with a number, seen at least twice in it.
+    static func trackPlayers(in span: Span, people: [PersonSighting], allowed: Set<Int>) -> Set<Int> {
+        var counts: [Int: Int] = [:]
+        for p in people where p.time >= span.start && p.time <= span.end {
+            if let n = p.trackNumber { counts[n, default: 0] += 1 }
+        }
+        return Set(counts.filter { $0.value >= 2 && (allowed.isEmpty || allowed.contains($0.key)) }.keys)
     }
 
     // MARK: - Appearance (teach a player)
@@ -517,28 +670,17 @@ enum RallyDetector {
     /// Also returns a line for the log saying what was found or what went wrong.
     static func people(in image: CGImage) -> (people: [(box: CGRect, print: [Float])], note: String) {
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        var notes: [String] = []
-        func detect(upperBodyOnly: Bool) -> [CGRect] {
-            let request = VNDetectHumanRectanglesRequest()
-            request.upperBodyOnly = upperBodyOnly
-            do {
-                try handler.perform([request])
-            } catch {
-                notes.append("detection (\(upperBodyOnly ? "upper" : "full") body) failed: \(error.localizedDescription)")
-                return []
-            }
-            return (request.results ?? []).map(\.boundingBox).filter { $0.height >= 0.06 }
-        }
-        var boxes = detect(upperBodyOnly: false)
-        if boxes.isEmpty { boxes = detect(upperBodyOnly: true) }
+        var problems: [String: Int] = [:]
+        let bodies = playerBodies(handler, minHeight: 0.06, maxMidY: 1, problems: &problems)
         var out: [(box: CGRect, print: [Float])] = []
-        for box in boxes {
-            if let print = featurePrint(handler, region: box) ?? featurePrint(of: image, region: box) {
-                out.append((box, print))
+        for body in bodies {
+            if let print = featurePrint(handler, region: body.box) ?? featurePrint(of: image, region: body.box) {
+                out.append((body.box, print))
             }
         }
-        notes.insert("\(boxes.count) people found, \(out.count) with appearance, frame \(image.width)×\(image.height)", at: 0)
-        return (out, notes.joined(separator: "; "))
+        var note = "\(bodies.count) people found, \(out.count) with appearance, frame \(image.width)×\(image.height)"
+        if !problems.isEmpty { note += "; " + problems.map { "\($0.key) ×\($0.value)" }.joined(separator: "; ") }
+        return (out, note)
     }
 
     /// The appearance of `region` (unit, bottom-left origin) from a cropped copy of the image:
@@ -552,13 +694,18 @@ enum RallyDetector {
                             region: CGRect(x: 0, y: 0, width: 1, height: 1))
     }
 
-    /// When each taught player appears, by appearance. Every sighting is compared with the taught
-    /// examples, plus up to 40 sightings of each number that was read clearly (which also stand
-    /// for the other players, so a teammate in the same uniform is told apart by who they look
-    /// most like). A sighting goes to a taught number when that number is its closest match and
-    /// the similarity is at least `minSimilarity`.
-    static func matches(people: [PersonSighting], taught: [Int: [[Float]]], minSimilarity: Float) -> [Int: [Double]] {
+    /// When each taught player appears, by appearance, decided per track (a player followed
+    /// through a rally) rather than per frame. Every sighting is compared with the taught examples
+    /// and with sightings of players whose number was read (up to 60 per number, spread across the
+    /// match), so a teammate in the same uniform is told apart by who they look most like. A track
+    /// goes to a taught number when, averaged over the track, that number is the closest match by
+    /// a clear margin and at least `minSimilarity`. Tracks whose number was read keep it.
+    static func matches(people: [PersonSighting], taught: [Int: [[Float]]], taughtTracks: [Int: Int],
+                        minSimilarity: Float) -> [Int: [Double]] {
         guard !taught.isEmpty, let dims = people.first?.print.count ?? taught.values.first?.first?.count, dims > 0 else { return [:] }
+        func label(of p: PersonSighting) -> Int? { taughtTracks[p.track] ?? p.trackNumber }
+
+        // Labeled examples.
         var labels: [Int] = []
         var examples: [Float] = []
         func add(_ print: [Float], _ label: Int) {
@@ -567,19 +714,20 @@ enum RallyDetector {
             examples.append(contentsOf: print)
         }
         for (number, prints) in taught { prints.forEach { add($0, number) } }
-        let read = Dictionary(grouping: people.filter { $0.number != nil }, by: { $0.number! })
-        for (number, list) in read where list.count >= 5 || taught[number] != nil {
-            // Spread across the match.
-            let step = max(1, list.count / 40)
-            for i in stride(from: 0, to: list.count, by: step).prefix(40) { add(list[i].print, number) }
+        let known = Dictionary(grouping: people.filter { label(of: $0) != nil }, by: { label(of: $0)! })
+        for (number, list) in known where list.count >= 5 || taught[number] != nil {
+            let step = max(1, list.count / 60)
+            for i in stride(from: 0, to: list.count, by: step).prefix(60) { add(list[i].print, number) }
         }
-        let l = labels.count
+        let distinct = Array(Set(labels)).sorted()
+        let column = Dictionary(uniqueKeysWithValues: distinct.enumerated().map { ($1, $0) })
+        let l = labels.count, u = distinct.count
         guard l > 0 else { return [:] }
-        // Examples transposed (dims × l) so one matrix product gives every similarity.
         var transposed = [Float](repeating: 0, count: dims * l)
         vDSP_mtrans(examples, 1, &transposed, 1, vDSP_Length(dims), vDSP_Length(l))
 
-        var out: [Int: [Double]] = [:]
+        // Each sighting's best similarity to each number.
+        var best = [Float](repeating: -1, count: people.count * u)
         let chunk = 2048
         var start = 0
         while start < people.count {
@@ -591,19 +739,37 @@ enum RallyDetector {
             var sims = [Float](repeating: 0, count: rows * l)
             vDSP_mmul(block, 1, transposed, 1, &sims, 1, vDSP_Length(rows), vDSP_Length(l), vDSP_Length(dims))
             for r in 0..<rows {
-                let person = people[start + r]
-                var best: Float = -1
-                var bestLabel = -1
-                for c in 0..<l where sims[r * l + c] > best {
-                    best = sims[r * l + c]
-                    bestLabel = labels[c]
+                let base = (start + r) * u
+                for c in 0..<l {
+                    let k = base + column[labels[c]]!
+                    if sims[r * l + c] > best[k] { best[k] = sims[r * l + c] }
                 }
-                guard taught[bestLabel] != nil, best >= minSimilarity else { continue }
-                // A number read on this player wins over looks.
-                if let n = person.number, n != bestLabel { continue }
-                out[bestLabel, default: []].append(person.time)
             }
             start += rows
+        }
+
+        // Decide per track (a sighting with no track stands alone, and must look more alike).
+        var groups: [Int: [Int]] = [:]
+        var alone = -1
+        for (i, p) in people.enumerated() {
+            if p.track >= 0 { groups[p.track, default: []].append(i) } else { groups[alone, default: []].append(i); alone -= 1 }
+        }
+        var out: [Int: [Double]] = [:]
+        for (_, members) in groups {
+            if let fixed = label(of: people[members[0]]) {
+                if taught[fixed] != nil { out[fixed, default: []].append(contentsOf: members.map { people[$0].time }) }
+                continue
+            }
+            var mean = [Float](repeating: 0, count: u)
+            for m in members { for c in 0..<u { mean[c] += best[m * u + c] } }
+            for c in 0..<u { mean[c] /= Float(members.count) }
+            let order = mean.indices.sorted { mean[$0] > mean[$1] }
+            guard let top = order.first else { continue }
+            let number = distinct[top]
+            let second = order.count > 1 ? mean[order[1]] : -1
+            let needed = minSimilarity + (members.count < 3 ? 0.05 : 0)
+            guard taught[number] != nil, mean[top] >= needed, mean[top] - second >= 0.02 else { continue }
+            out[number, default: []].append(contentsOf: members.map { people[$0].time })
         }
         return out
     }

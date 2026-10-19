@@ -59,7 +59,7 @@ struct TeachPlayerScreen: View {
                         ForEach(finder.taught.keys.sorted(), id: \.self) { number in
                             HStack {
                                 Text("#\(number)").font(.body.weight(.semibold)).monospacedDigit()
-                                Text("\(finder.taught[number]?.count ?? 0) example\((finder.taught[number]?.count ?? 0) == 1 ? "" : "s")")
+                                Text("taught \(finder.taughtClicks[number] ?? 0)×")
                                     .foregroundStyle(.secondary)
                                 Spacer()
                                 if finder.isMatching {
@@ -210,7 +210,7 @@ struct TeachPlayerScreen: View {
 
     private func teach() {
         guard let selected, people.indices.contains(selected), let number = parsedNumber else { return }
-        finder.teach(number, print: people[selected].print)
+        finder.teach(number, print: people[selected].print, box: people[selected].box, time: time)
         self.selected = nil
     }
 
