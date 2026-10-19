@@ -5,6 +5,12 @@ enum SidebarItem: Hashable {
     case clips, playerCard, export
 }
 
+/// The main window shows one sheet at a time; the Setup Guide goes first, then any update offer.
+private enum MainSheet: String, Identifiable {
+    case setup, update
+    var id: String { rawValue }
+}
+
 struct ContentView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
@@ -37,6 +43,17 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                if let release = model.updater.availableRelease, !model.updater.isPresentingSheet {
+                    Button {
+                        model.updater.showOffer()
+                    } label: {
+                        Label("Update to \(release.version)", systemImage: "arrow.down.circle.fill")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .tint(.green)
+                    .help("Cocut \(release.version) is available. Click to see what's new and install it.")
+                }
+
                 Button {
                     openWindow(id: "preview")
                 } label: {
@@ -65,19 +82,31 @@ struct ContentView: View {
                 .disabled(model.isBusy)
             }
         }
-        .sheet(isPresented: Binding(
-            get: { model.updater.isPresentingSheet },
-            set: { if !$0 { model.updater.dismiss() } }
-        )) {
-            UpdateView(updater: model.updater)
-                .interactiveDismissDisabled()
-        }
-        .sheet(isPresented: Binding(
-            get: { model.showingSetupGuide },
-            set: { model.showingSetupGuide = $0 }
-        )) {
-            SetupGuideView()
-                .environment(model)
+        // One sheet modifier for both: two .sheet modifiers on the same view means only one of
+        // them can ever present, which hid the update offer.
+        .sheet(item: Binding<MainSheet?>(
+            get: {
+                if model.showingSetupGuide { return .setup }
+                if model.updater.isPresentingSheet { return .update }
+                return nil
+            },
+            set: { newValue in
+                guard newValue == nil else { return }
+                if model.showingSetupGuide {
+                    model.showingSetupGuide = false
+                } else if model.updater.isPresentingSheet {
+                    model.updater.dismiss()
+                }
+            }
+        )) { sheet in
+            switch sheet {
+            case .setup:
+                SetupGuideView()
+                    .environment(model)
+            case .update:
+                UpdateView(updater: model.updater)
+                    .interactiveDismissDisabled()
+            }
         }
         .onAppear {
             // First launch: walk through the one-time setup.

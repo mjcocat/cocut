@@ -30,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/mjcocat/cocut/main/scripts/install.
 
 You can open the Setup Guide again any time from **Help › Setup Guide**. Each release page also repeats these steps.
 
-This installs the latest release into `/Applications`. After that, Cocut updates itself. It checks when it opens and every few hours, and offers new versions as they appear. It never interrupts a recording: an offer found mid-recording waits until you're done. **Later** snoozes an offer for a day, and **Skip This Version** ignores it. You can also choose **Cocut › Check for Updates…** at any time, or turn automatic checks off in **Settings › Updates**.
+This installs the latest release into `/Applications`. After that, Cocut updates itself. It checks when it opens and every few hours, and offers new versions as they appear. It never interrupts a recording: an offer found mid-recording waits until you're done. **Later** snoozes an offer for a day, and **Skip This Version** ignores it. While an update is waiting, an **Update to x.y.z** button also sits in the toolbar. You can also choose **Cocut › Check for Updates…** at any time, or turn automatic checks off in **Settings › Updates**.
 
 ### "Apple could not verify Cocut…"
 
@@ -83,9 +83,9 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 |---|---|
 | Reorder clips | Drag them in the list. The list order is the reel order. |
 | Watch a clip | Select it, and it plays in the player on the right. |
-| Rename a clip | Click its name under the player. |
+| Rename a clip | Click its name under the player, or right-click › **Rename…**. |
 | Trim a clip | Click **Trim** and drag the yellow handles. The original file is kept, so **Reset Trim** undoes it. |
-| Delete clips | Select one, or several with ⌘-click or ⇧-click. Then press ⌫, or use the context menu. Deleted clips go to the Trash. |
+| Delete clips | Hover a clip and click its 🗑 button, click 🗑 under the player, or press ⌫. Select several with ⌘-click or ⇧-click to delete them together. Deleted clips go to the Trash. |
 | Leave a clip out of the reel | Uncheck **In Reel**, or right-click › **Leave Out of Reel**. |
 | Import videos | Use **Import** (⌘I), or drag .mp4/.mov files onto the list. This works for Hudl downloads. |
 

@@ -107,6 +107,12 @@ final class Updater {
         Task { await check(userInitiated: true) }
     }
 
+    /// Reopens the offer for a release that's already been found (the toolbar's Update button).
+    func showOffer() {
+        guard case .available = state else { return checkNow() }
+        isPresentingSheet = true
+    }
+
     /// Shows an offer that was held back while Cocut was busy recording.
     func presentPendingOfferIfIdle() {
         guard pendingOffer, !isBusy(), case .available = state else { return }
@@ -138,10 +144,17 @@ final class Updater {
             }
             // Background check: respect "Skip This Version" and "Later".
             let defaults = UserDefaults.standard
-            if defaults.string(forKey: Keys.skipped) == release.version { return }
+            if defaults.string(forKey: Keys.skipped) == release.version {
+                Log.info("Not offering \(release.version): skipped")
+                return
+            }
             if defaults.string(forKey: Keys.snoozedVersion) == release.version,
-               let until = defaults.object(forKey: Keys.snoozedUntil) as? Date, until > .now { return }
+               let until = defaults.object(forKey: Keys.snoozedUntil) as? Date, until > .now {
+                Log.info("Not offering \(release.version) yet: Later until \(until.formatted())")
+                return
+            }
             if isBusy() {
+                Log.info("Holding the \(release.version) offer until recording ends")
                 pendingOffer = true
             } else {
                 isPresentingSheet = true

@@ -13,6 +13,8 @@ struct ClipsView: View {
     @State private var tagPrompt: TagPrompt?
     @State private var tagName = ""
     @State private var showingTagManager = false
+    @State private var renaming: Clip?
+    @State private var renameText = ""
 
     private var library: ClipLibrary { model.library }
 
@@ -80,6 +82,15 @@ struct ClipsView: View {
                  ? "Tags help you sort and find clips. They never appear in the exported reel."
                  : "The new tag is added to the selected clips.")
         }
+        .alert("Rename Clip",
+               isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Clip name", text: $renameText, prompt: Text("Kill vs. Thunder"))
+            Button("Rename") { commitRename() }
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Names show in the list, and as captions if you turn on clip names when exporting.")
+        }
         .sheet(isPresented: $showingTagManager) {
             TagManagerView()
         }
@@ -112,8 +123,19 @@ struct ClipsView: View {
                 tagPrompt = TagPrompt(clipIDs: ids)
             },
             manageTags: { showingTagManager = true },
-            select: { selection = $0 }
+            select: { selection = $0 },
+            rename: { clip in
+                renameText = clip.title
+                renaming = clip
+            }
         )
+    }
+
+    private func commitRename() {
+        guard let clip = renaming else { return }
+        let name = renameText.trimmingCharacters(in: .whitespaces)
+        if !name.isEmpty, name != clip.title { library.rename(clip, to: name) }
+        renaming = nil
     }
 
     private func commitSection() {
@@ -229,6 +251,7 @@ struct ClipActions {
     var newTag: (Set<UUID>) -> Void
     var manageTags: () -> Void
     var select: (Set<UUID>) -> Void
+    var rename: (Clip) -> Void
 }
 
 // MARK: - List
@@ -318,7 +341,16 @@ private struct ClipListPane: View {
             ClipRow(clip: clip,
                     number: library.number(of: clip),
                     url: library.url(for: clip),
-                    tags: clip.tags.compactMap { library.tag(withID: $0) })
+                    tags: clip.tags.compactMap { library.tag(withID: $0) },
+                    deleteCount: selection.contains(clip.id) ? max(1, library.clips.filter { selection.contains($0.id) }.count) : 1,
+                    onDelete: {
+                        // Deleting one of several selected clips deletes the whole selection.
+                        if selection.contains(clip.id) {
+                            deleting = library.clips.filter { selection.contains($0.id) }
+                        } else {
+                            deleting = [clip]
+                        }
+                    })
         }
     }
 
@@ -329,6 +361,10 @@ private struct ClipListPane: View {
         let clipIDs = Set(clips.map(\.id))
 
         if !clips.isEmpty {
+            if clips.count == 1, let clip = clips.first {
+                Button("Rename…") { actions.rename(clip) }
+                Divider()
+            }
             if clips.count == 1, let clip = clips.first, clip.isIncluded {
                 Button("Preview Reel from This Clip") {
                     model.preview.startAt(clipID: clip.id)
@@ -527,8 +563,11 @@ private struct ClipRow: View {
     let number: Int
     let url: URL
     let tags: [ClipTag]
+    var deleteCount = 1
+    var onDelete: () -> Void = {}
 
     @State private var image: CGImage?
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -593,9 +632,22 @@ private struct ClipRow: View {
                     .background(Capsule().strokeBorder(Color.secondary.opacity(0.5), lineWidth: 1))
                     .help("Not included when you export the reel")
             }
+
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help(deleteCount > 1 ? "Move the \(deleteCount) selected clips to the Trash (⌫)" : "Move this clip to the Trash (⌫)")
+            .opacity(hovering ? 1 : 0)
+            .allowsHitTesting(hovering)
         }
         .opacity(clip.isIncluded ? 1 : 0.5)
         .padding(.vertical, 5)
+        .onHover { hovering = $0 }
         .task(id: "\(url.path)|\(String(describing: clip.unitCrop))") {
             image = await ThumbnailLoader.shared.thumbnail(for: url, crop: clip.unitCrop)
         }
@@ -700,6 +752,13 @@ private struct ClipDetailPane: View {
                         }
                         .help("Drag the yellow handles to choose where the clip starts and ends")
 
+                        Button(role: .destructive) {
+                            deleting = [clip]
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .help("Move this clip to the Trash (⌫)")
+
                         Menu {
                             Menu("Move to Section") {
                                 Button("Top of List (No Section)") { library.moveClips([clip.id], toSection: nil) }
@@ -712,6 +771,7 @@ private struct ClipDetailPane: View {
                             } else {
                                 Button("Crop to the Video") { cropToVideo(clip) }
                             }
+                            Button("Rename…") { titleFocused = true }
                             Button("Show in Finder") { library.revealInFinder(clip) }
                             Divider()
                             Button("Move to Trash…", role: .destructive) { deleting = [clip] }
