@@ -2,7 +2,7 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.7.** Everything from capture to a finished reel works:
+**Status: v0.12.** Everything from capture to a finished reel works:
 - play-to-record capture, including with the video in fullscreen
 - a reorderable clip library with trimming and import
 - a player card designer
@@ -41,6 +41,10 @@ CI builds aren't notarized, which requires a paid Apple Developer account. The i
 - Or open **System Settings › Privacy & Security** and click **Open Anyway**.
 
 **If the Dock icon just keeps bouncing** after you click **Open Anyway**, a copy held back by the first, blocked launch is still stuck and blocks new launches. Run `pkill -9 -x Cocut`, then open Cocut again.
+
+## Projects
+
+Each **project** has its own clips, sections, tags, roster and Player Card, for example one per season, team or athlete ("Fall 2026 Club", "HS Season"). Use the project menu at the top of the sidebar to switch, create, rename, show in Finder, or delete (to the Trash). A new project can start with a copy of the current Player Card. Your existing library becomes the first project automatically. Projects live in `~/Movies/Cocut/Projects`.
 
 ## Recording
 
@@ -125,6 +129,13 @@ A handheld or panning camera confuses it.
 
 **Players** (jersey numbers) can be listed on each clip, from Find Rallies or typed under the player. The filter button's **Player** section shows every clip with that player. **+ › Team Roster…** adds names, so numbers read "#11 Lilah".
 
+**Ratings** put your best plays first. Coaches often watch only the first 30–60 seconds.
+- Rate a clip with the stars under the player, or select clips and press **1–5** (**0** clears). Right-click › **Rating** works on several clips at once.
+- **+ › Order by Rating (Best First)** sorts each section best-first. Unrated clips go last, and ties keep their order.
+- The filter's **Rating** section shows only ★★★★★, 4+ or 3+ clips.
+
+**Undo and redo** (⌘Z, ⇧⌘Z) cover your clip edits: renames, trims, ratings, deletes, reordering, sections, tags and players. Undoing a delete brings the file back from the Trash. In Find Rallies, ⌘Z undoes rally edits (keep/leave out, start/end, players, added rallies).
+
 **Tags** are for your workflow and never appear in the export:
 - Click tag chips under the player, or right-click › **Tags** (works on several clips at once).
 - **+ › Manage Tags…** renames, recolors, or deletes tags.
@@ -166,6 +177,12 @@ The **Export** section (⌘E) shows the reel in order (intro card, included clip
 - 720p, 1080p, or 4K, at 30 or 60 fps
 
 Click **Preview** to watch it first, or **Export Highlight Reel…** to save an MP4 (by default in `~/Movies/Cocut/Exports`). When it's done you can play it in place, share it, or show it in Finder.
+
+### Upload to YouTube
+
+When an export finishes, **Upload to YouTube…** uploads it, unlisted by default, with the title and description filled in from the Player Card (position, class, height, club, school, stats, contact). You can edit both before uploading. When it's done, copy the link to send to coaches.
+
+The first time, Cocut needs your own Google sign-in key. **Settings › YouTube** walks through a 10-minute, free setup in Google Cloud: make a project, turn on YouTube Data API v3, set up the consent screen with your account as a test user, and create a "Desktop app" OAuth client. Then paste the Client ID and secret and click **Sign In with Google**. The sign-in is kept in your Keychain. While the Google project is in Testing mode, Google asks you to sign in again about once a week.
 
 ## Settings
 

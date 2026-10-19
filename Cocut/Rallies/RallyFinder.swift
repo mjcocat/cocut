@@ -47,7 +47,55 @@ final class RallyFinder {
     /// Start each rally at the serve whistle (shows the server getting ready) instead of just
     /// before the serve.
     var includeServeSetup = true {
-        didSet { if includeServeSetup != oldValue { rebuildRallies() } }
+        didSet {
+            guard includeServeSetup != oldValue, !restoring else { return }
+            pushUndo("Serve Setup", RallySnapshot(rallies: rallies, includeServeSetup: oldValue))
+            rebuildRallies()
+        }
+    }
+
+    // MARK: Undo
+
+    private struct RallySnapshot {
+        var rallies: [Rally]
+        var includeServeSetup: Bool
+    }
+
+    private var undoStack: [(name: String, snapshot: RallySnapshot)] = []
+    private var redoStack: [(name: String, snapshot: RallySnapshot)] = []
+    @ObservationIgnored private var restoring = false
+
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+
+    private var rallySnapshot: RallySnapshot { RallySnapshot(rallies: rallies, includeServeSetup: includeServeSetup) }
+
+    private func checkpoint(_ name: String) { pushUndo(name, rallySnapshot) }
+
+    private func pushUndo(_ name: String, _ snapshot: RallySnapshot) {
+        undoStack.append((name, snapshot))
+        if undoStack.count > 200 { undoStack.removeFirst() }
+        redoStack.removeAll()
+    }
+
+    func undo() {
+        guard let step = undoStack.popLast() else { return }
+        redoStack.append((step.name, rallySnapshot))
+        apply(step.snapshot)
+    }
+
+    func redo() {
+        guard let step = redoStack.popLast() else { return }
+        undoStack.append((step.name, rallySnapshot))
+        apply(step.snapshot)
+    }
+
+    private func apply(_ snapshot: RallySnapshot) {
+        restoring = true
+        includeServeSetup = snapshot.includeServeSetup
+        restoring = false
+        rallies = snapshot.rallies
+        if let id = selectedID, !rallies.contains(where: { $0.id == id }) { selectedID = nil }
     }
     /// Playback skips the dead time between rallies (checked or not, so you can watch them all
     /// and check the ones you want).
@@ -110,6 +158,8 @@ final class RallyFinder {
         analysis = nil
         rallies = []
         selectedID = nil
+        undoStack.removeAll()
+        redoStack.removeAll()
         state = .analyzing(0)
         Log.info("Finding rallies in \(url.lastPathComponent)")
 
@@ -190,6 +240,7 @@ final class RallyFinder {
 
     /// Checks or unchecks every rally in the list (only the filtered ones when a player filter is on).
     func setAllIncluded(_ included: Bool) {
+        checkpoint("Keep All/None")
         let ids = Set(visibleRallies.map(\.id))
         for i in rallies.indices where ids.contains(rallies[i].id) {
             rallies[i].isIncluded = included
@@ -197,32 +248,38 @@ final class RallyFinder {
     }
 
     func toggle(_ id: Rally.ID) {
+        checkpoint("Keep")
         guard let i = rallies.firstIndex(where: { $0.id == id }) else { return }
         rallies[i].isIncluded.toggle()
     }
 
     func setStartToPlayhead() {
+        checkpoint("Set Start")
         guard let i = selectedIndex else { return }
         rallies[i].start = min(currentTime, rallies[i].end - 0.5)
     }
 
     func setEndToPlayhead() {
+        checkpoint("Set End")
         guard let i = selectedIndex else { return }
         rallies[i].end = max(currentTime, rallies[i].start + 0.5)
     }
 
     func nudge(start delta: Double) {
+        checkpoint("Adjust Start")
         guard let i = selectedIndex else { return }
         rallies[i].start = max(0, min(rallies[i].start + delta, rallies[i].end - 0.5))
     }
 
     func nudge(end delta: Double) {
+        checkpoint("Adjust End")
         guard let i = selectedIndex else { return }
         rallies[i].end = min(duration, max(rallies[i].end + delta, rallies[i].start + 0.5))
     }
 
     /// Adds a rally around the playhead (for one the finder missed).
     func addRallyAtPlayhead() {
+        checkpoint("Add Rally")
         let start = max(0, currentTime - 2)
         let end = min(duration, currentTime + 8)
         guard end - start > 1 else { return }
@@ -233,6 +290,7 @@ final class RallyFinder {
     }
 
     func addPlayer(_ number: Int, to id: Rally.ID) {
+        checkpoint("Add Player")
         guard let i = rallies.firstIndex(where: { $0.id == id }), !rallies[i].players.contains(number) else { return }
         rallies[i].players.append(number)
         rallies[i].players.sort()
@@ -240,12 +298,14 @@ final class RallyFinder {
     }
 
     func removePlayer(_ number: Int, from id: Rally.ID) {
+        checkpoint("Remove Player")
         guard let i = rallies.firstIndex(where: { $0.id == id }) else { return }
         rallies[i].players.removeAll { $0 == number }
         rallies[i].playersEdited = true
     }
 
     func delete(_ id: Rally.ID) {
+        checkpoint("Remove Rally")
         rallies.removeAll { $0.id == id }
         if selectedID == id { selectedID = nil }
     }
@@ -349,6 +409,8 @@ final class RallyFinder {
         pause()
         state = .working("Adding rallies to Clips…", 0)
         task = Task {
+            library.beginUndoGroup("Add Rallies")
+            defer { library.endUndoGroup() }
             var ids: Set<Clip.ID> = []
             let asset = AVURLAsset(url: sourceURL)
             for (k, rally) in kept.enumerated() {

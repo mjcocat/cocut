@@ -327,6 +327,13 @@ private struct ClipListPane: View {
                     let clips = library.clips.filter { selection.contains($0.id) }
                     if !clips.isEmpty { deleting = clips }
                 }
+                // 1–5 rate the selected clips; 0 clears.
+                .onKeyPress(characters: CharacterSet(charactersIn: "012345")) { press in
+                    let ids = Set(library.clips.filter { selection.contains($0.id) }.map(\.id))
+                    guard !ids.isEmpty, let n = Int(press.characters) else { return .ignored }
+                    library.setRating(n, for: ids)
+                    return .handled
+                }
                 .dropDestination(for: URL.self) { urls, _ in
                     let videos = urls.filter { $0.isFileURL }
                     guard !videos.isEmpty else { return false }
@@ -381,6 +388,13 @@ private struct ClipListPane: View {
                 Button("Rename…") { actions.rename(clip) }
                 Divider()
             }
+            Menu("Rating") {
+                ForEach((1...5).reversed(), id: \.self) { n in
+                    Button(String(repeating: "★", count: n)) { library.setRating(n, for: clipIDs) }
+                }
+                Divider()
+                Button("No Rating") { library.setRating(0, for: clipIDs) }
+            }
             if clips.count == 1, let clip = clips.first, clip.isIncluded {
                 Button("Preview Reel from This Clip") {
                     model.preview.startAt(clipID: clip.id)
@@ -433,6 +447,9 @@ private struct ClipListPane: View {
                 Divider()
                 Button("Manage Tags…") { actions.manageTags() }
                 Button("Team Roster…") { actions.managePlayers() }
+                Divider()
+                Button("Order by Rating (Best First)") { library.orderByRating() }
+                    .disabled(!library.clips.contains { $0.rating != nil })
             } label: {
                 Image(systemName: "plus")
             }
@@ -618,6 +635,11 @@ private struct ClipRow: View {
                     }
                     Text("·")
                     Text(clip.createdAt.formatted(date: .omitted, time: .shortened))
+                    if clip.stars > 0 {
+                        Text(String(repeating: "★", count: clip.stars))
+                            .foregroundStyle(.yellow)
+                            .help("\(clip.stars) star\(clip.stars == 1 ? "" : "s")")
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -750,6 +772,9 @@ private struct ClipDetailPane: View {
                         }
 
                         Spacer(minLength: 12)
+
+                        StarRating(rating: clip.stars, size: 15) { library.setRating($0, for: [clip.id]) }
+                            .help("Rate this play (or press 1–5 in the list). Order by Rating puts the best first.")
 
                         Toggle("In Reel", isOn: Binding(
                             get: { clip.isIncluded },

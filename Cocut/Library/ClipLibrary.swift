@@ -28,6 +28,9 @@ struct Clip: Identifiable, Codable, Hashable {
     var playList: [PlayTag] { plays ?? [] }
     /// Jersey numbers of players in the clip (from Find Rallies, or added by hand).
     var players: [Int]?
+    /// 1–5 stars; nil when not rated.
+    var rating: Int?
+    var stars: Int { rating ?? 0 }
     var playerList: [Int] { players ?? [] }
     /// Everyone in the clip: listed players plus anyone tagged in a play.
     var allPlayers: Set<Int> { Set(playerList + playList.compactMap(\.player)) }
@@ -226,22 +229,120 @@ final class ClipLibrary {
         var roster: [RosterPlayer]?
     }
 
-    init() {
-        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Movies")
-        rootDirectory = movies.appending(path: "Cocut", directoryHint: .isDirectory)
-        clipsDirectory = rootDirectory.appending(path: "Clips", directoryHint: .isDirectory)
-
-        // Carry clips over from the app's previous name.
-        let legacy = movies.appending(path: "Highlight Creator", directoryHint: .isDirectory)
-        let fm = FileManager.default
-        if fm.fileExists(atPath: legacy.path(percentEncoded: false)),
-           !fm.fileExists(atPath: rootDirectory.path(percentEncoded: false)) {
-            try? fm.moveItem(at: legacy, to: rootDirectory)
-            Log.info("Moved clip library from \(legacy.path(percentEncoded: false))")
-        }
+    /// Opens the library of the project in `directory` (clips in its Clips folder).
+    init(directory: URL) {
+        rootDirectory = directory
+        clipsDirectory = directory.appending(path: "Clips", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: clipsDirectory, withIntermediateDirectories: true)
         load()
+    }
+
+    // MARK: Undo
+
+    /// Everything an edit can change (clip files aside).
+    private struct Snapshot {
+        var items: [LibraryItem]
+        var tags: [ClipTag]
+        var roster: [RosterPlayer]
+        var newClipsSectionID: UUID?
+    }
+
+    private struct UndoStep {
+        let name: String
+        let snapshot: Snapshot
+    }
+
+    private var undoStack: [UndoStep] = []
+    private var redoStack: [UndoStep] = []
+    /// Clip files moved to the Trash by a delete (or an undone add), so undo can put them back.
+    @ObservationIgnored private var trashed: [String: URL] = [:]
+    @ObservationIgnored private var groupDepth = 0
+
+    var undoName: String? { undoStack.last?.name }
+    var redoName: String? { redoStack.last?.name }
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+
+    private var snapshot: Snapshot {
+        Snapshot(items: items, tags: tags, roster: roster, newClipsSectionID: newClipsSectionID)
+    }
+
+    /// Remembers the state before an edit. Inside a group, only the group's start is remembered.
+    private func checkpoint(_ name: String) {
+        guard groupDepth == 0 else { return }
+        undoStack.append(UndoStep(name: name, snapshot: snapshot))
+        if undoStack.count > 100 { undoStack.removeFirst() }
+        redoStack.removeAll()
+    }
+
+    /// Makes several edits (an import, adding a match's rallies) undo as one step.
+    func beginUndoGroup(_ name: String) {
+        if groupDepth == 0 { checkpoint(name) }
+        groupDepth += 1
+    }
+
+    func endUndoGroup() {
+        groupDepth = max(0, groupDepth - 1)
+    }
+
+    func undo() {
+        guard let step = undoStack.popLast() else { return }
+        redoStack.append(UndoStep(name: step.name, snapshot: snapshot))
+        restore(step.snapshot)
+        Log.info("Undo \(step.name)")
+    }
+
+    func redo() {
+        guard let step = redoStack.popLast() else { return }
+        undoStack.append(UndoStep(name: step.name, snapshot: snapshot))
+        restore(step.snapshot)
+        Log.info("Redo \(step.name)")
+    }
+
+    private func restore(_ target: Snapshot) {
+        let current = Dictionary(uniqueKeysWithValues: clips.map { ($0.id, $0) })
+        let targetIDs = Set(target.items.compactMap(\.clip?.id))
+        // Clips that disappear (undoing an add, redoing a delete): their files go to the Trash.
+        for clip in clips where !targetIDs.contains(clip.id) { trashFile(of: clip) }
+        let fm = FileManager.default
+        items = target.items.map { item in
+            guard case .clip(var clip) = item else { return item }
+            // Bring back files of clips that return (undoing a delete).
+            let dest = url(for: clip)
+            if !fm.fileExists(atPath: dest.path(percentEncoded: false)), let from = trashed[clip.fileName] {
+                do {
+                    try fm.moveItem(at: from, to: dest)
+                    trashed[clip.fileName] = nil
+                } catch {
+                    Log.error("Couldn't restore \(clip.fileName) from the Trash: \(error.localizedDescription)")
+                }
+            }
+            // Keep crops found in the background since that edit.
+            if clip.cropChecked == nil, let now = current[clip.id], now.cropChecked != nil {
+                clip.crop = now.crop
+                clip.cropChecked = now.cropChecked
+            }
+            return .clip(clip)
+        }
+        tags = target.tags
+        roster = target.roster
+        newClipsSectionID = target.newClipsSectionID
+        // Drop clips whose files are gone for good (the Trash was emptied).
+        items.removeAll { item in
+            guard let clip = item.clip else { return false }
+            return !fm.fileExists(atPath: url(for: clip).path(percentEncoded: false))
+        }
+        save()
+    }
+
+    private func trashFile(of clip: Clip) {
+        var result: NSURL?
+        do {
+            try FileManager.default.trashItem(at: url(for: clip), resultingItemURL: &result)
+            if let result { trashed[clip.fileName] = result as URL }
+        } catch {
+            Log.error("Couldn't move \(clip.fileName) to the Trash: \(error.localizedDescription)")
+        }
     }
 
     // MARK: Reading
@@ -338,6 +439,7 @@ final class ClipLibrary {
             pixelWidth: Int(size.width),
             pixelHeight: Int(size.height)
         )
+        checkpoint("Add Clip")
         items.insert(.clip(clip), at: insertionIndex())
         recentlyAddedID = clip.id
         save()
@@ -360,11 +462,13 @@ final class ClipLibrary {
     }
 
     func setIncluded(_ ids: Set<Clip.ID>, _ included: Bool) {
+        checkpoint("Include in Reel")
         for id in ids { updateClip(id) { $0.isExcluded = included ? nil : true } }
         save()
     }
 
     func setTrim(_ clip: Clip, start: Double?, end: Double?) {
+        checkpoint("Trim")
         updateClip(clip.id) { c in
             c.trimStart = (start ?? 0) > 0.01 ? start : nil
             if let end, end < c.duration - 0.01 { c.trimEnd = end } else { c.trimEnd = nil }
@@ -376,6 +480,7 @@ final class ClipLibrary {
     func autoCrop(_ clipID: Clip.ID, force: Bool = false) async -> Bool {
         guard let clip = clip(withID: clipID), force || clip.cropChecked != true else { return false }
         let rect = await VideoCropDetector.detect(url: url(for: clip))
+        if force { checkpoint("Crop to the Video") }
         updateClip(clipID) { c in
             c.cropChecked = true
             if let rect { c.crop = CropRect(rect) }
@@ -388,6 +493,7 @@ final class ClipLibrary {
     }
 
     func removeCrop(_ clipID: Clip.ID) {
+        checkpoint("Show Full Recording")
         updateClip(clipID) { c in
             c.crop = nil
             c.cropChecked = true
@@ -396,6 +502,7 @@ final class ClipLibrary {
     }
 
     func rename(_ clip: Clip, to title: String) {
+        checkpoint("Rename")
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         updateClip(clip.id) { $0.title = trimmed }
@@ -408,22 +515,24 @@ final class ClipLibrary {
     }
 
     func delete(_ batch: [Clip]) {
+        checkpoint(batch.count == 1 ? "Delete Clip" : "Delete Clips")
         let ids = Set(batch.map(\.id))
-        for clip in batch {
-            try? FileManager.default.trashItem(at: url(for: clip), resultingItemURL: nil)
-        }
+        for clip in batch { trashFile(of: clip) }
         items.removeAll { ids.contains($0.id) }
         save()
     }
 
     /// Reorders rows (clips and section headings) as shown in the list.
     func move(fromOffsets source: IndexSet, toOffset destination: Int) {
+        checkpoint("Move")
         items.move(fromOffsets: source, toOffset: destination)
         save()
     }
 
     /// Copies video files into the library. Returns how many were imported.
     func importFiles(_ urls: [URL]) async -> Int {
+        beginUndoGroup(urls.count == 1 ? "Import" : "Import \(urls.count) Videos")
+        defer { endUndoGroup() }
         var imported = 0
         for source in urls {
             let asset = AVURLAsset(url: source)
@@ -466,6 +575,7 @@ final class ClipLibrary {
     /// those clips are gathered under it; otherwise it's added at the end of the list.
     @discardableResult
     func addSection(title: String, gathering clipIDs: Set<Clip.ID> = []) -> ReelSection {
+        checkpoint("New Section")
         let section = ReelSection(title: uniqueSectionTitle(title))
         if clipIDs.isEmpty {
             items.append(.section(section))
@@ -482,6 +592,7 @@ final class ClipLibrary {
 
     /// Moves clips to the end of a section, or to the top of the list (before any section) when nil.
     func moveClips(_ clipIDs: Set<Clip.ID>, toSection sectionID: UUID?) {
+        checkpoint("Move to Section")
         let moving = items.filter { clipIDs.contains($0.id) && $0.clip != nil }
         guard !moving.isEmpty else { return }
         var rest = items.filter { !clipIDs.contains($0.id) || $0.clip == nil }
@@ -498,17 +609,20 @@ final class ClipLibrary {
     }
 
     func renameSection(_ id: UUID, to title: String) {
+        checkpoint("Rename Section")
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         updateSection(id) { $0.title = trimmed }
     }
 
     func setSectionCard(_ id: UUID, _ show: Bool) {
+        checkpoint("Divider Card")
         updateSection(id) { $0.showCard = show }
     }
 
     /// Removes the heading only; its clips stay where they are (joining the section above).
     func deleteSection(_ id: UUID) {
+        checkpoint("Delete Section")
         items.removeAll { $0.id == id }
         if newClipsSectionID == id { newClipsSectionID = nil }
         save()
@@ -533,6 +647,7 @@ final class ClipLibrary {
 
     @discardableResult
     func addTag(name: String, color: TagColor? = nil) -> ClipTag? {
+        checkpoint("New Tag")
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if let existing = tags.first(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
@@ -546,6 +661,7 @@ final class ClipLibrary {
     }
 
     func renameTag(_ id: UUID, to name: String) {
+        checkpoint("Rename Tag")
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let index = tags.firstIndex(where: { $0.id == id }) else { return }
         tags[index].name = trimmed
@@ -553,12 +669,14 @@ final class ClipLibrary {
     }
 
     func setTagColor(_ id: UUID, _ color: TagColor) {
+        checkpoint("Tag Color")
         guard let index = tags.firstIndex(where: { $0.id == id }) else { return }
         tags[index].color = color
         save()
     }
 
     func deleteTag(_ id: UUID) {
+        checkpoint("Delete Tag")
         tags.removeAll { $0.id == id }
         for clip in clips where clip.tags.contains(id) {
             updateClip(clip.id) { c in
@@ -574,6 +692,7 @@ final class ClipLibrary {
 
     /// Adds a play to clips (once each).
     func addPlay(_ play: PlayTag, to clipIDs: Set<Clip.ID>) {
+        checkpoint("Add Play")
         for id in clipIDs {
             updateClip(id) { c in
                 var list = c.playList
@@ -589,6 +708,7 @@ final class ClipLibrary {
     }
 
     func removePlay(_ play: PlayTag, from clipIDs: Set<Clip.ID>) {
+        checkpoint("Remove Play")
         for id in clipIDs {
             updateClip(id) { c in
                 let list = c.playList.filter { $0 != play }
@@ -598,13 +718,48 @@ final class ClipLibrary {
         save()
     }
 
+    // MARK: Ratings
+
+    func setRating(_ stars: Int, for clipIDs: Set<Clip.ID>) {
+        checkpoint("Rating")
+        let value = max(0, min(5, stars))
+        for id in clipIDs { updateClip(id) { $0.rating = value == 0 ? nil : value } }
+        save()
+    }
+
+    /// Puts the best-rated clips first within each section (unrated clips go last, ties keep
+    /// their order), so the reel opens with the strongest plays.
+    func orderByRating() {
+        checkpoint("Order by Rating")
+        var out: [LibraryItem] = []
+        var run: [Clip] = []
+        func flush() {
+            let sorted = run.enumerated().sorted { a, b in
+                a.element.stars != b.element.stars ? a.element.stars > b.element.stars : a.offset < b.offset
+            }
+            out.append(contentsOf: sorted.map { .clip($0.element) })
+            run = []
+        }
+        for item in items {
+            switch item {
+            case .clip(let c): run.append(c)
+            case .section: flush(); out.append(item)
+            }
+        }
+        flush()
+        items = out
+        save()
+    }
+
     func setPlayers(_ numbers: [Int], for clipID: Clip.ID) {
+        checkpoint("Players")
         let list = Array(Set(numbers)).sorted()
         updateClip(clipID) { $0.players = list.isEmpty ? nil : list }
         save()
     }
 
     func addPlayer(number: Int, name: String) {
+        checkpoint("Roster")
         guard number >= 0, number < 1000 else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if let i = roster.firstIndex(where: { $0.number == number }) {
@@ -617,6 +772,7 @@ final class ClipLibrary {
     }
 
     func renamePlayer(_ number: Int, to name: String) {
+        checkpoint("Roster")
         guard let i = roster.firstIndex(where: { $0.number == number }) else { return }
         roster[i].name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         save()
@@ -624,6 +780,7 @@ final class ClipLibrary {
 
     /// Removes a player from the roster (their plays stay on the clips).
     func removePlayer(_ number: Int) {
+        checkpoint("Roster")
         roster.removeAll { $0.number == number }
         save()
     }
@@ -644,6 +801,7 @@ final class ClipLibrary {
     }
 
     func toggleTag(_ tagID: UUID, on clipIDs: Set<Clip.ID>) {
+        checkpoint("Tag")
         let targets = clips.filter { clipIDs.contains($0.id) }
         guard !targets.isEmpty else { return }
         let allHave = targets.allSatisfy { $0.tags.contains(tagID) }

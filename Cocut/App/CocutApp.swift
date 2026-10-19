@@ -62,7 +62,30 @@ struct AppCommands: Commands {
     let model: AppModel
     @Environment(\.openWindow) private var openWindow
 
+    @MainActor
+    private static func route(text selector: String, rallies: () -> Void, library: () -> Void) {
+        let window = NSApp.keyWindow
+        // A text field with its own edits to undo gets ⌘Z first.
+        if let text = window?.firstResponder as? NSTextView, let manager = text.undoManager,
+           selector == "undo:" ? manager.canUndo : manager.canRedo {
+            NSApp.sendAction(Selector(selector), to: nil, from: nil)
+        } else if window?.title == "Find Rallies" {
+            rallies()
+        } else {
+            library()
+        }
+    }
+
     var body: some Commands {
+        // Undo/Redo go to whatever you're working in: a text field being edited, the Find Rallies
+        // window, or the clip library.
+        CommandGroup(replacing: .undoRedo) {
+            Button("Undo") { Self.route(text: "undo:", rallies: { model.rallies.undo() }, library: { model.library.undo() }) }
+                .keyboardShortcut("z", modifiers: [.command])
+            Button("Redo") { Self.route(text: "redo:", rallies: { model.rallies.redo() }, library: { model.library.redo() }) }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+        }
+
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") {
                 model.updater.checkNow()
