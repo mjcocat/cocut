@@ -24,6 +24,7 @@ final class AppModel {
     let profile = ProfileStore()
     let exporter = ReelExporter()
     let preview = ReelPreview()
+    let rallies = RallyFinder()
     let settings = AppSettings()
 
     /// Lets menu commands switch the main window's sidebar section.
