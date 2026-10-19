@@ -22,6 +22,10 @@ struct Clip: Identifiable, Codable, Hashable {
     var crop: CropRect?
     /// Auto-crop has run for this clip (so it isn't repeated), or the user turned cropping off.
     var cropChecked: Bool?
+    /// What happens in the clip and who did it ("Kill by #11"). Workflow only; not in the reel.
+    var plays: [PlayTag]?
+
+    var playList: [PlayTag] { plays ?? [] }
 
     var cropRect: CGRect? { crop?.cgRect }
     /// Crop as fractions of the frame, for thumbnails at any size.
@@ -64,6 +68,64 @@ struct CropRect: Codable, Hashable {
     }
 
     var cgRect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
+}
+
+/// A volleyball action, for tagging who did what in a clip.
+enum PlayAction: String, Codable, CaseIterable, Identifiable {
+    case kill, block, ace, dig, set, pass, serve, error
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var plural: String { self == .pass ? "Passes" : "\(title)s" }
+    /// Typed shortcut: the first letter, except Serve (V) so S can be Set.
+    var key: Character {
+        switch self {
+        case .serve: return "v"
+        default: return rawValue.first!
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .kill: return "bolt.fill"
+        case .block: return "hand.raised.fill"
+        case .ace: return "star.fill"
+        case .dig: return "arrow.down.to.line"
+        case .set: return "arrow.up.forward"
+        case .pass: return "arrow.turn.up.right"
+        case .serve: return "figure.volleyball"
+        case .error: return "xmark.octagon"
+        }
+    }
+}
+
+/// One play in a clip: an action, optionally by a jersey number.
+struct PlayTag: Codable, Hashable, Identifiable {
+    var action: PlayAction
+    var player: Int?
+
+    var id: String { "\(action.rawValue)-\(player.map(String.init) ?? "")" }
+    var label: String { player.map { "\(action.title) · #\($0)" } ?? action.title }
+
+    /// Parses quick entry like "k11", "Kill 11", "d 5", "#7 block", or "b".
+    static func parse(_ text: String) -> PlayTag? {
+        let lower = text.lowercased()
+        let letters = lower.filter(\.isLetter)
+        let digits = lower.filter(\.isNumber)
+        guard !letters.isEmpty else { return nil }
+        let action = PlayAction.allCases.first { $0.rawValue == letters }
+            ?? PlayAction.allCases.first { letters.count > 1 && $0.rawValue.hasPrefix(letters) }
+            ?? PlayAction.allCases.first { $0.key == letters.first }
+        guard let action else { return nil }
+        return PlayTag(action: action, player: digits.isEmpty ? nil : Int(digits.prefix(3)))
+    }
+}
+
+/// A player on the team's roster.
+struct RosterPlayer: Codable, Hashable, Identifiable {
+    var number: Int
+    var name: String
+    var id: Int { number }
+    var label: String { name.isEmpty ? "#\(number)" : "#\(number) \(name)" }
 }
 
 /// A heading in the clip list ("Kills", "Blocks"). Clips below it, up to the next heading,
@@ -140,6 +202,7 @@ enum ReelEntry {
 final class ClipLibrary {
     private(set) var items: [LibraryItem] = []
     private(set) var tags: [ClipTag] = []
+    private(set) var roster: [RosterPlayer] = []
     /// Where new recordings and imports are added: the end of this section, or the end of the list.
     var newClipsSectionID: UUID? {
         didSet { if newClipsSectionID != oldValue { save() } }
@@ -155,6 +218,7 @@ final class ClipLibrary {
         var items: [LibraryItem]
         var tags: [ClipTag]
         var newClipsSectionID: UUID?
+        var roster: [RosterPlayer]?
     }
 
     init() {
@@ -501,6 +565,73 @@ final class ClipLibrary {
     }
 
     /// Adds the tag to all the clips, or removes it if they all already have it.
+    // MARK: Plays and roster
+
+    /// Adds a play to clips (once each).
+    func addPlay(_ play: PlayTag, to clipIDs: Set<Clip.ID>) {
+        for id in clipIDs {
+            updateClip(id) { c in
+                var list = c.playList
+                if !list.contains(play) { list.append(play) }
+                c.plays = list
+            }
+        }
+        if let number = play.player, !roster.contains(where: { $0.number == number }) {
+            roster.append(RosterPlayer(number: number, name: ""))
+            roster.sort { $0.number < $1.number }
+        }
+        save()
+    }
+
+    func removePlay(_ play: PlayTag, from clipIDs: Set<Clip.ID>) {
+        for id in clipIDs {
+            updateClip(id) { c in
+                let list = c.playList.filter { $0 != play }
+                c.plays = list.isEmpty ? nil : list
+            }
+        }
+        save()
+    }
+
+    func addPlayer(number: Int, name: String) {
+        guard number >= 0, number < 1000 else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let i = roster.firstIndex(where: { $0.number == number }) {
+            if !trimmed.isEmpty { roster[i].name = trimmed }
+        } else {
+            roster.append(RosterPlayer(number: number, name: trimmed))
+            roster.sort { $0.number < $1.number }
+        }
+        save()
+    }
+
+    func renamePlayer(_ number: Int, to name: String) {
+        guard let i = roster.firstIndex(where: { $0.number == number }) else { return }
+        roster[i].name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        save()
+    }
+
+    /// Removes a player from the roster (their plays stay on the clips).
+    func removePlayer(_ number: Int) {
+        roster.removeAll { $0.number == number }
+        save()
+    }
+
+    func player(_ number: Int) -> RosterPlayer? {
+        roster.first { $0.number == number }
+    }
+
+    /// "#11 Lilah" when the roster has a name, else "#11".
+    func playerLabel(_ number: Int) -> String {
+        player(number)?.label ?? "#\(number)"
+    }
+
+    /// Actions that appear on at least one clip.
+    var usedActions: [PlayAction] {
+        let used = Set(clips.flatMap { $0.playList.map(\.action) })
+        return PlayAction.allCases.filter(used.contains)
+    }
+
     func toggleTag(_ tagID: UUID, on clipIDs: Set<Clip.ID>) {
         let targets = clips.filter { clipIDs.contains($0.id) }
         guard !targets.isEmpty else { return }
@@ -536,6 +667,7 @@ final class ClipLibrary {
         if let file = try? Self.decoder.decode(LibraryFile.self, from: data) {
             loadedItems = file.items
             tags = file.tags
+            roster = file.roster ?? []
             target = file.newClipsSectionID
         } else if let clips = try? Self.decoder.decode([Clip].self, from: data) {
             // Version 1: a plain list of clips.
@@ -565,7 +697,8 @@ final class ClipLibrary {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        let file = LibraryFile(items: items, tags: tags, newClipsSectionID: newClipsSectionID)
+        let file = LibraryFile(items: items, tags: tags, newClipsSectionID: newClipsSectionID,
+                               roster: roster.isEmpty ? nil : roster)
         guard let data = try? encoder.encode(file) else { return }
         try? data.write(to: indexURL, options: .atomic)
     }

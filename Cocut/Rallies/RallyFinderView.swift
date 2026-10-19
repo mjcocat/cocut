@@ -426,6 +426,12 @@ private struct RallyList: View {
     @Environment(AppModel.self) private var model
     private var finder: RallyFinder { model.rallies }
 
+    /// The rally under the playhead.
+    private var currentID: Rally.ID? {
+        let t = finder.currentTime
+        return finder.rallies.first { t >= $0.start && t < $0.end }?.id
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("RALLIES")
@@ -440,10 +446,16 @@ private struct RallyList: View {
                     if let rally = finder.rallies.first(where: { $0.id == id }) { finder.seek(to: rally.start) }
                 })) {
                     ForEach(finder.rallies) { rally in
+                        let current = rally.id == currentID
                         RallyRow(rally: rally, number: finder.number(of: rally),
-                                 isPlaying: finder.isPlaying && finder.currentTime >= rally.start && finder.currentTime < rally.end)
+                                 isCurrent: current, isPlaying: current && finder.isPlaying)
                             .tag(rally.id)
                             .id(rally.id)
+                            .listRowBackground(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Color.accentColor.opacity(current ? 0.22 : 0))
+                                    .padding(.horizontal, 6)
+                            )
                     }
                 }
                 .listStyle(.sidebar)
@@ -465,6 +477,11 @@ private struct RallyList: View {
                     guard let id else { return }
                     withAnimation { proxy.scrollTo(id, anchor: .center) }
                 }
+                // Follow playback from rally to rally.
+                .onChange(of: currentID) { _, id in
+                    guard let id, finder.isPlaying else { return }
+                    withAnimation { proxy.scrollTo(id, anchor: .center) }
+                }
             }
             Text("Uncheck a rally to leave it out. Double-click to play it.")
                 .font(.caption)
@@ -478,16 +495,23 @@ private struct RallyRow: View {
     @Environment(AppModel.self) private var model
     let rally: Rally
     let number: Int
+    let isCurrent: Bool
     let isPlaying: Bool
 
     var body: some View {
         HStack(spacing: 8) {
+            Capsule()
+                .fill(Color.accentColor)
+                .frame(width: 3, height: 26)
+                .opacity(isCurrent ? 1 : 0)
             Toggle("", isOn: Binding(get: { rally.isIncluded }, set: { _ in model.rallies.toggle(rally.id) }))
                 .toggleStyle(.checkbox)
                 .labelsHidden()
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
-                    Text("Rally \(number)").fontWeight(.medium)
+                    Text("Rally \(number)")
+                        .fontWeight(isCurrent ? .bold : .medium)
+                        .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
                     if rally.isManual {
                         Text("added").font(.caption2).foregroundStyle(.secondary)
                     }
@@ -498,10 +522,11 @@ private struct RallyRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            if isPlaying {
-                Image(systemName: "speaker.wave.2.fill")
+            if isCurrent {
+                Image(systemName: isPlaying ? "speaker.wave.2.fill" : "pause.fill")
                     .font(.caption)
                     .foregroundStyle(Color.accentColor)
+                    .symbolEffect(.variableColor.iterative, isActive: isPlaying)
             }
         }
         .opacity(rally.isIncluded ? 1 : 0.5)

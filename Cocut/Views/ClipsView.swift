@@ -8,7 +8,8 @@ struct ClipsView: View {
     /// Selected rows: clips and/or section headings.
     @State private var selection: Set<UUID> = []
     @State private var deleting: [Clip] = []
-    @State private var filterTagID: UUID?
+    @State private var filter = ClipFilter()
+    @State private var showingRoster = false
     @State private var sectionPrompt: SectionPrompt?
     @State private var sectionName = ""
     @State private var tagPrompt: TagPrompt?
@@ -31,7 +32,7 @@ struct ClipsView: View {
                 emptyState
             } else {
                 HSplitView {
-                    ClipListPane(selection: $selection, deleting: $deleting, filterTagID: $filterTagID,
+                    ClipListPane(selection: $selection, deleting: $deleting, filter: $filter,
                                  actions: actions)
                         .frame(minWidth: 320, idealWidth: 400, maxWidth: 580)
                     detail
@@ -95,6 +96,9 @@ struct ClipsView: View {
         .sheet(isPresented: $showingTagManager) {
             TagManagerView()
         }
+        .sheet(isPresented: $showingRoster) {
+            RosterView()
+        }
     }
 
     // MARK: Detail routing
@@ -124,6 +128,7 @@ struct ClipsView: View {
                 tagPrompt = TagPrompt(clipIDs: ids)
             },
             manageTags: { showingTagManager = true },
+            managePlayers: { showingRoster = true },
             select: { selection = $0 },
             rename: { clip in
                 renameText = clip.title
@@ -256,6 +261,7 @@ struct ClipActions {
     var newSection: (Set<UUID>) -> Void
     var newTag: (Set<UUID>) -> Void
     var manageTags: () -> Void
+    var managePlayers: () -> Void
     var select: (Set<UUID>) -> Void
     var rename: (Clip) -> Void
 }
@@ -267,38 +273,40 @@ private struct ClipListPane: View {
     @Environment(\.openWindow) private var openWindow
     @Binding var selection: Set<UUID>
     @Binding var deleting: [Clip]
-    @Binding var filterTagID: UUID?
+    @Binding var filter: ClipFilter
     let actions: ClipActions
 
     private var library: ClipLibrary { model.library }
 
     /// Reordering is only possible on the full list, not a filtered one.
     private var moveAction: ((IndexSet, Int) -> Void)? {
-        guard filterTagID == nil else { return nil }
+        guard !filter.isActive else { return nil }
         let library = self.library
         return { source, destination in library.move(fromOffsets: source, toOffset: destination) }
     }
 
     private var displayItems: [LibraryItem] {
-        guard let tagID = filterTagID else { return library.items }
-        return library.items.filter { $0.clip?.tags.contains(tagID) == true }
+        guard filter.isActive else { return library.items }
+        return library.items.filter { item in item.clip.map { filter.matches($0) } ?? false }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            if let tagID = filterTagID, let tag = library.tag(withID: tagID) {
+            if filter.isActive {
+                let tint = filter.tagID.flatMap { library.tag(withID: $0)?.color.color } ?? Color.accentColor
                 HStack(spacing: 8) {
                     Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                        .foregroundStyle(tag.color.color)
-                    Text("Showing clips tagged “\(tag.name)”")
+                        .foregroundStyle(tint)
+                    Text("Showing \(filter.description(in: library)) · \(displayItems.count) \(displayItems.count == 1 ? "clip" : "clips")")
                         .font(.callout)
+                        .lineLimit(1)
                     Spacer()
-                    Button("Show All") { filterTagID = nil }
+                    Button("Show All") { filter = ClipFilter() }
                         .buttonStyle(.borderless)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
-                .background(tag.color.color.opacity(0.1))
+                .background(tint.opacity(0.1))
                 Divider()
             }
 
@@ -343,10 +351,10 @@ private struct ClipListPane: View {
             SectionRow(section: section,
                        clipCount: library.clips(in: section.id).count,
                        isNewClipsTarget: library.newClipsSectionID == section.id,
-                       canReorder: filterTagID == nil)
+                       canReorder: !filter.isActive)
         case .clip(let clip):
             ClipRow(clip: clip,
-                    canReorder: filterTagID == nil,
+                    canReorder: !filter.isActive,
                     number: library.number(of: clip),
                     url: library.url(for: clip),
                     tags: clip.tags.compactMap { library.tag(withID: $0) },
@@ -424,6 +432,7 @@ private struct ClipListPane: View {
                 Button("New Tag…") { actions.newTag([]) }
                 Divider()
                 Button("Manage Tags…") { actions.manageTags() }
+                Button("Team Roster…") { actions.managePlayers() }
             } label: {
                 Image(systemName: "plus")
             }
@@ -432,34 +441,7 @@ private struct ClipListPane: View {
             .fixedSize()
             .help("Add a section or a tag")
 
-            Menu {
-                Button {
-                    filterTagID = nil
-                } label: {
-                    if filterTagID == nil { Label("All Clips", systemImage: "checkmark") } else { Text("All Clips") }
-                }
-                if !library.tags.isEmpty { Divider() }
-                ForEach(library.tags) { tag in
-                    Button {
-                        filterTagID = tag.id
-                    } label: {
-                        if filterTagID == tag.id {
-                            Label(tag.name, systemImage: "checkmark")
-                        } else {
-                            Text(tag.name)
-                        }
-                    }
-                }
-            } label: {
-                Image(systemName: filterTagID == nil
-                      ? "line.3.horizontal.decrease.circle"
-                      : "line.3.horizontal.decrease.circle.fill")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Show only clips with a tag")
-            .disabled(library.tags.isEmpty)
+            FilterMenu(filter: $filter)
 
             if let target = library.section(withID: library.newClipsSectionID) {
                 HStack(spacing: 4) {
@@ -475,7 +457,7 @@ private struct ClipListPane: View {
                     .help("Add new clips at the end of the list instead")
                 }
             } else {
-                Text(filterTagID == nil ? "Drag to reorder · drop videos to import" : "Reordering is off while filtering")
+                Text(!filter.isActive ? "Drag to reorder · drop videos to import" : "Reordering is off while filtering")
                     .lineLimit(1)
             }
 
@@ -639,13 +621,17 @@ private struct ClipRow: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                if !tags.isEmpty {
+                if !tags.isEmpty || !clip.playList.isEmpty {
                     HStack(spacing: 4) {
-                        ForEach(tags.prefix(3)) { tag in
+                        ForEach(clip.playList.prefix(2)) { play in
+                            PlayChip(play: play, compact: true)
+                        }
+                        ForEach(tags.prefix(clip.playList.isEmpty ? 3 : 2)) { tag in
                             TagChip(tag: tag, compact: true)
                         }
-                        if tags.count > 3 {
-                            Text("+\(tags.count - 3)")
+                        let hidden = max(0, clip.playList.count - 2) + max(0, tags.count - (clip.playList.isEmpty ? 3 : 2))
+                        if hidden > 0 {
+                            Text("+\(hidden)")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -816,6 +802,7 @@ private struct ClipDetailPane: View {
                     }
 
                     tagBar(clip)
+                    PlayBar(clip: clip)
 
                     if let cropMessage {
                         Label(cropMessage, systemImage: "viewfinder")
@@ -1012,6 +999,7 @@ private struct MultiSelectionPane: View {
     @Binding var deleting: [Clip]
     let actions: ClipActions
     let clearSelection: () -> Void
+    @State private var addingPlay = false
 
     var body: some View {
         let library = model.library
@@ -1037,6 +1025,10 @@ private struct MultiSelectionPane: View {
             }
             HStack {
                 Button("New Tag…") { actions.newTag(ids) }
+                Button("Add a Play…") { addingPlay = true }
+                    .popover(isPresented: $addingPlay, arrowEdge: .bottom) {
+                        PlayEntry(clipIDs: ids)
+                    }
                 Button("New Section from Selection…") { actions.newSection(ids) }
             }
             Button(role: .destructive) {
