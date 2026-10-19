@@ -171,6 +171,16 @@ struct ExportView: View {
         return VStack(alignment: .leading, spacing: 18) {
             group("Cards") {
                 Toggle("Start with the intro card", isOn: $exporter.options.includeIntro)
+                Toggle(isOn: $exporter.options.introProgressBar) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Progress bar on the intro card")
+                        Text("A bar in the theme color fills along the bottom, so viewers can tell the video is playing.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(!exporter.options.includeIntro)
+                .padding(.leading, 20)
                 Toggle("End with the contact card", isOn: $store.profile.showEndCard)
                 Stepper(value: $exporter.options.cardSeconds, in: 3...10, step: 1) {
                     Text("Show each card for \(Int(exporter.options.cardSeconds)) seconds")
