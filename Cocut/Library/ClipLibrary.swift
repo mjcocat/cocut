@@ -30,6 +30,8 @@ struct Clip: Identifiable, Codable, Hashable {
     var players: [Int]?
     /// 1–5 stars; nil when not rated.
     var rating: Int?
+    /// A ring around the athlete on the clip's first frame (frozen for a moment in the reel).
+    var spotlight: Spotlight?
     var stars: Int { rating ?? 0 }
     var playerList: [Int] { players ?? [] }
     /// Everyone in the clip: listed players plus anyone tagged in a play.
@@ -60,6 +62,16 @@ struct Clip: Identifiable, Codable, Hashable {
         let total = Int(seconds.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
     }
+}
+
+/// Where to circle the athlete: center and radius as fractions of the picture shown (after any
+/// crop), top-left origin; radius is a fraction of the picture's height.
+struct Spotlight: Codable, Hashable {
+    var x: Double
+    var y: Double
+    var radius: Double
+
+    static let standard = Spotlight(x: 0.5, y: 0.5, radius: 0.09)
 }
 
 struct CropRect: Codable, Hashable {
@@ -715,6 +727,14 @@ final class ClipLibrary {
                 c.plays = list.isEmpty ? nil : list
             }
         }
+        save()
+    }
+
+    // MARK: Spotlight
+
+    func setSpotlight(_ spotlight: Spotlight?, for clipID: Clip.ID) {
+        checkpoint(spotlight == nil ? "Remove Spotlight" : "Spotlight")
+        updateClip(clipID) { $0.spotlight = spotlight }
         save()
     }
 
