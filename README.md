@@ -11,9 +11,23 @@ A native macOS app for building athlete highlight reels: record plays from YouTu
 
 ## Install
 
+Cocut is signed with its own certificate rather than through the App Store, so a new Mac needs a few one-time OKs. Cocut's **Setup Guide** walks through them on first launch.
+
+**Easiest:** open **Terminal**, paste this, and press Return:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mjcocat/cocut/main/scripts/install.sh | bash
 ```
+
+**By hand:**
+1. Download **Cocut.zip** from the [latest release](https://github.com/mjcocat/cocut/releases/latest), unzip it, and drag Cocut into Applications.
+2. Open Cocut, click **Done** on the warning, then click **Open Anyway** in **System Settings › Privacy & Security**.
+3. Follow the **Setup Guide**:
+   - **Screen Recording** — required. Turn it on, then reopen Cocut.
+   - **App Management** — needed for automatic updates.
+   - **Player Card** — optional.
+
+You can open the Setup Guide again any time from **Help › Setup Guide**. Each release page also repeats these steps.
 
 This installs the latest release into `/Applications`. After that, Cocut updates itself. It checks when it opens and every few hours, and offers new versions as they appear. It never interrupts a recording: an offer found mid-recording waits until you're done. **Later** snoozes an offer for a day, and **Skip This Version** ignores it. You can also choose **Cocut › Check for Updates…** at any time, or turn automatic checks off in **Settings › Updates**.
 

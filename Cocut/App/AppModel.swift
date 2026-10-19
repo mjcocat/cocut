@@ -27,6 +27,8 @@ final class AppModel {
 
     /// Lets menu commands switch the main window's sidebar section.
     var requestedSection: SidebarItem?
+    /// Shows the Setup Guide sheet (first launch, Help menu).
+    var showingSetupGuide = false
 
     private(set) var phase: RecordingPhase = .idle {
         // An update found mid-recording is offered once Cocut is idle again.
