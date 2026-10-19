@@ -2,7 +2,7 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.12.** Everything from capture to a finished reel works:
+**Status: v0.15.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
 - play-to-record capture, including with the video in fullscreen
 - a reorderable clip library with trimming and import
 - a player card designer
@@ -107,9 +107,10 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 
 **Find Rallies** (⇧⌘M, or the 🏐 toolbar button) takes a whole match video and finds the rallies, so an hour of film becomes about 15–25 minutes of play.
 
-1. Choose the match video (or drop it on the window). Cocut analyzes it on your Mac, which takes a few minutes for an hour of video.
-2. Review: the strip under the video shows the whole match, with each rally as a blue block. **Rallies only** plays the rallies back to back, skipping dead time. Checked rallies are the ones you keep. Use **Keep: All** to start with everything and uncheck the duds, or **Keep: None** to watch them all and check only the plays you want. Select a rally to nudge its start or end, or set either to the playhead. **Add Rally Here** adds one it missed.
-3. Choose **Add to Clips** to make every kept rally a clip, in a new section named after the match, ready to tag and use in a reel. Or choose **Export Condensed Match…** to save the rallies back to back as one video.
+1. Choose the match video (or drop it on the window).
+2. **Mark your court:** on a frame of the match, drag the yellow box over the air above your court, from the top of the net up and between the antennas. Cocut only looks for the ball there, so neighboring courts, the crowd and players walking between points are ignored. It remembers the box for next time; **Skip (Automatic)** uses the whole top of the picture. **Court Area…** in the bottom bar redoes it later (and finds the rallies again). Cocut then analyzes the match on your Mac, which takes a few minutes for an hour of video.
+3. Review: the strip under the video shows the whole match, with each rally as a blue block. **Rallies only** plays the rallies back to back, skipping dead time. Checked rallies are the ones you keep. Use **Keep: All** to start with everything and uncheck the duds, or **Keep: None** to watch them all and check only the plays you want. Select a rally to nudge its start or end, or set either to the playhead. **Add Rally Here** adds one it missed.
+4. Choose **Add to Clips** to make every kept rally a clip, in a new section named after the match, ready to tag and use in a reel. Or choose **Export Condensed Match…** to save the rallies back to back as one video.
 
 **Players in each rally.** While finding rallies, Cocut also reads jersey numbers, twice a second, using the Mac's built-in text recognition. Each rally lists the players it saw, like "#15 #50 #30".
 - **All Players › #15** in the rally list shows only rallies with #15. **Rallies only** playback, **Add to Clips**, and **Export Condensed Match** then use just those.
@@ -235,6 +236,18 @@ make install   # build and copy into /Applications
 
 In Xcode, under **Signing & Capabilities**, set **Team** to your Personal Team.
 
+## iPhone and iPad
+
+`CocutiOS` is the iPhone/iPad app (iOS/iPadOS 26+). It shares the engine in `Shared/` with the Mac app: clip library, projects, Player Card, Find Rallies, Preview and Export. Clips and matches come from Photos or the Files app; finished reels can be shared or saved to Photos. Everything lives in Cocut's folder in the Files app. There's no screen recording on iOS.
+
+For now it's installed from Xcode with a free Apple ID (the install lasts 7 days; press ▶ again to renew):
+1. `make ios`, then choose the **CocutiOS** scheme and your iPhone in Xcode's toolbar.
+2. Under **Signing & Capabilities** for **CocutiOS**, set **Team** to your Personal Team.
+3. On the iPhone, turn on **Settings › Privacy & Security › Developer Mode** (it appears after the phone is connected to Xcode).
+4. Press ▶. The first time, trust yourself under **Settings › General › VPN & Device Management**.
+
+CI compiles the iOS target on every push, unsigned.
+
 ## Project layout
 
 ```
@@ -258,6 +271,13 @@ Cocut/
 ├── Rallies/                  Find Rallies: ball + whistle detection, review window
 ├── Updates/                  GitHub Releases updater + sheet
 └── Views/                    Main window, clip grid, preview
+Shared/                       Used by both apps
+├── App/                      Log, platform helpers (images, colors, paths, Trash)
+├── Library/                  Clip model, JSON index, projects, thumbnails
+├── Profile/                  Player profile and card designs
+├── Export/                   Reel composer, exporter, preview
+└── Rallies/                  Rally + jersey number detection, court area step
+CocutiOS/                     iPhone/iPad screens: Clips, Find Rallies, Player Card, Export
 ```
 
 ## Roadmap
