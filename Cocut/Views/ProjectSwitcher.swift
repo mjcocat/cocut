@@ -11,38 +11,80 @@ struct ProjectSwitcher: View {
 
     private var projects: ProjectStore { model.projects }
 
-    var body: some View {
-        Menu {
-            Section("Projects") {
-                ForEach(projects.projects) { project in
-                    Button {
-                        model.openProject(project.id)
-                    } label: {
-                        if project.id == projects.currentID {
-                            Label(project.name, systemImage: "checkmark")
-                        } else {
-                            Text(project.name)
-                        }
+    private var projectList: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("PROJECTS")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
+            ForEach(projects.projects) { project in
+                let isCurrent = project.id == projects.currentID
+                Button {
+                    model.openProject(project.id)
+                    showingList = false
+                } label: {
+                    HStack {
+                        Image(systemName: isCurrent ? "checkmark" : "folder")
+                            .frame(width: 16)
+                            .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
+                        Text(project.name).lineLimit(1)
+                        Spacer()
                     }
-                    .disabled(model.isBusy || model.exporter.isRunning)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(isCurrent ? Color.accentColor.opacity(0.12) : .clear))
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .disabled(model.isBusy || model.exporter.isRunning)
             }
-            Divider()
-            Button("New Project…") {
+            Divider().padding(.vertical, 6)
+            listAction("New Project…", "plus") {
                 name = ""
                 copyCard = true
                 creating = true
             }
-            Button("Rename “\(projects.current.name)”…") {
+            listAction("Rename “\(projects.current.name)”…", "pencil") {
                 name = projects.current.name
                 renaming = true
             }
-            Button("Show in Finder") { projects.revealInFinder(projects.current) }
-            Divider()
-            Button("Delete “\(projects.current.name)”…", role: .destructive) {
+            listAction("Show in Finder", "folder") { projects.revealInFinder(projects.current) }
+            listAction("Delete “\(projects.current.name)”…", "trash", destructive: true) {
                 deleting = projects.current
             }
             .disabled(projects.projects.count < 2 || model.isBusy)
+        }
+        .padding(10)
+        .frame(width: 280)
+    }
+
+    private func listAction(_ title: String, _ icon: String, destructive: Bool = false,
+                            action: @escaping () -> Void) -> some View {
+        Button {
+            showingList = false
+            action()
+        } label: {
+            HStack {
+                Image(systemName: icon).frame(width: 16)
+                Text(title).lineLimit(1)
+                Spacer()
+            }
+            .foregroundStyle(destructive ? Color.red : Color.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @State private var showingList = false
+
+    var body: some View {
+        // A plain button + popover: a macOS menu button can only show an icon and one line of
+        // text, which hid the project's name.
+        Button {
+            showingList.toggle()
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "folder.fill")
@@ -54,6 +96,7 @@ struct ProjectSwitcher: View {
                     Text(projects.current.name)
                         .font(.headline)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")
@@ -62,11 +105,14 @@ struct ProjectSwitcher: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.06)))
             .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .popover(isPresented: $showingList, arrowEdge: .bottom) {
+            projectList
+        }
         .help("Each project has its own clips and Player Card, like “Fall 2026 Club” and “HS Season”")
         .sheet(isPresented: $creating) {
             NewProjectSheet(name: $name, copyCard: $copyCard) {

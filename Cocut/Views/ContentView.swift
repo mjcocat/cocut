@@ -63,7 +63,27 @@ struct ContentView: View {
                     .tint(.green)
                     .help("Cocut \(release.version) is available. Click to see what's new and install it.")
                 }
+            }
 
+            ToolbarItemGroup(placement: .navigation) {
+                Button {
+                    model.library.undo()
+                } label: {
+                    Label("Undo", systemImage: "arrow.uturn.backward")
+                }
+                .help(model.library.undoName.map { "Undo \($0) (⌘Z)" } ?? "Nothing to undo")
+                .disabled(!model.library.canUndo)
+
+                Button {
+                    model.library.redo()
+                } label: {
+                    Label("Redo", systemImage: "arrow.uturn.forward")
+                }
+                .help(model.library.redoName.map { "Redo \($0) (⇧⌘Z)" } ?? "Nothing to redo")
+                .disabled(!model.library.canRedo)
+            }
+
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     openWindow(id: "rallies")
                 } label: {
@@ -78,24 +98,23 @@ struct ContentView: View {
                 }
                 .help("Play the whole reel as it will export, without rendering it (⌘Y)")
                 .disabled(model.library.includedClips.isEmpty)
+            }
 
-                Button {
-                    Task { await model.recordLastRegion() }
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button("Region…   ⇧⌘R") { Task { await model.recordNewRegion() } }
+                    Button("Full Screen   ⇧⌘F") { Task { await model.recordFullScreen() } }
+                    Divider()
+                    Button("Same Region Again   ⇧⌘L") { Task { await model.recordLastRegion() } }
+                        .disabled(!model.canRecordLastRegion)
                 } label: {
-                    Label("Record Same Region", systemImage: "arrow.counterclockwise")
-                }
-                .help("Record the last region again (⇧⌘L)")
-                .disabled(!model.canRecordLastRegion)
-
-                Button {
-                    Task { await model.recordNewRegion() }
-                } label: {
-                    Label("Record Region", systemImage: "record.circle")
+                    Label("Record", systemImage: "record.circle")
                         .labelStyle(.titleAndIcon)
                 }
+                .menuStyle(.button)
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
-                .help("Select part of the screen and record it (⇧⌘R)")
+                .help("Record part of the screen, the full screen, or the last region again")
                 .disabled(model.isBusy)
             }
         }

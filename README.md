@@ -49,7 +49,7 @@ Each **project** has its own clips, sections, tags, roster and Player Card, for 
 ## Recording
 
 1. Open the game film in your browser. Pause it just before the first play.
-2. Choose **Record Region…** from the menu bar icon or the **Record** button, or press **⇧⌘R** in Cocut.
+2. Click **Record** in the toolbar and choose **Region…** (or **Full Screen**, or **Same Region Again**). The menu bar icon and **⇧⌘R** work too.
 3. Drag over the video. Stay inside the picture, above the player's control bar. Pick 16:9, 4:3, or Free, then adjust with the corner handles.
 4. Leave **Record when video plays** on and click **Start**. A dashed outline means Cocut is waiting.
 5. **Press play.** The outline turns red and a clip starts. **Pause** and the clip saves about three seconds later with a soft pop. The clip itself ends right where you paused. Scrub to the next play and press play again. Each play/pause becomes its own clip.
@@ -131,10 +131,10 @@ A handheld or panning camera confuses it.
 
 **Ratings** put your best plays first. Coaches often watch only the first 30–60 seconds.
 - Rate a clip with the stars under the player, or select clips and press **1–5** (**0** clears). Right-click › **Rating** works on several clips at once.
-- **+ › Order by Rating (Best First)** sorts each section best-first. Unrated clips go last, and ties keep their order.
+- The **Sort** button (↑↓) in the list footer › **Best Rated First** sorts each section best-first. Unrated clips go last, and ties keep their order.
 - The filter's **Rating** section shows only ★★★★★, 4+ or 3+ clips.
 
-**Undo and redo** (⌘Z, ⇧⌘Z) cover your clip edits: renames, trims, ratings, deletes, reordering, sections, tags and players. Undoing a delete brings the file back from the Trash. In Find Rallies, ⌘Z undoes rally edits (keep/leave out, start/end, players, added rallies).
+**Undo and redo** (⌘Z, ⇧⌘Z, or the ↶ ↷ toolbar buttons) cover your clip edits: renames, trims, ratings, deletes, reordering, sections, tags and players. Undoing a delete brings the file back from the Trash. In Find Rallies, ⌘Z undoes rally edits (keep/leave out, start/end, players, added rallies).
 
 **Tags** are for your workflow and never appear in the export:
 - Click tag chips under the player, or right-click › **Tags** (works on several clips at once).
