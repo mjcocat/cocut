@@ -514,15 +514,42 @@ enum RallyDetector {
     }
 
     /// Everyone big enough to click on in a frame, with their appearance (for teaching a player).
-    static func people(in image: CGImage) -> [(box: CGRect, print: [Float])] {
+    /// Also returns a line for the log saying what was found or what went wrong.
+    static func people(in image: CGImage) -> (people: [(box: CGRect, print: [Float])], note: String) {
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        let request = VNDetectHumanRectanglesRequest()
-        request.upperBodyOnly = false
-        guard (try? handler.perform([request])) != nil else { return [] }
-        return (request.results ?? [])
-            .map(\.boundingBox)
-            .filter { $0.height >= 0.08 }
-            .compactMap { box in featurePrint(handler, region: box).map { (box, $0) } }
+        var notes: [String] = []
+        func detect(upperBodyOnly: Bool) -> [CGRect] {
+            let request = VNDetectHumanRectanglesRequest()
+            request.upperBodyOnly = upperBodyOnly
+            do {
+                try handler.perform([request])
+            } catch {
+                notes.append("detection (\(upperBodyOnly ? "upper" : "full") body) failed: \(error.localizedDescription)")
+                return []
+            }
+            return (request.results ?? []).map(\.boundingBox).filter { $0.height >= 0.06 }
+        }
+        var boxes = detect(upperBodyOnly: false)
+        if boxes.isEmpty { boxes = detect(upperBodyOnly: true) }
+        var out: [(box: CGRect, print: [Float])] = []
+        for box in boxes {
+            if let print = featurePrint(handler, region: box) ?? featurePrint(of: image, region: box) {
+                out.append((box, print))
+            }
+        }
+        notes.insert("\(boxes.count) people found, \(out.count) with appearance, frame \(image.width)×\(image.height)", at: 0)
+        return (out, notes.joined(separator: "; "))
+    }
+
+    /// The appearance of `region` (unit, bottom-left origin) from a cropped copy of the image:
+    /// a fallback when asking for a region of the whole frame fails.
+    static func featurePrint(of image: CGImage, region: CGRect) -> [Float]? {
+        let w = CGFloat(image.width), h = CGFloat(image.height)
+        let pixels = CGRect(x: region.minX * w, y: (1 - region.maxY) * h,
+                            width: region.width * w, height: region.height * h).integral
+        guard let crop = image.cropping(to: pixels) else { return nil }
+        return featurePrint(VNImageRequestHandler(cgImage: crop, options: [:]),
+                            region: CGRect(x: 0, y: 0, width: 1, height: 1))
     }
 
     /// When each taught player appears, by appearance. Every sighting is compared with the taught

@@ -14,6 +14,8 @@ struct TeachPlayerScreen: View {
     @State private var loading = false
     @State private var selected: Int?
     @State private var numberText = ""
+    /// A box being dragged by hand (view coordinates), for a player Cocut didn't box.
+    @State private var drawing: CGRect?
 
     init(finder: RallyFinder, url: URL, time: Double, onClose: @escaping () -> Void) {
         self.finder = finder
@@ -27,7 +29,7 @@ struct TeachPlayerScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Click a player, type their number, and choose **Teach**. Cocut then finds them in every rally by how they look. Teaching the same player at a couple of different moments (facing toward and away from the camera) gives better matches.")
+                    Text("Click a player, type their number, and choose **Teach**. If a player has no box, drag a box around them. Cocut then finds them in every rally by how they look. Teaching the same player at a couple of different moments (facing toward and away from the camera) gives better matches.")
                         .font(.callout)
 
                     picture
@@ -111,6 +113,26 @@ struct TeachPlayerScreen: View {
                         .resizable()
                         .frame(width: rect.width, height: rect.height)
                         .offset(x: rect.minX, y: rect.minY)
+                    // Drag anywhere on the picture to box a player by hand.
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .frame(width: rect.width, height: rect.height)
+                        .offset(x: rect.minX, y: rect.minY)
+                        .gesture(DragGesture(minimumDistance: 6)
+                            .onChanged { value in
+                                drawing = CGRect(x: min(value.startLocation.x, value.location.x),
+                                                 y: min(value.startLocation.y, value.location.y),
+                                                 width: abs(value.location.x - value.startLocation.x),
+                                                 height: abs(value.location.y - value.startLocation.y))
+                            }
+                            .onEnded { _ in addDrawnBox(in: rect) })
+                    if let drawing {
+                        Rectangle()
+                            .strokeBorder(Color.yellow, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                            .frame(width: drawing.width, height: drawing.height)
+                            .offset(x: drawing.minX, y: drawing.minY)
+                            .allowsHitTesting(false)
+                    }
                     ForEach(people.indices, id: \.self) { i in
                         // Vision boxes have a bottom-left origin.
                         let b = people[i].box
@@ -129,8 +151,8 @@ struct TeachPlayerScreen: View {
                 }
                 if loading || frame == nil {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if people.isEmpty {
-                    Text("No players found in this frame. Step forward or back.")
+                } else if people.isEmpty && drawing == nil {
+                    Text("No players boxed in this frame. Drag a box around one, or step forward or back.")
                         .font(.callout)
                         .padding(8)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
@@ -144,14 +166,42 @@ struct TeachPlayerScreen: View {
         loading = true
         selected = nil
         let url = self.url, at = time
-        let result = await Task.detached(priority: .userInitiated) { () -> (CGImage?, [(box: CGRect, print: [Float])]) in
-            guard let image = await VideoFrames.firstFrame(url: url, at: at, crop: nil) else { return (nil, []) }
-            return (image, RallyDetector.people(in: image))
+        let result = await Task.detached(priority: .userInitiated) { () -> (CGImage?, [(box: CGRect, print: [Float])], String) in
+            guard let image = await VideoFrames.firstFrame(url: url, at: at, crop: nil) else {
+                return (nil, [], "the frame couldn't be read")
+            }
+            let found = RallyDetector.people(in: image)
+            return (image, found.people, found.note)
         }.value
         guard !Task.isCancelled else { return }
+        Log.info("Teach a Player at \(Clip.format(at)): \(result.2)")
         frame = result.0
         people = result.1
         loading = false
+    }
+
+    /// Turns a hand-drawn box into a selectable player.
+    private func addDrawnBox(in rect: CGRect) {
+        guard let box = drawing, let frame, rect.width > 0, rect.height > 0 else { drawing = nil; return }
+        drawing = nil
+        // View (top-left origin) to Vision's unit, bottom-left origin.
+        let unit = CGRect(x: (box.minX - rect.minX) / rect.width,
+                          y: 1 - (box.maxY - rect.minY) / rect.height,
+                          width: box.width / rect.width,
+                          height: box.height / rect.height)
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard unit.width > 0.01, unit.height > 0.02 else { return }
+        Task {
+            let print = await Task.detached(priority: .userInitiated) {
+                RallyDetector.featurePrint(of: frame, region: unit)
+            }.value
+            guard let print else {
+                Log.error("Teach a Player: no appearance for a drawn box")
+                return
+            }
+            people.append((unit, print))
+            selected = people.count - 1
+        }
     }
 
     private func step(_ seconds: Double) {
