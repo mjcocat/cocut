@@ -248,7 +248,8 @@ struct RallyFinderView: View {
             Button {
                 finder.addToClips(library: model.library)
             } label: {
-                Label("Add \(finder.keptRallies.count) to Clips", systemImage: "film.stack")
+                Label(finder.playerFilter.map { "Add \(finder.keptRallies.count) with #\($0) to Clips" } ?? "Add \(finder.keptRallies.count) to Clips",
+                      systemImage: "film.stack")
             }
             .buttonStyle(.borderedProminent)
             .help("Make each kept rally a clip, so you can tag the best plays and put them in your highlight reel")
@@ -347,7 +348,8 @@ private struct MatchTimeline: View {
                 ForEach(finder.rallies) { rally in
                     let selected = rally.id == finder.selectedID
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(rally.isIncluded ? Color.accentColor.opacity(selected ? 1 : 0.7) : Color.secondary.opacity(0.3))
+                        .fill(rally.isIncluded && finder.playerFilter.map { rally.players.contains($0) } != false
+                              ? Color.accentColor.opacity(selected ? 1 : 0.7) : Color.secondary.opacity(0.3))
                         .frame(width: max(2, geo.size.width * rally.duration / total), height: geo.size.height - (selected ? 0 : 6))
                         .offset(x: geo.size.width * rally.start / total)
                 }
@@ -377,6 +379,7 @@ private struct RallyEditor: View {
     private var finder: RallyFinder { model.rallies }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Rally \(finder.number(of: rally))\(rally.isManual ? " (added)" : "")")
@@ -398,6 +401,11 @@ private struct RallyEditor: View {
                     .buttonStyle(.borderless)
                     .help("Remove this added rally")
             }
+        }
+            PlayerNumbersBar(numbers: rally.players,
+                             name: { model.library.player($0)?.name.nilIfEmpty },
+                             onAdd: { finder.addPlayer($0, to: rally.id) },
+                             onRemove: { finder.removePlayer($0, from: rally.id) })
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.04)))
@@ -434,18 +442,22 @@ private struct RallyList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("RALLIES")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
-                .padding(.bottom, 6)
+            HStack {
+                Text("RALLIES")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                PlayerFilterMenu()
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
             ScrollViewReader { proxy in
                 List(selection: Binding(get: { finder.selectedID }, set: { id in
                     finder.selectedID = id
                     if let rally = finder.rallies.first(where: { $0.id == id }) { finder.seek(to: rally.start) }
                 })) {
-                    ForEach(finder.rallies) { rally in
+                    ForEach(finder.visibleRallies) { rally in
                         let current = rally.id == currentID
                         RallyRow(rally: rally, number: finder.number(of: rally),
                                  isCurrent: current, isPlaying: current && finder.isPlaying)
@@ -516,7 +528,7 @@ private struct RallyRow: View {
                         Text("added").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
-                Text("\(RallyFinderView.time(rally.start)) · \(String(format: "%.0f", rally.duration))s")
+                Text("\(RallyFinderView.time(rally.start)) · \(String(format: "%.0f", rally.duration))s\(rally.players.isEmpty ? "" : "  ·  " + rally.players.map { "#\($0)" }.joined(separator: " "))")
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -550,5 +562,39 @@ private struct MatchPlayerView: NSViewRepresentable {
 
     static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) {
         view.player = nil
+    }
+}
+
+/// "Player" filter for the rally list: only rallies with a given jersey number.
+private struct PlayerFilterMenu: View {
+    @Environment(AppModel.self) private var model
+    private var finder: RallyFinder { model.rallies }
+
+    var body: some View {
+        Menu {
+            Button {
+                finder.playerFilter = nil
+            } label: {
+                if finder.playerFilter == nil { Label("All Rallies", systemImage: "checkmark") } else { Text("All Rallies") }
+            }
+            if !finder.playerCounts.isEmpty { Divider() }
+            ForEach(finder.playerCounts, id: \.number) { entry in
+                let name = model.library.player(entry.number)?.name ?? ""
+                let title = "#\(entry.number)\(name.isEmpty ? "" : " " + name)  (\(entry.rallies))"
+                Button {
+                    finder.playerFilter = finder.playerFilter == entry.number ? nil : entry.number
+                } label: {
+                    if finder.playerFilter == entry.number { Label(title, systemImage: "checkmark") } else { Text(title) }
+                }
+            }
+        } label: {
+            Label(finder.playerFilter.map { "#\($0)" } ?? "All Players",
+                  systemImage: finder.playerFilter == nil ? "person.2" : "person.2.fill")
+                .font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Show only rallies with a player. Numbers are read from jerseys; add or remove them on a rally if one was missed.")
+        .disabled(finder.playerCounts.isEmpty)
     }
 }

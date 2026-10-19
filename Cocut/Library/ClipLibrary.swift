@@ -26,6 +26,11 @@ struct Clip: Identifiable, Codable, Hashable {
     var plays: [PlayTag]?
 
     var playList: [PlayTag] { plays ?? [] }
+    /// Jersey numbers of players in the clip (from Find Rallies, or added by hand).
+    var players: [Int]?
+    var playerList: [Int] { players ?? [] }
+    /// Everyone in the clip: listed players plus anyone tagged in a play.
+    var allPlayers: Set<Int> { Set(playerList + playList.compactMap(\.player)) }
 
     var cropRect: CGRect? { crop?.cgRect }
     /// Crop as fractions of the frame, for thumbnails at any size.
@@ -590,6 +595,12 @@ final class ClipLibrary {
                 c.plays = list.isEmpty ? nil : list
             }
         }
+        save()
+    }
+
+    func setPlayers(_ numbers: [Int], for clipID: Clip.ID) {
+        let list = Array(Set(numbers)).sorted()
+        updateClip(clipID) { $0.players = list.isEmpty ? nil : list }
         save()
     }
 

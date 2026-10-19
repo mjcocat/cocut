@@ -11,6 +11,10 @@ struct Rally: Identifiable, Hashable {
     var isIncluded = true
     /// Added by hand rather than found.
     var isManual = false
+    /// Jersey numbers seen in the rally (read automatically, then adjustable).
+    var players: [Int] = []
+    /// The user changed `players`; keep their list when rallies are rebuilt.
+    var playersEdited = false
 
     var duration: Double { max(0, end - start) }
 
@@ -47,6 +51,10 @@ final class RallyFinder {
     }
     /// Playback skips the dead time between kept rallies.
     var watchCondensed = true
+    /// Show only rallies with this jersey number.
+    var playerFilter: Int?
+    /// The team roster's numbers (supplied by the app), used to ignore referees and opponents.
+    @ObservationIgnored var roster: () -> Set<Int> = { [] }
 
     // Playback
     private(set) var player: AVPlayer?
@@ -59,7 +67,19 @@ final class RallyFinder {
 
     var duration: Double { analysis?.duration ?? 0 }
     var matchName: String { sourceURL?.deletingPathExtension().lastPathComponent ?? "Match" }
-    var keptRallies: [Rally] { rallies.filter(\.isIncluded) }
+    /// Rallies shown in the list: all of them, or those with the filtered player.
+    var visibleRallies: [Rally] {
+        guard let n = playerFilter else { return rallies }
+        return rallies.filter { $0.players.contains(n) }
+    }
+    /// Kept rallies that match the filter: what plays, and what gets added or exported.
+    var keptRallies: [Rally] { visibleRallies.filter(\.isIncluded) }
+    /// Every number on any rally, with how many rallies it's in.
+    var playerCounts: [(number: Int, rallies: Int)] {
+        var counts: [Int: Int] = [:]
+        for r in rallies { for n in r.players { counts[n, default: 0] += 1 } }
+        return counts.map { ($0.key, $0.value) }.sorted { $0.number < $1.number }
+    }
     var keptSeconds: Double { keptRallies.reduce(0) { $0 + $1.duration } }
 
     var selectedRally: Rally? { rallies.first { $0.id == selectedID } }
@@ -138,11 +158,24 @@ final class RallyFinder {
     private func rebuildRallies() {
         guard let analysis else { return }
         let unchecked = rallies.filter { !$0.isIncluded && !$0.isManual }
+        let edited = rallies.filter { $0.playersEdited && !$0.isManual }
         let manual = rallies.filter(\.isManual)
-        var fresh = RallyDetector.rallies(from: analysis, includeSetup: includeServeSetup)
-            .map { Rally(start: $0.start, end: $0.end) }
+        let spans = RallyDetector.rallies(from: analysis, includeSetup: includeServeSetup)
+        let frequent = RallyDetector.frequentNumbers(spans: spans, reads: analysis.numbers)
+        let roster = self.roster()
+        var fresh = spans.map { span -> Rally in
+            var rally = Rally(start: span.start, end: span.end)
+            rally.players = RallyDetector.players(in: span, reads: analysis.numbers, roster: roster, frequent: frequent)
+            return rally
+        }
         for i in fresh.indices where unchecked.contains(where: { Self.overlap($0, fresh[i]) > 0.5 * fresh[i].duration }) {
             fresh[i].isIncluded = false
+        }
+        for i in fresh.indices {
+            if let old = edited.first(where: { Self.overlap($0, fresh[i]) > 0.5 * fresh[i].duration }) {
+                fresh[i].players = old.players
+                fresh[i].playersEdited = true
+            }
         }
         rallies = (fresh + manual).sorted { $0.start < $1.start }
         if let id = selectedID, !rallies.contains(where: { $0.id == id }) { selectedID = nil }
@@ -188,6 +221,19 @@ final class RallyFinder {
         rallies.append(rally)
         rallies.sort { $0.start < $1.start }
         selectedID = rally.id
+    }
+
+    func addPlayer(_ number: Int, to id: Rally.ID) {
+        guard let i = rallies.firstIndex(where: { $0.id == id }), !rallies[i].players.contains(number) else { return }
+        rallies[i].players.append(number)
+        rallies[i].players.sort()
+        rallies[i].playersEdited = true
+    }
+
+    func removePlayer(_ number: Int, from id: Rally.ID) {
+        guard let i = rallies.firstIndex(where: { $0.id == id }) else { return }
+        rallies[i].players.removeAll { $0 == number }
+        rallies[i].playersEdited = true
     }
 
     func delete(_ id: Rally.ID) {
@@ -257,7 +303,7 @@ final class RallyFinder {
     }
 
     func step(by offset: Int) {
-        let list = watchCondensed ? keptRallies : rallies
+        let list = watchCondensed ? keptRallies : visibleRallies
         guard !list.isEmpty else { return }
         let index = list.lastIndex { $0.start <= currentTime + 0.05 }
         let target: Int
@@ -304,6 +350,7 @@ final class RallyFinder {
                     try await Self.cut(asset: asset, range: rally, to: destination)
                     if let clip = await library.addClip(at: destination, title: "Rally \(numbers[k])") {
                         ids.insert(clip.id)
+                        if !rally.players.isEmpty { library.setPlayers(rally.players, for: clip.id) }
                     }
                 } catch {
                     Log.error("Couldn't copy rally \(numbers[k]): \(error.localizedDescription)")

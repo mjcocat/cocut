@@ -3,6 +3,7 @@ import AVFoundation
 import CoreGraphics
 import CoreVideo
 import simd
+import Vision
 
 /// Finds rallies in a full volleyball match filmed from a fixed camera.
 ///
@@ -20,6 +21,13 @@ enum RallyDetector {
         var whistles: [Double]
         /// How far down the frame the "ball zone" reaches (fraction of the height).
         var ballZone: Double
+        /// Jersey numbers read during the rallies: when, and which number.
+        var numbers: [NumberRead] = []
+    }
+
+    struct NumberRead: Codable, Sendable, Hashable {
+        var time: Double
+        var number: Int
     }
 
     struct Span: Codable, Sendable, Hashable {
@@ -50,12 +58,17 @@ enum RallyDetector {
         let duration = try await asset.load(.duration).seconds
         let audioTrack = try await asset.loadTracks(withMediaType: .audio).first
 
-        async let videoPart = videoPass(asset: asset, track: track, duration: duration, progress: progress)
+        // The ball pass is most of the work (0–80%); reading jersey numbers is the rest.
+        async let videoPart = videoPass(asset: asset, track: track, duration: duration) { progress($0 * 0.8) }
         async let audioPart = whistles(asset: asset, track: audioTrack)
         let (bursts, zone) = try await videoPart
         let whistles = await audioPart
+        var result = Result(duration: duration, bursts: bursts, whistles: whistles, ballZone: zone)
+        let spans = rallies(from: result, includeSetup: true)
+        result.numbers = try await readNumbers(asset: asset, spans: spans) { progress(0.8 + $0 * 0.2) }
         Log.info("Rally analysis: \(bursts.count) ball bursts, \(whistles.count) whistles, ball zone \(Int(zone * 100))% of height, \(Int(duration))s")
-        return Result(duration: duration, bursts: bursts, whistles: whistles, ballZone: zone)
+        Log.info("Read \(result.numbers.count) jersey numbers in \(spans.count) rallies: \(Set(result.numbers.map(\.number)).sorted())")
+        return result
     }
 
     // MARK: - Video: the ball above the players
@@ -290,6 +303,91 @@ enum RallyDetector {
             let lower = Int(Double(h) * 0.2), upper = Int(Double(h) * 0.6)
             return max(lower, min(upper, edge - 4))
         }
+    }
+
+    // MARK: - Jersey numbers
+
+    /// Reads jersey numbers twice a second during each rally, with on-device text recognition.
+    /// Players whose backs face the camera are read best; 1080p or better is recommended.
+    private static func readNumbers(asset: AVURLAsset, spans: [Span],
+                                    progress: @escaping @Sendable (Double) -> Void) async throws -> [NumberRead] {
+        var times: [Double] = []
+        for span in spans {
+            var t = span.start
+            while t <= span.end {
+                times.append(t)
+                t += 0.5
+            }
+        }
+        guard !times.isEmpty else { return [] }
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 2560, height: 2560)
+        generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 10)
+        generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 10)
+
+        var reads: [NumberRead] = []
+        for (i, t) in times.enumerated() {
+            try Task.checkCancellation()
+            if i % 20 == 0 { progress(Double(i) / Double(times.count)) }
+            guard let image = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image else { continue }
+            for number in numbers(in: image) {
+                reads.append(NumberRead(time: t, number: number))
+            }
+        }
+        progress(1)
+        return reads
+    }
+
+    /// One- or two-digit numbers in the lower part of the picture (where the near team is).
+    static func numbers(in image: CGImage) -> [Int] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        // Vision's origin is bottom-left: the lower 65% of the frame.
+        request.regionOfInterest = CGRect(x: 0, y: 0, width: 1, height: 0.65)
+        request.minimumTextHeight = 0.012
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            return []
+        }
+        var found: [Int] = []
+        for observation in request.results ?? [] {
+            for candidate in observation.topCandidates(2) where candidate.confidence >= 0.5 {
+                let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "#", with: "")
+                if (1...2).contains(text.count), text.allSatisfy(\.isNumber), let n = Int(text) {
+                    found.append(n)
+                    break
+                }
+            }
+        }
+        return found
+    }
+
+    /// Numbers that appear in a rally: read at least twice in it. With a roster, only roster
+    /// numbers count; without one, only numbers seen in at least two rallies (drops referees and
+    /// passers-by).
+    static func players(in span: Span, reads: [NumberRead], roster: Set<Int>, frequent: Set<Int>) -> [Int] {
+        var counts: [Int: Int] = [:]
+        for r in reads where r.time >= span.start && r.time <= span.end {
+            counts[r.number, default: 0] += 1
+        }
+        let allowed = roster.isEmpty ? frequent : roster
+        return counts.filter { $0.value >= 2 && allowed.contains($0.key) }.keys.sorted()
+    }
+
+    /// Numbers read (twice or more) in at least two different rallies.
+    static func frequentNumbers(spans: [Span], reads: [NumberRead]) -> Set<Int> {
+        var rallyCount: [Int: Int] = [:]
+        for span in spans {
+            var counts: [Int: Int] = [:]
+            for r in reads where r.time >= span.start && r.time <= span.end { counts[r.number, default: 0] += 1 }
+            for (n, c) in counts where c >= 2 { rallyCount[n, default: 0] += 1 }
+        }
+        return Set(rallyCount.filter { $0.value >= 2 }.keys)
     }
 
     // MARK: - Audio: referee whistles

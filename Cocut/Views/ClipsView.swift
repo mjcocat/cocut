@@ -803,6 +803,10 @@ private struct ClipDetailPane: View {
 
                     tagBar(clip)
                     PlayBar(clip: clip)
+                    PlayerNumbersBar(numbers: clip.playerList,
+                                     name: { library.player($0)?.name.nilIfEmpty },
+                                     onAdd: { library.setPlayers(clip.playerList + [$0], for: clip.id) },
+                                     onRemove: { n in library.setPlayers(clip.playerList.filter { $0 != n }, for: clip.id) })
 
                     if let cropMessage {
                         Label(cropMessage, systemImage: "viewfinder")

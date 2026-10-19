@@ -12,11 +12,12 @@ struct ClipFilter: Equatable {
 
     func matches(_ clip: Clip) -> Bool {
         if let tagID, !clip.tags.contains(tagID) { return false }
-        if player != nil || action != nil {
+        if let action {
             return clip.playList.contains { play in
-                (action == nil || play.action == action) && (player == nil || play.player == player)
+                play.action == action && (player == nil || play.player == player)
             }
         }
+        if let player { return clip.allPlayers.contains(player) }
         return true
     }
 
@@ -26,7 +27,7 @@ struct ClipFilter: Equatable {
         switch (action, player) {
         case let (action?, player?): parts.append("\(action.plural) by \(library.playerLabel(player))")
         case let (action?, nil): parts.append(action.plural)
-        case let (nil, player?): parts.append("plays by \(library.playerLabel(player))")
+        case let (nil, player?): parts.append("clips with \(library.playerLabel(player))")
         case (nil, nil): break
         }
         if let tagID, let tag = library.tag(withID: tagID) {
@@ -45,7 +46,7 @@ struct FilterMenu: View {
 
     /// Numbers on the roster or used in any play.
     private var players: [Int] {
-        let used = library.clips.flatMap { $0.playList.compactMap(\.player) }
+        let used = library.clips.flatMap { $0.allPlayers }
         return Array(Set(used + library.roster.map(\.number))).sorted()
     }
 
@@ -410,4 +411,55 @@ private struct RosterRow: View {
             if name != player.name { model.library.renamePlayer(player.number, to: name) }
         }
     }
+}
+
+// MARK: - Players in a clip or rally
+
+/// Jersey-number chips with remove buttons and a field to add one ("15", Return).
+struct PlayerNumbersBar: View {
+    let numbers: [Int]
+    var name: (Int) -> String? = { _ in nil }
+    let onAdd: (Int) -> Void
+    let onRemove: (Int) -> Void
+    @State private var text = ""
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "person.2")
+                .foregroundStyle(.secondary)
+                .help("Players in this clip. Filter by player to find every clip with them.")
+            ScrollView(.horizontal) {
+                HStack(spacing: 5) {
+                    ForEach(numbers, id: \.self) { n in
+                        HStack(spacing: 3) {
+                            Text(name(n).map { "#\(n) \($0)" } ?? "#\(n)")
+                                .monospacedDigit()
+                            Button { onRemove(n) } label: {
+                                Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Remove #\(n)")
+                        }
+                        .font(.callout.weight(.medium))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                    }
+                    TextField(numbers.isEmpty ? "Add a player #" : "Add #", text: $text)
+                        .textFieldStyle(.plain)
+                        .frame(width: numbers.isEmpty ? 100 : 50)
+                        .onSubmit {
+                            if let n = Int(text.filter(\.isNumber)), n < 1000 { onAdd(n) }
+                            text = ""
+                        }
+                }
+            }
+            .scrollIndicators(.never)
+        }
+    }
+}
+
+extension String {
+    /// nil for an empty string.
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

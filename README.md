@@ -98,6 +98,13 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 2. Review: the strip under the video shows the whole match, with each rally as a blue block. **Rallies only** plays just the kept rallies back to back. Uncheck any rally that isn't one. Select a rally to nudge its start or end, or set either to the playhead. **Add Rally Here** adds one it missed.
 3. Choose **Add to Clips** to make every kept rally a clip, in a new section named after the match, ready to tag and use in a reel. Or choose **Export Condensed Match…** to save the rallies back to back as one video.
 
+**Players in each rally.** While finding rallies, Cocut also reads jersey numbers, twice a second, using the Mac's built-in text recognition. Each rally lists the players it saw, like "#15 #50 #30".
+- **All Players › #15** in the rally list shows only rallies with #15. **Rallies only** playback, **Add to Clips**, and **Export Condensed Match** then use just those.
+- A number has to be read at least twice in a rally to count. With a **Team Roster**, only roster numbers count; without one, only numbers seen in at least two rallies do. That leaves out referees and passers-by.
+- Missed someone? Select the rally and type their number in the players row. Remove a wrong one with its ×.
+- Rallies added to Clips keep their players. In Clips, the filter's **Player** section finds every clip with that player.
+- Numbers on backs facing the camera read best. Import matches at **1080p or better**: at 720p, front-row numbers are often too small to read.
+
 How it works: from a fixed camera, the walls and ceiling above the net never move. During a rally the ball keeps crossing that area, so Cocut looks for a small, fast object there. The referee's whistle (a steady tone around 3–4 kHz) marks where each rally starts and ends. **Include serve setup** starts each rally at the serve whistle; turn it off to start just before the serve.
 
 Works best with:
