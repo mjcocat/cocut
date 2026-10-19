@@ -413,7 +413,7 @@ enum RallyDetector {
         progress(1)
         Log.info("Number pass: \(times.count) frames, \(unreadFrames) couldn't be read")
         if !problems.isEmpty {
-            let list = problems.sorted { $0.value > $1.value }.prefix(6).map { "\($0.key) ×\($0.value)" }
+            let list = problems.sorted { $0.value > $1.value }.prefix(10).map { "\($0.key) ×\($0.value)" }
             Log.error("Number pass problems: \(list.joined(separator: "; "))")
         }
         let common = rejected.sorted { $0.value > $1.value }.prefix(15).map { "\"\($0.key)\"×\($0.value)" }
@@ -787,8 +787,11 @@ enum RallyDetector {
         do {
             try handler.perform([request])
         } catch {
-            // Text recognition sometimes fails when the Mac is busy; try once more, fresh.
-            problems["Text: \(error.localizedDescription)", default: 0] += 1
+            // Text recognition sometimes fails when the Mac is busy; try once more, fresh. Log
+            // which reader and roughly how big the region was, to see what fails.
+            let w = Int(region.width * CGFloat(image.width)) / 50 * 50
+            let h = Int(region.height * CGFloat(image.height)) / 50 * 50
+            problems["Text (\(level == .fast ? "fast" : "accurate"), ~\(w)×\(h) px): \(error.localizedDescription)", default: 0] += 1
             do {
                 try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
                 problems["Text: recovered on retry", default: 0] += 1
@@ -835,7 +838,8 @@ enum RallyDetector {
         guard digits.allSatisfy(\.isASCII), digits.allSatisfy(\.isNumber), let n = Int(digits) else { return nil }
         // A two-letter word that maps to digits ("SO", "IO") is too risky unless it's the 1/11 case.
         let letters = text.filter { !$0.isNumber }
-        if text.count == 2, letters.count == 2, !letters.allSatisfy({ "Il|i!/\\".contains($0) }) { return nil }
+        // Unless it starts with a 1 look-alike: "Is" is 15, "IZ" is 12, "II" is 11.
+        if text.count == 2, letters.count == 2, let lead = text.first, !"Il|i!/\\".contains(lead) { return nil }
         return n
     }
 
