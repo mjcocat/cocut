@@ -194,6 +194,21 @@ final class ReelPreview {
         return pieces.lastIndex { $0.visibleStart <= currentTime + 0.01 } ?? 0
     }
 
+    /// The spotlight showing now, animated like the export: dimming and a ring that snaps in.
+    var currentSpotlight: (center: CGPoint, radius: CGFloat, dim: Double, ring: Double, scale: Double)? {
+        let t = currentTime
+        for piece in pieces {
+            guard let s = piece.spotlight, t >= s.start, t <= s.playStart + 0.8 else { continue }
+            func ramp(_ a: Double, _ b: Double) -> Double { max(0, min(1, (t - a) / max(0.01, b - a))) }
+            let dim = t <= s.playStart ? ramp(s.start, s.start + 0.25) : 1 - ramp(s.playStart, s.playStart + 0.25)
+            let ringEnd = s.playStart + 0.8
+            let ring = t <= ringEnd - 0.3 ? ramp(s.start, s.start + 0.2) : 1 - ramp(ringEnd - 0.3, ringEnd)
+            let scale = 1.9 - 0.9 * ramp(s.start, s.start + 0.35)
+            return (s.center, s.radius, dim, ring, scale)
+        }
+        return nil
+    }
+
     /// The caption showing now, with its opacity (fades in and out like the export).
     var currentCaption: (title: String, opacity: Double)? {
         for piece in pieces {

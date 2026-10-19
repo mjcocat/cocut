@@ -191,6 +191,14 @@ struct ExportView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                Toggle(isOn: $exporter.options.showSpotlights) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Player spotlights")
+                        Text("Clips with a spotlight open on a held frame with a ring around the athlete. Add one with Spotlight under the player.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Include sound", isOn: $exporter.options.includeSound)
             }
             group("Video") {

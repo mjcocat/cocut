@@ -657,6 +657,10 @@ private struct ClipRow: View {
                     }
                     Text("·")
                     Text(clip.createdAt.formatted(date: .omitted, time: .shortened))
+                    if clip.spotlight != nil {
+                        Image(systemName: "scope")
+                            .help("Has a spotlight")
+                    }
                     if clip.stars > 0 {
                         Text(String(repeating: "★", count: clip.stars))
                             .foregroundStyle(.yellow)
@@ -754,13 +758,40 @@ private struct ClipDetailPane: View {
     @State private var titleDraft = ""
     @State private var trimRequest = 0
     @State private var cropMessage: String?
+    /// Placing the spotlight ring (stays on when moving to the next clip with Save & Next).
+    @State private var spotlighting = false
     @FocusState private var titleFocused: Bool
 
     private var library: ClipLibrary { model.library }
 
+    /// The clip after this one in the list, for Save & Next.
+    private func nextClip(after clip: Clip) -> Clip? {
+        let all = library.clips
+        guard let i = all.firstIndex(where: { $0.id == clip.id }), i + 1 < all.count else { return nil }
+        return all[i + 1]
+    }
+
     var body: some View {
         if let clip {
             VStack(spacing: 0) {
+                if spotlighting {
+                    SpotlightEditor(
+                        clip: clip,
+                        url: library.url(for: clip),
+                        hasNext: nextClip(after: clip) != nil,
+                        onSave: { spot, goNext in
+                            library.setSpotlight(spot, for: clip.id)
+                            if goNext, let next = nextClip(after: clip) {
+                                actions.select([next.id])
+                            } else {
+                                spotlighting = false
+                            }
+                        },
+                        onCancel: { spotlighting = false }
+                    )
+                    .id(clip.id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
                 PlayerView(
                     url: library.url(for: clip),
                     trimStart: clip.trimStart,
@@ -774,6 +805,7 @@ private struct ClipDetailPane: View {
                 .id("\(clip.id)-\(clip.trimStart ?? -1)-\(clip.trimEnd ?? -1)-\(String(describing: clip.crop))")
                 .background(Color.black)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
 
                 Divider()
 
@@ -817,6 +849,14 @@ private struct ClipDetailPane: View {
                             Label("Trim", systemImage: "scissors")
                         }
                         .help("Drag the yellow handles to choose where the clip starts and ends")
+
+                        Button {
+                            spotlighting = true
+                        } label: {
+                            Label(clip.spotlight == nil ? "Spotlight" : "Spotlight ✓", systemImage: "scope")
+                        }
+                        .help("Circle the athlete on the clip's first frame. The reel holds that frame for a moment with a ring around them.")
+                        .disabled(spotlighting)
 
                         Button(role: .destructive) {
                             deleting = [clip]

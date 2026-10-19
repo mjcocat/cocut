@@ -41,8 +41,12 @@ struct ExportOptions: Codable, Equatable {
     var removeBlackBars = true
     /// Scale clips to cover the whole frame, cropping edges, instead of fitting inside it.
     var fillFrame = false
+    /// Freeze on the first frame and ring the athlete, for clips with a spotlight.
+    var showSpotlights = true
 
     static let transitionSeconds = 0.6
+    /// How long a spotlight holds the first frame.
+    static let spotlightSeconds = 1.4
 
     init() {}
 
@@ -58,6 +62,7 @@ struct ExportOptions: Codable, Equatable {
         frameRate = (try? c.decodeIfPresent(Int.self, forKey: .frameRate)) ?? d.frameRate
         removeBlackBars = (try? c.decodeIfPresent(Bool.self, forKey: .removeBlackBars)) ?? d.removeBlackBars
         fillFrame = (try? c.decodeIfPresent(Bool.self, forKey: .fillFrame)) ?? d.fillFrame
+        showSpotlights = (try? c.decodeIfPresent(Bool.self, forKey: .showSpotlights)) ?? d.showSpotlights
     }
 }
 
@@ -92,6 +97,8 @@ struct ReelSegment: Sendable {
     var cardLabel: String? = nil
     /// The library clip this came from.
     var clipID: UUID? = nil
+    /// Ring the athlete on a frozen first frame.
+    var spotlight: Spotlight? = nil
 }
 
 /// Builds the highlight reel: intro card, clips in order (trimmed), end card, with optional
@@ -147,7 +154,9 @@ final class ReelExporter {
     func estimatedDuration(plan: [ReelEntry], profile: PlayerProfile) -> Double {
         var pieces = plan.map { entry -> Double in
             switch entry {
-            case .clip(let clip): return clip.effectiveDuration
+            case .clip(let clip):
+                return clip.effectiveDuration
+                    + (options.showSpotlights && clip.spotlight != nil ? ExportOptions.spotlightSeconds : 0)
             case .section: return sectionCardSeconds
             }
         }
@@ -261,7 +270,8 @@ final class ReelExporter {
                 let duration = clip.trimEndSeconds - clip.trimStartSeconds
                 guard duration > 0.1 else { continue }
                 segments.append(ReelSegment(url: url, start: clip.trimStartSeconds, duration: duration,
-                                            title: clip.title, isCard: false, crop: clip.cropRect, clipID: clip.id))
+                                            title: clip.title, isCard: false, crop: clip.cropRect, clipID: clip.id,
+                                            spotlight: options.showSpotlights ? clip.spotlight : nil))
             }
         }
         if profile.showEndCard {
@@ -315,6 +325,17 @@ enum ReelComposer {
         let duration: Double
         /// When its name caption shows, for clips with a name.
         let caption: (start: Double, duration: Double)?
+        /// The spotlight ring, in render coordinates (top-left origin), and when it shows.
+        let spotlight: SpotlightTiming?
+    }
+
+    struct SpotlightTiming {
+        let center: CGPoint
+        let radius: CGFloat
+        /// Ring and dimming appear (when the clip is fully on screen).
+        let start: Double
+        /// The frozen frame ends and play starts.
+        let playStart: Double
     }
 
     /// Caption timing: shortly after the clip is fully on screen, for up to three seconds.
@@ -335,6 +356,11 @@ enum ReelComposer {
         let transform: CGAffineTransform
         /// Part of the source picture to show (natural coordinates), when black bars were found.
         let crop: CGRect?
+        let natural: CGSize
+        /// Seconds the first frame is held for a spotlight (0 without one).
+        let freeze: Double
+        /// Time on the timeline: the hold plus the clip.
+        var length: Double { freeze + segment.duration }
     }
 
     /// `forPlayback` leaves out the Core Animation captions, which only work when exporting
@@ -392,8 +418,9 @@ enum ReelComposer {
             } else {
                 transform = aspectFit(natural: natural, preferred: preferred, into: renderSize)
             }
+            let freeze = segment.spotlight != nil && !segment.isCard ? ExportOptions.spotlightSeconds : 0
             loaded.append(Loaded(asset: asset, segment: fixed, source: source, video: video, audio: audio, audioRange: audioRange,
-                                 transform: transform, crop: crop))
+                                 transform: transform, crop: crop, natural: natural, freeze: freeze))
         }
         guard !loaded.isEmpty else { throw ExportError.noClips }
 
@@ -416,7 +443,7 @@ enum ReelComposer {
         if options.transition == .crossfade {
             for i in 0..<(n - 1) {
                 overlaps[i] = min(ExportOptions.transitionSeconds,
-                                  loaded[i].segment.duration / 3, loaded[i + 1].segment.duration / 3)
+                                  loaded[i].length / 3, loaded[i + 1].length / 3)
             }
         }
 
@@ -427,7 +454,15 @@ enum ReelComposer {
             starts.append(cursor)
             let source = item.source
             do {
-                try videoTracks[i % 2].insertTimeRange(source, of: item.video, at: time(cursor))
+                if item.freeze > 0 {
+                    // Spotlight: hold the first frame by stretching one frame of it.
+                    let frame = CMTimeMinimum(CMTime(value: 1, timescale: 30), source.duration)
+                    try videoTracks[i % 2].insertTimeRange(CMTimeRange(start: source.start, duration: frame),
+                                                           of: item.video, at: time(cursor))
+                    videoTracks[i % 2].scaleTimeRange(CMTimeRange(start: time(cursor), duration: frame),
+                                                      toDuration: time(item.freeze))
+                }
+                try videoTracks[i % 2].insertTimeRange(source, of: item.video, at: time(cursor + item.freeze))
             } catch {
                 let ns = error as NSError
                 Log.error("Video insert failed for \(item.segment.url.lastPathComponent) range \(source.start.seconds)+\(source.duration.seconds): \(ns.domain) \(ns.code) \(ns.userInfo)")
@@ -439,14 +474,14 @@ enum ReelComposer {
                 if !overlap.isEmpty, overlap.duration.seconds > 0.05 {
                     let offset = overlap.start - source.start
                     do {
-                        try audioTracks[i % 2].insertTimeRange(overlap, of: audio, at: time(cursor) + offset)
+                        try audioTracks[i % 2].insertTimeRange(overlap, of: audio, at: time(cursor + item.freeze) + offset)
                     } catch {
                         let ns = error as NSError
                         Log.error("Audio insert failed for \(item.segment.url.lastPathComponent): \(ns.domain) \(ns.code); continuing without its sound")
                     }
                 }
             }
-            cursor += item.segment.duration - (i < n - 1 ? overlaps[i] : 0)
+            cursor += item.length - (i < n - 1 ? overlaps[i] : 0)
         }
         let total = cursor
 
@@ -470,7 +505,7 @@ enum ReelComposer {
         }
         for i in 0..<n {
             let soloStart = starts[i] + (i > 0 ? overlaps[i - 1] : 0)
-            let soloEnd = starts[i] + loaded[i].segment.duration - (i < n - 1 ? overlaps[i] : 0)
+            let soloEnd = starts[i] + loaded[i].length - (i < n - 1 ? overlaps[i] : 0)
             instruction(soloStart, soloEnd, [layer(i, at: soloStart)])
             if i < n - 1, overlaps[i] > 0 {
                 let from = soloEnd, to = soloEnd + overlaps[i]
@@ -499,8 +534,20 @@ enum ReelComposer {
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(options.frameRate))
         videoComposition.instructions = instructions
 
-        if options.showClipNames, !forPlayback {
-            videoComposition.animationTool = captionTool(loaded: loaded, starts: starts, overlaps: overlaps,
+        // Where and when each spotlight ring shows.
+        let spots: [SpotlightTiming?] = loaded.enumerated().map { i, item in
+            guard item.freeze > 0, let spot = item.segment.spotlight else { return nil }
+            let base = item.segment.crop ?? CGRect(origin: .zero, size: item.natural)
+            let shown = base.applying(item.transform).standardized
+            let visible = starts[i] + (i > 0 ? overlaps[i - 1] : 0)
+            return SpotlightTiming(center: CGPoint(x: shown.minX + spot.x * shown.width, y: shown.minY + spot.y * shown.height),
+                                   radius: spot.radius * shown.height,
+                                   start: visible, playStart: starts[i] + item.freeze)
+        }
+
+        if !forPlayback, options.showClipNames || spots.contains(where: { $0 != nil }) {
+            videoComposition.animationTool = overlayTool(loaded: loaded, starts: starts, overlaps: overlaps, spots: spots,
+                                                         captions: options.showClipNames,
                                                          renderSize: renderSize, accent: accent)
         }
 
@@ -509,7 +556,7 @@ enum ReelComposer {
         if audioTracks.count == 2 {
             let params = audioTracks.map { AVMutableAudioMixInputParameters(track: $0) }
             for i in 0..<(n - 1) where overlaps[i] > 0 {
-                let from = starts[i] + loaded[i].segment.duration - overlaps[i]
+                let from = starts[i] + loaded[i].length - overlaps[i]
                 let range = CMTimeRange(start: time(from), duration: time(overlaps[i]))
                 params[i % 2].setVolumeRamp(fromStartVolume: 1, toEndVolume: 0, timeRange: range)
                 params[(i + 1) % 2].setVolumeRamp(fromStartVolume: 0, toEndVolume: 1, timeRange: range)
@@ -524,10 +571,10 @@ enum ReelComposer {
             var caption: (start: Double, duration: Double)?
             if options.showClipNames, !item.segment.isCard,
                let title = item.segment.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty {
-                caption = captionTiming(visibleStart: visible, duration: item.segment.duration)
+                caption = captionTiming(visibleStart: max(visible, starts[i] + item.freeze), duration: item.segment.duration)
             }
             return Piece(id: i, segment: item.segment, start: starts[i], visibleStart: visible,
-                         duration: item.segment.duration, caption: caption)
+                         duration: item.length, caption: caption, spotlight: spots[i])
         }
 
         Log.info("Composed reel\(forPlayback ? " for preview" : ""): \(n) pieces, \(String(format: "%.1f", total))s at \(Int(renderSize.width))x\(Int(renderSize.height))")
@@ -619,8 +666,9 @@ enum ReelComposer {
     }
 
     /// Lower-third captions with each clip's name, faded in and out near the start of the clip.
-    private static func captionTool(loaded: [Loaded], starts: [Double], overlaps: [Double],
-                                    renderSize: CGSize, accent: CGColor) -> AVVideoCompositionCoreAnimationTool {
+    /// Clip-name captions and spotlight rings, drawn over the video when exporting.
+    private static func overlayTool(loaded: [Loaded], starts: [Double], overlaps: [Double], spots: [SpotlightTiming?],
+                                    captions: Bool, renderSize: CGSize, accent: CGColor) -> AVVideoCompositionCoreAnimationTool {
         let scale = renderSize.height / 1080
         let parent = CALayer()
         parent.frame = CGRect(origin: .zero, size: renderSize)
@@ -628,9 +676,13 @@ enum ReelComposer {
         video.frame = parent.frame
         parent.addSublayer(video)
 
-        for (i, item) in loaded.enumerated() where !item.segment.isCard {
+        for spot in spots.compactMap({ $0 }) {
+            addSpotlight(spot, to: parent, renderSize: renderSize, scale: scale, accent: accent)
+        }
+
+        for (i, item) in loaded.enumerated() where captions && !item.segment.isCard {
             guard let title = item.segment.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty else { continue }
-            let timing = captionTiming(visibleStart: starts[i] + (i > 0 ? overlaps[i - 1] : 0),
+            let timing = captionTiming(visibleStart: max(starts[i] + (i > 0 ? overlaps[i - 1] : 0), starts[i] + item.freeze),
                                        duration: item.segment.duration)
             let visibleStart = timing.start, visibleFor = timing.duration
 
@@ -676,6 +728,63 @@ enum ReelComposer {
             parent.addSublayer(box)
         }
         return AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: video, in: parent)
+    }
+
+    /// The spotlight: everything but the athlete dims while the frame is held, and a ring in the
+    /// team color snaps in around them, staying a moment after play starts.
+    private static func addSpotlight(_ spot: SpotlightTiming, to parent: CALayer, renderSize: CGSize,
+                                     scale: CGFloat, accent: CGColor) {
+        // Core Animation's origin is bottom-left.
+        let center = CGPoint(x: spot.center.x, y: renderSize.height - spot.center.y)
+        let r = max(spot.radius, 20 * scale)
+        let hole = CGRect(x: center.x - r * 1.15, y: center.y - r * 1.15, width: r * 2.3, height: r * 2.3)
+        let dimEnd = spot.playStart + 0.25
+        let ringEnd = spot.playStart + 0.8
+
+        let dim = CAShapeLayer()
+        dim.frame = parent.bounds
+        let path = CGMutablePath()
+        path.addRect(parent.bounds)
+        path.addEllipse(in: hole)
+        dim.path = path
+        dim.fillRule = .evenOdd
+        dim.fillColor = CGColor(gray: 0, alpha: 0.55)
+        dim.opacity = 0
+        dim.add(keyframes("opacity", [0, 1, 1, 0],
+                          times: [spot.start, spot.start + 0.25, spot.playStart, dimEnd]), forKey: "dim")
+        parent.addSublayer(dim)
+
+        let ring = CAShapeLayer()
+        ring.bounds = CGRect(x: 0, y: 0, width: r * 2, height: r * 2)
+        ring.position = center
+        ring.path = CGPath(ellipseIn: ring.bounds, transform: nil)
+        ring.fillColor = nil
+        ring.strokeColor = accent
+        ring.lineWidth = 8 * scale
+        ring.shadowColor = CGColor(gray: 0, alpha: 1)
+        ring.shadowOpacity = 0.6
+        ring.shadowRadius = 10 * scale
+        ring.shadowOffset = .zero
+        ring.opacity = 0
+        ring.add(keyframes("opacity", [0, 1, 1, 0],
+                           times: [spot.start, spot.start + 0.2, ringEnd - 0.3, ringEnd]), forKey: "ringFade")
+        ring.add(keyframes("transform.scale", [1.9, 1.0, 1.0],
+                           times: [spot.start, spot.start + 0.35, ringEnd]), forKey: "ringScale")
+        parent.addSublayer(ring)
+    }
+
+    /// A one-shot keyframe animation at absolute reel times.
+    private static func keyframes(_ keyPath: String, _ values: [Double], times: [Double]) -> CAKeyframeAnimation {
+        let begin = times.first ?? 0
+        let total = max(0.01, (times.last ?? 0) - begin)
+        let animation = CAKeyframeAnimation(keyPath: keyPath)
+        animation.values = values
+        animation.keyTimes = times.map { NSNumber(value: ($0 - begin) / total) }
+        animation.beginTime = AVCoreAnimationBeginTimeAtZero + begin
+        animation.duration = total
+        animation.isRemovedOnCompletion = false
+        animation.fillMode = .both
+        return animation
     }
 }
 

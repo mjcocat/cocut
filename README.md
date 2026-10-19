@@ -129,6 +129,8 @@ A handheld or panning camera confuses it.
 
 **Players** (jersey numbers) can be listed on each clip, from Find Rallies or typed under the player. The filter button's **Player** section shows every clip with that player. **+ › Team Roster…** adds names, so numbers read "#11 Lilah".
 
+**Spotlight** your athlete so coaches know who to watch. Select a clip and click **Spotlight** under the player. Cocut shows the clip's first frame: click your athlete, drag to fine-tune, and size the ring with the slider. **Save & Next** (Return) saves and moves to the next clip, so circling every rally goes quickly. In the reel, that first frame holds for about 1.4 seconds while the rest of the picture dims and a ring in your team color snaps in around the athlete; then play rolls. Set the clip's trim so it starts on a good frame. Reel Preview shows spotlights too, and **Export › Player spotlights** turns them all off at once.
+
 **Ratings** put your best plays first. Coaches often watch only the first 30–60 seconds.
 - Rate a clip with the stars under the player, or select clips and press **1–5** (**0** clears). Right-click › **Rating** works on several clips at once.
 - The **Sort** button (↑↓) in the list footer › **Best Rated First** sorts each section best-first. Unrated clips go last, and ties keep their order.
