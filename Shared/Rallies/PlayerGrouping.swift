@@ -5,13 +5,18 @@ import Foundation
 /// Groups the followed stretches of players (tracks) into people, so Cocut asks "who's this?"
 /// once per person instead of once per stretch.
 ///
-/// - Stretches that look alike are joined, most alike first, as long as the joined person still
-///   looks consistent. Two stretches seen in the same moment are never joined: they're different
-///   people, which is what keeps teammates in the same uniform apart.
+/// - Players Cocut is sure of come first: stretches you identified, and stretches whose number was
+///   read clearly. Each number's stretches make one known player.
+/// - The other stretches are joined into people only when they look like *most* of each other,
+///   not just like one of them. So a chain of look-alikes (A like B, B like C) never makes A and C
+///   the same person, which is what used to merge different teammates.
+/// - A person nobody vouches for is then matched to a known player only when they look clearly
+///   more like that player than like any other. Matched people stay separate, so they never pull
+///   further people in.
+/// - Two stretches seen in the same moment are never the same person, and stretches you said
+///   aren't someone (unticked in Who's This?) are never joined to them.
 /// - How alike counts as "the same person" is learned from the film itself: the two halves of one
 ///   stretch are the same person; two players on screen together are not.
-/// - A person's number is the majority of the numbers read on all their stretches, so an
-///   occasional misread is outvoted. People you identified keep your answer.
 enum PlayerGrouping {
     struct Person: Identifiable, Sendable, Hashable {
         var id: Int
@@ -41,15 +46,37 @@ enum PlayerGrouping {
         var threshold: Float
         /// Frames of single players in all.
         var totalFrames: Int
+        /// Players known from an answer or a clear read, which the rest are matched to.
+        var anchors: Int = 0
+        /// People matched to a known player by how they look.
+        var matched: Int = 0
     }
+
+    // Tuning, in one place so each change can be scored with Check Accuracy.
+    /// Share of stretch pairs between two people that must look alike to join them.
+    static let linkShare: Float = 0.6
+    /// How far under the threshold the two people's average likeness may be.
+    static let linkSlack: Float = 0.03
+    /// Stretches compared per person (their longest), to keep joining quick.
+    static let sampleSize = 12
+    /// The most stretches a person nobody vouches for can grow to.
+    static let maxUnvouched = 40
+    /// How much more a person must look like one known player than the next to be matched.
+    static let matchMargin: Float = 0.04
+    /// A known player's closest stretches that count when matching someone to them.
+    static let matchTop = 3
+    /// A known player's stretches compared when matching (their longest).
+    static let referenceSize = 60
 
     /// - Parameters:
     ///   - taughtTracks: stretches the user identified.
+    ///   - notTracks: stretches the user said aren't a player (track → numbers it isn't).
     ///   - remembered: appearance prints (without jersey color) of players known from earlier
     ///     matches or clicked on a frame, by number.
     ///   - strictness: added to the learned threshold when matching undecided people to known
     ///     players (negative is looser).
     static func group(sightings: [RallyDetector.PersonSighting], taughtTracks: [Int: Int],
+                      notTracks: [Int: Set<Int>] = [:],
                       remembered: [Int: [[Float]]], strictness: Float = 0) -> Result {
         guard let printDims = sightings.first?.print.count, printDims > 0 else {
             return Result(people: [], decisions: [:], groupTracks: [], threshold: 0, totalFrames: 0)
@@ -110,8 +137,9 @@ enum PlayerGrouping {
 
         // 3. Similarities, a block of rows at a time (a full n×n table is too big on a long film):
         //    each stretch's closest look-alikes, and players on screen together.
-        var matrix = [Float](repeating: 0, count: n * dims)
-        for (i, s) in stretches.enumerated() { matrix.replaceSubrange(i * dims..<(i + 1) * dims, with: s.vector) }
+        var filling = [Float](repeating: 0, count: n * dims)
+        for (i, s) in stretches.enumerated() { filling.replaceSubrange(i * dims..<(i + 1) * dims, with: s.vector) }
+        let matrix = filling
         var transposed = [Float](repeating: 0, count: n * dims)
         vDSP_mtrans(matrix, 1, &transposed, 1, vDSP_Length(dims), vDSP_Length(n))
         var neighbors: [[(Float, Int)]] = Array(repeating: [], count: n)
@@ -138,6 +166,16 @@ enum PlayerGrouping {
                 neighbors[i] = Array(near.sorted { $0.0 > $1.0 }.prefix(20))
             }
         }
+        transposed = []
+        rows = []
+        /// How alike two stretches look.
+        func sim(_ i: Int, _ j: Int) -> Float {
+            var r: Float = 0
+            matrix.withUnsafeBufferPointer { m in
+                vDSP_dotpr(m.baseAddress! + i * dims, 1, m.baseAddress! + j * dims, 1, &r, vDSP_Length(dims))
+            }
+            return r
+        }
 
         // 4. Learn "same person" from the film: halves of long stretches vs. players on screen together.
         var same: [Float] = []
@@ -153,63 +191,109 @@ enum PlayerGrouping {
         }
         let threshold = bestSplit(same: same, different: different)
 
-        // 5. Join stretches into people, most alike first.
+        // 5. People. Each starts as one stretch; `root` is the stretch that stands for the person.
         var parent = Array(0..<n)
         func find(_ x: Int) -> Int {
             var x = x
             while parent[x] != x { parent[x] = parent[parent[x]]; x = parent[x] }
             return x
         }
-        var sums = stretches.map(\.vector)
+        var members: [[Int]] = (0..<n).map { [$0] }
         var spans: [[(Double, Double)]] = stretches.map { [($0.start, $0.end)] }
+        /// What you said they are.
         var label: [Int?] = stretches.map { taughtTracks[$0.track] }
+        /// Numbers you said they aren't.
+        var nots: [Set<Int>] = stretches.map { notTracks[$0.track] ?? [] }
         var readVotes: [[Int: Int]] = stretches.map(\.reads)
+        /// Who they're vouched to be: your answer, else a clear read (unless you said they aren't).
+        var vouched: [Int?] = (0..<n).map { i in
+            if let l = label[i] { return l == RallyDetector.otherTeam ? nil : l }
+            guard let read = strongRead(stretches[i].reads), !nots[i].contains(read) else { return nil }
+            return read
+        }
+        /// Answered (including "not our team") or vouched for: never joined by look alone.
+        func known(_ r: Int) -> Bool { label[r] != nil || vouched[r] != nil }
+        func identity(_ r: Int) -> Int? { label[r] ?? vouched[r] ?? strongRead(readVotes[r]) }
+
         func compatible(_ a: Int, _ b: Int) -> Bool {
             // Not on screen at the same time.
             for x in spans[a] { for y in spans[b] where x.0 <= y.1 + 0.25 && y.0 <= x.1 + 0.25 { return false } }
             // Not identified as different people.
             if let la = label[a], let lb = label[b], la != lb { return false }
+            if let va = vouched[a], let vb = vouched[b], va != vb { return false }
+            // Not said to be someone the other isn't.
+            if let ia = identity(a), nots[b].contains(ia) { return false }
+            if let ib = identity(b), nots[a].contains(ib) { return false }
             // Not clearly read as different numbers.
             if let ra = strongRead(readVotes[a]), let rb = strongRead(readVotes[b]), ra != rb { return false }
             return true
         }
         func join(_ a: Int, _ b: Int) {
             parent[b] = a
-            sums[a] = vDSP.add(sums[a], sums[b])
+            members[a].append(contentsOf: members[b])
+            members[b] = []
             spans[a].append(contentsOf: spans[b])
             if label[a] == nil { label[a] = label[b] }
+            if vouched[a] == nil { vouched[a] = vouched[b] }
+            nots[a].formUnion(nots[b])
             for (k, v) in readVotes[b] { readVotes[a][k, default: 0] += v }
         }
-        // Stretches you identified as the same player belong together.
-        // ("Not our team" covers many different people, so those aren't joined just for the label.)
-        let taughtGroups = Dictionary(grouping: (0..<n).filter { label[$0] != nil && label[$0] != RallyDetector.otherTeam },
-                                      by: { label[$0]! })
-        for (_, same) in taughtGroups {
-            for m in same.dropFirst() {
-                let a = find(same[0]), b = find(m)
+
+        // 5a. Known players: each number's answered stretches, then its clearly read ones (longest
+        //     first), make one person. A stretch that clashes (on screen at the same moment, so a
+        //     misread) stays on its own.
+        let byNumber = Dictionary(grouping: (0..<n).filter { vouched[$0] != nil }, by: { vouched[$0]! })
+        for (_, list) in byNumber {
+            let ordered = list.sorted { a, b in
+                let ta = label[a] != nil, tb = label[b] != nil
+                if ta != tb { return ta }
+                return stretches[a].members.count > stretches[b].members.count
+            }
+            for m in ordered.dropFirst() {
+                let a = find(ordered[0]), b = find(m)
                 if a != b, compatible(a, b) { join(a, b) }
             }
         }
+
+        // 5b. Everyone else: join look-alikes, most alike first, only when the two people look like
+        //     most of each other's stretches (compared on their longest ones).
+        func representatives(_ list: [Int], _ limit: Int) -> [Int] {
+            guard list.count > limit else { return list }
+            return Array(list.sorted { stretches[$0].members.count > stretches[$1].members.count }.prefix(limit))
+        }
+        func linked(_ a: [Int], _ b: [Int]) -> Bool {
+            let ra = representatives(a, sampleSize), rb = representatives(b, sampleSize)
+            var close = 0
+            var total: Float = 0
+            for x in ra {
+                for y in rb {
+                    let s = sim(x, y)
+                    total += s
+                    if s >= threshold { close += 1 }
+                }
+            }
+            let pairs = Float(ra.count * rb.count)
+            return Float(close) >= (linkShare * pairs).rounded(.up) && total / pairs >= threshold - linkSlack
+        }
         var pairs: [(Float, Int, Int)] = []
         for i in 0..<n {
-            for (sim, j) in neighbors[i] where sim >= threshold && i < j { pairs.append((sim, i, j)) }
-            for (sim, j) in neighbors[i] where sim >= threshold && j < i
-                && !neighbors[j].contains(where: { $0.1 == i }) { pairs.append((sim, j, i)) }
+            for (s, j) in neighbors[i] where s >= threshold && i < j { pairs.append((s, i, j)) }
+            for (s, j) in neighbors[i] where s >= threshold && j < i
+                && !neighbors[j].contains(where: { $0.1 == i }) { pairs.append((s, j, i)) }
         }
         pairs.sort { $0.0 > $1.0 }
         for (_, i, j) in pairs {
             let a = find(i), b = find(j)
-            guard a != b, compatible(a, b) else { continue }
-            // The joined person must still look like one person.
-            if RallyDetector.dot(unit(sums[a]), unit(sums[b])) >= threshold { join(a, b) }
+            guard a != b, !known(a), !known(b), members[a].count + members[b].count <= maxUnvouched,
+                  compatible(a, b), linked(members[a], members[b]) else { continue }
+            join(a, b)
         }
 
         // 6. Who each person is.
-        var personStretches: [Int: [Int]] = [:]
-        for i in 0..<n { personStretches[find(i), default: []].append(i) }
         var people: [Person] = []
         var rootOf: [Int: Int] = [:] // person id → root stretch index
-        for (root, list) in personStretches {
+        for root in 0..<n where parent[root] == root {
+            let list = members[root]
             let frames = list.reduce(0) { $0 + stretches[$1].members.count }
             var trackFrames: [Int: Int] = [:]
             for idx in list { trackFrames[stretches[idx].track] = stretches[idx].members.count }
@@ -220,7 +304,7 @@ enum PlayerGrouping {
             if let taught = label[root] {
                 person.number = taught
                 person.source = .taught
-            } else if let read = strongRead(readVotes[root]) {
+            } else if let read = vouched[root] ?? strongRead(readVotes[root]), !nots[root].contains(read) {
                 person.number = read
                 person.source = .read
             }
@@ -228,41 +312,73 @@ enum PlayerGrouping {
             people.append(person)
         }
 
-        // 7. Undecided people: whoever they look most like among decided people (and players
-        //    remembered from earlier matches), when clearly so.
-        var centroid: [Int: [Float]] = [:]
-        var printCentroid: [Int: [Float]] = [:]
-        for (root, list) in personStretches {
-            centroid[root] = unit(sums[root])
-            var p = [Float](repeating: 0, count: printDims)
-            for idx in list { p = vDSP.add(p, stretches[idx].printOnly) }
-            printCentroid[root] = unit(p)
+        // 7. Undecided people: the known player they look clearly most like (or a player remembered
+        //    from earlier matches). Compared stretch by stretch with the known player's closest
+        //    stretches, so a player seen a lot doesn't blur into an average.
+        struct Reference {
+            var number: Int
+            var root: Int
+            /// The reference's stretches, transposed (dims × count) for one multiply.
+            var transposed: [Float]
+            var count: Int
         }
-        let decided = people.filter { $0.number != nil }
+        var references: [Reference] = []
+        for p in people where p.source == .taught || p.source == .read {
+            guard let number = p.number, let root = rootOf[p.id] else { continue }
+            let list = representatives(members[root], referenceSize)
+            var block = [Float](repeating: 0, count: list.count * dims)
+            for (k, idx) in list.enumerated() {
+                block.replaceSubrange(k * dims..<(k + 1) * dims, with: matrix[idx * dims..<(idx + 1) * dims])
+            }
+            var t = [Float](repeating: 0, count: list.count * dims)
+            vDSP_mtrans(block, 1, &t, 1, vDSP_Length(dims), vDSP_Length(list.count))
+            references.append(Reference(number: number, root: root, transposed: t, count: list.count))
+        }
         var rememberedVectors: [(Int, [Float])] = []
         for (number, prints) in remembered { for p in prints where p.count == printDims { rememberedVectors.append((number, unit(p))) } }
+
+        var matched = 0
         for i in people.indices where people[i].number == nil {
-            guard let root = rootOf[people[i].id], let mine = centroid[root] else { continue }
+            guard let root = rootOf[people[i].id] else { continue }
+            let reps = representatives(members[root], sampleSize)
+            var mine = [Float](repeating: 0, count: reps.count * dims)
+            for (k, idx) in reps.enumerated() {
+                mine.replaceSubrange(k * dims..<(k + 1) * dims, with: matrix[idx * dims..<(idx + 1) * dims])
+            }
             var bestByNumber: [Int: Float] = [:]
-            for other in decided {
-                guard let r = rootOf[other.id], let c = centroid[r], let num = other.number else { continue }
-                let sim = RallyDetector.dot(mine, c)
-                if sim > (bestByNumber[num] ?? -1) { bestByNumber[num] = sim }
+            for ref in references {
+                // Not someone on screen at the same moment, or someone you said they aren't. "Not
+                // our team" is many people, so being on screen with some of them rules nothing out.
+                guard !nots[root].contains(ref.number),
+                      compatible(root, ref.root) || label[ref.root] == RallyDetector.otherTeam else { continue }
+                var sims = [Float](repeating: 0, count: reps.count * ref.count)
+                vDSP_mmul(mine, 1, ref.transposed, 1, &sims, 1,
+                          vDSP_Length(reps.count), vDSP_Length(ref.count), vDSP_Length(dims))
+                var score: Float = 0
+                let k = min(matchTop, ref.count)
+                for r in 0..<reps.count {
+                    let top = sims[(r * ref.count)..<((r + 1) * ref.count)].sorted(by: >).prefix(k)
+                    score += top.reduce(0, +) / Float(k)
+                }
+                score /= Float(reps.count)
+                if score > (bestByNumber[ref.number] ?? -1) { bestByNumber[ref.number] = score }
             }
             // Remembered players are compared by look alone (their uniform may have changed).
-            if let mineLook = printCentroid[root] {
-                for (num, p) in rememberedVectors {
-                    let sim = RallyDetector.dot(mineLook, p) - 0.03
-                    if sim > (bestByNumber[num] ?? -1) { bestByNumber[num] = sim }
-                }
+            var look = [Float](repeating: 0, count: printDims)
+            for idx in members[root] { look = vDSP.add(look, stretches[idx].printOnly) }
+            look = unit(look)
+            for (num, p) in rememberedVectors where !nots[root].contains(num) {
+                let s = RallyDetector.dot(look, p) - 0.03
+                if s > (bestByNumber[num] ?? -1) { bestByNumber[num] = s }
             }
             let ranked = bestByNumber.sorted { $0.value > $1.value }
             guard let top = ranked.first else { continue }
             people[i].guess = top.key
             let second = ranked.count > 1 ? ranked[1].value : -1
-            if top.value >= threshold + strictness && top.value - second >= 0.03 {
+            if top.value >= threshold + strictness && top.value - second >= matchMargin {
                 people[i].number = top.key
                 people[i].source = .matched
+                matched += 1
             }
         }
 
@@ -280,7 +396,8 @@ enum PlayerGrouping {
         }
         let total = people.reduce(0) { $0 + $1.frames }
         return Result(people: people.sorted { $0.frames > $1.frames }, decisions: decisions, groupTracks: groupTracks,
-                      threshold: threshold, totalFrames: total)
+                      threshold: threshold, totalFrames: total,
+                      anchors: references.filter { $0.number >= 0 }.count, matched: matched)
     }
 
     /// The number read on a stretch or person when it clearly wins: at least 3 reads and 60%.
