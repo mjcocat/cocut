@@ -3,6 +3,15 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.34.0
+- A cleaner look throughout: one consistent style for panels, banners and labels, in Light and Dark Mode.
+- Record is a red button in the toolbar again, with Full Screen and Same Region in the menu next to it. Import and Find Rallies are in the toolbar too. Undo and Redo are in the Edit menu (⌘Z, ⇧⌘Z).
+- The sidebar shows your reel at a glance, with Preview and Export.
+- Clip details: name and an In Reel switch on top, then Trim, Spotlight and stars. Move to Trash is in the ··· menu.
+- The selected clip plays in a framed picture instead of a big black area.
+- Export and section settings are tidy grouped forms.
+- Find Rallies: Team Roster and Identify Players are in the toolbar; the bottom bar is just what you're keeping and Add to Clips (⌘Return).
+
 ## 0.33.0
 - In Who's This?, a number you type under Other # joins your Team Roster, so it's a button for the next questions.
 - Click anywhere on a close-up in Who's This? to tick or untick it.
