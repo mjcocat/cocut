@@ -1,0 +1,34 @@
+# What's new in Cocut
+
+Each version's changes, newest first. The update window shows the entries for every version newer
+than the one you have. Keep each line short and about what you'll notice.
+
+## 0.27.0
+- Identify Players and Check Accuracy open in their own windows on the Mac, so you can move them anywhere and size them freely.
+- The Who's This? progress bar starts at 0% on each match and counts up as you answer. The first answers, about the players seen most, move it the most.
+- The update window shows what's new in each version since yours.
+
+## 0.26.0
+- Who's This? is a fixed page: the picture and close-ups resize with the window, and the number buttons are always in view.
+- Every stretch of a person gets a close-up you can untick, clearest first.
+- When most players are sorted out, Who's This? offers to stop.
+- After Find Rallies, a slim bar suggests the next step: roster, warm-up, identify players, then use the rallies. Hide it with ×.
+
+## 0.25.0
+- With a Team Roster, a rally lists at most six of your players: the six seen most in it.
+- Who's This? asks only about people seen during rallies and seen clearly, most useful first, and says about how many more are worth answering.
+- Right-click a rally › Leave Out Earlier Rallies, for the warm-up and lineup.
+
+## 0.24.0
+- Timeouts are left out of the rallies.
+- A number read only a few times no longer labels a whole group of look-alikes.
+- Rally player lists fill in short gaps and drop strays using the rallies around them.
+
+## 0.23.0
+- Point at a close-up in Who's This? to see it big, or magnify the frame. Pinch on iPhone and iPad.
+- Check Accuracy has a bigger video, Magnify (Z) and Play/Pause (Space).
+
+## 0.22.0
+- Players are grouped more carefully, so teammates in the same uniform are mixed up less often.
+- Who's This? shows a close-up from each time a player was followed: untick any that aren't them.
+- New Check Accuracy: mark which rallies a player is really in, and see how well Cocut lists them.

@@ -25,6 +25,23 @@ struct CocutApp: App {
         .restorationBehavior(.disabled)
         .commandsRemoved()
 
+        // Their own windows (not sheets), so they can be moved off the Find Rallies window.
+        Window("Identify Players", id: "identify") {
+            IdentifyPlayersWindow()
+                .environment(model)
+        }
+        .defaultSize(width: 1440, height: 900)
+        .restorationBehavior(.disabled)
+        .commandsRemoved()
+
+        Window("Check Accuracy", id: "accuracy") {
+            CheckAccuracyWindow()
+                .environment(model)
+        }
+        .defaultSize(width: 1440, height: 900)
+        .restorationBehavior(.disabled)
+        .commandsRemoved()
+
         Window("Reel Preview", id: "preview") {
             ReelPreviewView()
                 .environment(model)

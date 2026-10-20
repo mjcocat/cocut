@@ -11,6 +11,15 @@ final class Updater {
         let notes: String
         let downloadURL: URL
         let pageURL: URL
+        /// What's new in each version from the one installed up to this one, newest first.
+        var whatsNew: [Changes] = []
+    }
+
+    /// One version's entry in CHANGELOG.md.
+    struct Changes: Equatable, Identifiable {
+        var version: String
+        var items: [String]
+        var id: String { version }
     }
 
     enum State: Equatable {
@@ -203,13 +212,48 @@ final class Updater {
             throw UpdateError.missingAsset
         }
         let version = payload.tagName.hasPrefix("v") ? String(payload.tagName.dropFirst()) : payload.tagName
-        return Release(
+        var release = Release(
             version: version,
             name: payload.name?.isEmpty == false ? payload.name! : "Cocut \(version)",
             notes: payload.body ?? "",
             downloadURL: asset.browserDownloadURL,
             pageURL: payload.htmlURL
         )
+        release.whatsNew = await fetchWhatsNew(tag: payload.tagName, upTo: version)
+        return release
+    }
+
+    /// The CHANGELOG.md entries newer than this app, up to `version`, from the release's own
+    /// copy. Empty if it can't be read (the update is still offered).
+    private func fetchWhatsNew(tag: String, upTo version: String) async -> [Changes] {
+        guard let url = URL(string: "https://raw.githubusercontent.com/\(Self.repo)/\(tag)/CHANGELOG.md") else { return [] }
+        var request = URLRequest(url: url)
+        request.setValue("Cocut/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 15
+        guard let result = try? await URLSession.shared.data(for: request),
+              (result.1 as? HTTPURLResponse)?.statusCode == 200,
+              let text = String(data: result.0, encoding: .utf8) else { return [] }
+        let installed = currentVersion
+        return Self.parseChangelog(text).filter {
+            Self.isVersion($0.version, newerThan: installed) && !Self.isVersion($0.version, newerThan: version)
+        }
+    }
+
+    /// Reads "## 1.2.3" headings and "- " items (a line indented under an item continues it).
+    static func parseChangelog(_ text: String) -> [Changes] {
+        var out: [Changes] = []
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("## ") {
+                let version = line.dropFirst(3).trimmingCharacters(in: .whitespaces)
+                out.append(Changes(version: version.hasPrefix("v") ? String(version.dropFirst()) : version, items: []))
+            } else if !out.isEmpty, line.hasPrefix("- ") || line.hasPrefix("* ") {
+                out[out.count - 1].items.append(String(line.dropFirst(2)))
+            } else if !out.isEmpty, !line.isEmpty, raw.hasPrefix("  "), !out[out.count - 1].items.isEmpty {
+                out[out.count - 1].items[out[out.count - 1].items.count - 1] += " " + line
+            }
+        }
+        return out.filter { !$0.items.isEmpty }
     }
 
     // MARK: Installing

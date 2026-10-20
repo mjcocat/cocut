@@ -278,7 +278,30 @@ final class RallyFinder {
     /// Share of player time during rallies that's still undecided and askable, 0...1.
     var unknownRallyShare: Double {
         guard rallyPlayerFrames > 0 else { return 0 }
-        return Double(reviewQueue.reduce(0) { $0 + (worthAsking[$1.id] ?? 0) }) / Double(rallyPlayerFrames)
+        return Double(unknownRallyFrames) / Double(rallyPlayerFrames)
+    }
+
+    /// Player time during rallies (frames) still worth asking about.
+    var unknownRallyFrames: Int { reviewQueue.reduce(0) { $0 + (worthAsking[$1.id] ?? 0) } }
+
+    /// Who's This? progress for this match, 0...1: how much of what was left to sort out when it
+    /// started is done. The first answers (the people seen most) move it a lot, glimpses barely.
+    /// Never goes back down, even when an unticked close-up makes someone be asked about again.
+    var identifyProgress: Double {
+        if identifyMostlyDone { return 1 }
+        guard let start = guide.identifyStart, start > 0 else { return 0 }
+        let done = 1 - Double(unknownRallyFrames) / Double(start)
+        return max(identifyBest, min(1, max(0, done)))
+    }
+    @ObservationIgnored private var identifyBest: Double = 0
+
+    /// The questions left would barely change any rally's list: under a fifth of what was left
+    /// when Who's This? started, under a tenth of all player time in rallies, or none worth asking.
+    var identifyMostlyDone: Bool {
+        guard canTeach, !people.isEmpty else { return false }
+        if suggestedQuestions == 0 || unknownRallyShare < 0.1 { return true }
+        if let start = guide.identifyStart, start > 0 { return Double(unknownRallyFrames) <= 0.2 * Double(start) }
+        return false
     }
 
     /// Recounts `worthAsking` after people or rallies change.
@@ -306,6 +329,13 @@ final class RallyFinder {
         }
         worthAsking = out
         rallyPlayerFrames = total
+        // Where Who's This? starts from on this match: the first time people are worked out.
+        if guide.identifyStart == nil, !people.isEmpty {
+            guide.identifyStart = unknownRallyFrames
+        }
+        if let start = guide.identifyStart, start > 0 {
+            identifyBest = max(identifyBest, min(1, max(0, 1 - Double(unknownRallyFrames) / Double(start))))
+        }
     }
 
     /// Share of all player time (frames of single players) that is identified, 0...1.
@@ -523,7 +553,7 @@ final class RallyFinder {
         case .identify:
             guard canTeach else { return true }
             guard !people.isEmpty, !isMatching else { return false }
-            return unknownRallyShare < 0.1 || suggestedQuestions == 0
+            return identifyMostlyDone
         case .use:
             return guide.used
         }
@@ -825,6 +855,7 @@ final class RallyFinder {
         notTracks = [:]
         truth = []
         guide = MatchStore.Guide()
+        identifyBest = 0
         if let project = projectDirectory() {
             memory = PlayerMemory.load(project: project)
             // Players remembered with an older appearance model can't be compared: start over.
@@ -870,6 +901,8 @@ final class RallyFinder {
                     taughtClicks[number, default: 0] += 1
                 }
                 if !saved.rallies.isEmpty { rallies = saved.rallies }
+                // No answers yet (or they were cleared): Who's This? starts again from 0%.
+                if taughtTracks.isEmpty, skippedTracks.isEmpty, notTracks.isEmpty { guide.identifyStart = nil }
                 Log.info("Restored \(taughtTracks.count) answers, \(saved.rallies.count) rallies and \(truth.count) accuracy marks")
             }
             if !memory.examples.isEmpty {
@@ -919,6 +952,7 @@ final class RallyFinder {
         notTracks = [:]
         truth = []
         guide = MatchStore.Guide()
+        identifyBest = 0
         autoListed = [:]
         unsmoothedListed = [:]
         baselineListed = [:]
@@ -994,6 +1028,7 @@ final class RallyFinder {
         notTracks = [:]
         truth = []
         guide = MatchStore.Guide()
+        identifyBest = 0
         autoListed = [:]
         unsmoothedListed = [:]
         baselineListed = [:]
