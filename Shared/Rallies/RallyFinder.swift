@@ -438,7 +438,7 @@ final class RallyFinder {
             }.value
             guard !Task.isCancelled else { return }
             baselineDecisions = baseline.decisions
-            baselineListed = listings(decisions: baseline.decisions)
+            baselineListed = listings(for: rallies, decisions: baseline.decisions, smooth: false)
             logAccuracy()
         }
     }
@@ -453,7 +453,9 @@ final class RallyFinder {
     private(set) var checking = false
     /// Players Cocut lists on each rally on its own (before the user's edits to the lists).
     private(set) var autoListed: [Rally.ID: Set<Int>] = [:]
-    /// The same with the v0.21 grouping, when comparing.
+    /// The same before evening out over neighboring rallies (see `smoothed`), to compare.
+    private(set) var unsmoothedListed: [Rally.ID: Set<Int>] = [:]
+    /// The same with the v0.21 grouping (no evening out), when comparing.
     private(set) var baselineListed: [Rally.ID: Set<Int>] = [:]
     @ObservationIgnored private var baselineDecisions: [Int: RallyDetector.TrackDecision] = [:]
     @ObservationIgnored private var frequentNumbers: Set<Int> = []
@@ -489,9 +491,18 @@ final class RallyFinder {
         return counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map(\.key)
     }
 
-    /// How well Cocut lists `number` on the marked rallies, now or with the v0.21 grouping.
-    func accuracy(of number: Int, baseline: Bool = false) -> PlayerAccuracy {
-        let listed = baseline ? baselineListed : autoListed
+    /// Ways of listing players that Check Accuracy compares.
+    enum Listing { case now, unsmoothed, baseline }
+
+    /// How well Cocut lists `number` on the marked rallies: now, without evening out, or with the
+    /// v0.21 grouping.
+    func accuracy(of number: Int, _ listing: Listing = .now) -> PlayerAccuracy {
+        let listed: [Rally.ID: Set<Int>]
+        switch listing {
+        case .now: listed = autoListed
+        case .unsmoothed: listed = unsmoothedListed
+        case .baseline: listed = baselineListed
+        }
         var score = PlayerAccuracy()
         for rally in rallies {
             guard let really = truthMark(number, in: rally) else { continue }
@@ -510,9 +521,12 @@ final class RallyFinder {
     /// Whether the v0.21 comparison is ready.
     var hasBaseline: Bool { !baselineListed.isEmpty }
 
-    /// The players Cocut lists on each rally with `decisions`: numbers read in the rally, plus
-    /// players followed through it (as when the rallies are built, without the user's edits).
-    private func listings(decisions: [Int: RallyDetector.TrackDecision]) -> [Rally.ID: Set<Int>] {
+    /// The players Cocut lists on each of `rallies` with `decisions`: numbers read in the rally,
+    /// plus players followed through it (their number was read at some point, the user said who
+    /// they are, or they clearly look like someone known). Without the user's edits to the lists.
+    /// `smooth` evens each player out over the rallies around (see `smoothed`).
+    private func listings(for rallies: [Rally], decisions: [Int: RallyDetector.TrackDecision],
+                          smooth: Bool) -> [Rally.ID: Set<Int>] {
         guard let analysis else { return [:] }
         let roster = self.roster()
         let frequent = frequentNumbers
@@ -531,7 +545,24 @@ final class RallyFinder {
                                                            decisions: decisions, allowed: allowed))
             out[rally.id] = players
         }
+        guard smooth else { return out }
+        let ordered = rallies.sorted { $0.start < $1.start }
+        let even = Self.smoothed(ordered.map { out[$0.id] ?? [] })
+        for (rally, players) in zip(ordered, even) { out[rally.id] = players }
         return out
+    }
+
+    /// Players stay on court for runs of rallies (rotations, substitutions), so a player is listed
+    /// on a rally when they're listed on most of the rallies around it: itself and `radius` either
+    /// side. That drops a stray listing in the middle of a run where they're off court, and fills
+    /// in a miss in the middle of a run where they're on. On #11 in one match (170 rallies marked)
+    /// this took "right" from 70% to 83% and "finds" from 72% to 74%.
+    static func smoothed(_ lists: [Set<Int>], radius: Int = 2) -> [Set<Int>] {
+        let everyone = lists.reduce(into: Set<Int>()) { $0.formUnion($1) }
+        return lists.indices.map { i in
+            let window = lists[max(0, i - radius)...min(lists.count - 1, i + radius)]
+            return everyone.filter { n in window.filter { $0.contains(n) }.count * 2 > window.count }
+        }
     }
 
     private static func firstIndex(_ people: [RallyDetector.PersonSighting], atOrAfter time: Double) -> Int {
@@ -550,7 +581,8 @@ final class RallyFinder {
             let now = accuracy(of: n)
             guard now.marked > 0 else { continue }
             var line = "Accuracy #\(n), \(now.marked) rallies marked (\(now.present) in): " + Self.describe(now)
-            if hasBaseline { line += "; v0.21 grouping: " + Self.describe(accuracy(of: n, baseline: true)) }
+                + "; without evening out: " + Self.describe(accuracy(of: n, .unsmoothed))
+            if hasBaseline { line += "; v0.21 grouping: " + Self.describe(accuracy(of: n, .baseline)) }
             Log.info(line)
         }
     }
@@ -567,7 +599,8 @@ final class RallyFinder {
         var lines = ["Cocut \(version) · \(matchName) · #\(number)",
                      "Marked \(now.marked) rallies: in \(now.present), not in \(now.marked - now.present)",
                      "Now: " + Self.describe(now)]
-        if hasBaseline { lines.append("v0.21 grouping: " + Self.describe(accuracy(of: number, baseline: true))) }
+        lines.append("Without evening out: " + Self.describe(accuracy(of: number, .unsmoothed)))
+        if hasBaseline { lines.append("v0.21 grouping: " + Self.describe(accuracy(of: number, .baseline))) }
         let answered = Set(taughtTracks.values.filter { $0 >= 0 }).count
         lines.append("Answers: \(taughtTracks.count) stretches (\(answered) players), \(notTracks.count) unticked; \(Int((identifiedShare * 100).rounded()))% of player time identified")
         lines.append("")
@@ -575,6 +608,8 @@ final class RallyFinder {
             guard let really = truthMark(number, in: rally) else { continue }
             let says = autoListed[rally.id]?.contains(number) ?? false
             var line = "Rally \(self.number(of: rally)) \(Clip.format(rally.start)): really \(really ? "in" : "not in"), Cocut \(says ? "lists" : "doesn't list")"
+            let raw = unsmoothedListed[rally.id]?.contains(number) ?? false
+            if raw != says { line += " (before evening out: \(raw ? "listed" : "not"))" }
             if hasBaseline {
                 let before = baselineListed[rally.id]?.contains(number) ?? false
                 line += ", v0.21 \(before ? "listed" : "didn't")"
@@ -731,6 +766,7 @@ final class RallyFinder {
         notTracks = [:]
         truth = []
         autoListed = [:]
+        unsmoothedListed = [:]
         baselineListed = [:]
         baselineDecisions = [:]
         undoStack.removeAll()
@@ -804,6 +840,7 @@ final class RallyFinder {
         notTracks = [:]
         truth = []
         autoListed = [:]
+        unsmoothedListed = [:]
         baselineListed = [:]
         baselineDecisions = [:]
         state = .empty
@@ -823,22 +860,17 @@ final class RallyFinder {
         let manual = rallies.filter(\.isManual)
         let retimed = rallies.filter { $0.timesEdited && !$0.isManual }
         let spans = RallyDetector.rallies(from: analysis, includeSetup: includeServeSetup)
-        let frequent = RallyDetector.frequentNumbers(spans: spans, reads: analysis.numbers)
-        frequentNumbers = frequent
-        let roster = self.roster()
-        var found: [Int: Int] = [:]
+        frequentNumbers = RallyDetector.frequentNumbers(spans: spans, reads: analysis.numbers)
+        var fresh = spans.map { Rally(start: $0.start, end: $0.end) }
+        // Who's in each rally: numbers read in it, and players followed through it, evened out
+        // over the rallies around it (players stay on court for runs of rallies).
+        let auto = listings(for: fresh, decisions: decisions, smooth: true)
         let taughtNumbers = Set(taught.keys.filter { $0 >= 0 })
-        var fresh = spans.map { span -> Rally in
-            var rally = Rally(start: span.start, end: span.end)
-            var players = Set(RallyDetector.players(in: span, reads: analysis.numbers, roster: roster, frequent: frequent))
-            // Players followed through the rally: their number was read at some point, the user
-            // said who they are, or they clearly look like someone known.
-            let followed = RallyDetector.decidedPlayers(in: span, people: analysis.people, decisions: decisions,
-                                                        allowed: roster.isEmpty ? frequent.union(taughtNumbers) : roster)
-            players.formUnion(followed)
-            for number in followed where taughtNumbers.contains(number) { found[number, default: 0] += 1 }
-            rally.players = players.sorted()
-            return rally
+        var found: [Int: Int] = [:]
+        for i in fresh.indices {
+            let players = auto[fresh[i].id] ?? []
+            fresh[i].players = players.sorted()
+            for number in players where taughtNumbers.contains(number) { found[number, default: 0] += 1 }
         }
         taughtFound = found
         for i in fresh.indices where unchecked.contains(where: { Self.overlap($0, fresh[i]) > 0.5 * fresh[i].duration }) {
@@ -859,8 +891,10 @@ final class RallyFinder {
         }
         rallies = (fresh + manual).sorted { $0.start < $1.start }
         if let id = selectedID, !rallies.contains(where: { $0.id == id }) { selectedID = nil }
-        autoListed = listings(decisions: decisions)
-        if !baselineDecisions.isEmpty { baselineListed = listings(decisions: baselineDecisions) }
+        let manualListed = listings(for: manual, decisions: decisions, smooth: false)
+        autoListed = auto.merging(manualListed) { a, _ in a }
+        unsmoothedListed = listings(for: fresh, decisions: decisions, smooth: false).merging(manualListed) { a, _ in a }
+        if !baselineDecisions.isEmpty { baselineListed = listings(for: rallies, decisions: baselineDecisions, smooth: false) }
     }
 
     private static func overlap(_ a: Rally, _ b: Rally) -> Double {

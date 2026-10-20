@@ -296,6 +296,8 @@ private struct WhoIsThisPane: View {
     @State private var views: [CGImage] = []
     /// Close-ups unticked: not this player.
     @State private var rejected: Set<Int> = []
+    /// A close-up under the pointer, shown big in place of the frame.
+    @State private var peek: CGImage?
     @State private var loading = false
     /// An answer split a person: wait for Cocut to group again before the next question.
     @State private var regrouping = false
@@ -338,6 +340,7 @@ private struct WhoIsThisPane: View {
                 layout {
                     VStack(alignment: .leading, spacing: 8) {
                         mainPicture
+                            .hoverZoom(peek == nil)
                             .aspectRatio(16 / 9, contentMode: .fit)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                         Text(prompt(for: current))
@@ -356,6 +359,7 @@ private struct WhoIsThisPane: View {
                                     .scaledToFit()
                                     .frame(height: 220)
                                     .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .peekable(first, peek: $peek)
                                 VStack(spacing: 6) {
                                     ForEach(views.indices.dropFirst(), id: \.self) { i in
                                         Image(decorative: views[i], scale: 1)
@@ -363,13 +367,14 @@ private struct WhoIsThisPane: View {
                                             .scaledToFit()
                                             .frame(height: 70)
                                             .clipShape(RoundedRectangle(cornerRadius: 6))
+                                            .peekable(views[i], peek: $peek)
                                     }
                                 }
                             }
                         }
                         answerButtons(for: current)
                     }
-                    .frame(width: wide ? 360 : nil)
+                    .frame(width: wide ? 440 : nil)
                 }
             } else if regrouping || (finder.isMatching && queue.isEmpty) {
                 VStack(spacing: 8) {
@@ -402,7 +407,16 @@ private struct WhoIsThisPane: View {
                  ? "The same player in all of these? Untick any who aren't. (\(closeUps.count) of \(person.tracks.count) times they were followed.)"
                  : "The same player in all of these? Untick any who aren't.")
                 .font(.callout)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], alignment: .leading, spacing: 6) {
+            #if os(macOS)
+            Text("Point at a close-up to see it big on the left; point at the frame to magnify it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            #else
+            Text("Touch and hold a close-up to see it big; pinch the frame to zoom.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            #endif
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 6)], alignment: .leading, spacing: 6) {
                 ForEach(closeUps) { closeUp in
                     let out = rejected.contains(closeUp.track)
                     Button {
@@ -412,7 +426,7 @@ private struct WhoIsThisPane: View {
                             .resizable()
                             .scaledToFit()
                             .frame(maxWidth: .infinity)
-                            .frame(height: 120)
+                            .frame(height: 170)
                             .background(Color.black)
                             .opacity(out ? 0.35 : 1)
                             .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -430,6 +444,7 @@ private struct WhoIsThisPane: View {
                     }
                     .buttonStyle(.plain)
                     .help(out ? "Not this player: click to tick again" : "Click if this isn't the same player")
+                    .peekable(closeUp.image, peek: $peek)
                 }
             }
             if !rejected.isEmpty {
@@ -506,7 +521,12 @@ private struct WhoIsThisPane: View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 Color.black
-                if let picture {
+                if let peek {
+                    Image(decorative: peek, scale: 1)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                } else if let picture {
                     let rect = fitted(picture.image, in: geo.size)
                     Image(decorative: picture.image, scale: 1)
                         .resizable()
@@ -528,6 +548,7 @@ private struct WhoIsThisPane: View {
     private func answer(_ number: Int) {
         guard let current else { return }
         otherNumber = ""
+        peek = nil
         answeredCount += 1
         if rejected.isEmpty {
             finder.identify(current, as: number)
@@ -554,6 +575,7 @@ private struct WhoIsThisPane: View {
     /// (to confirm), or other moments of the one stretch.
     private func load() async {
         rejected = []
+        peek = nil
         guard let current else { picture = nil; closeUps = []; views = []; return }
         loading = true
         let frames = finder.sightings(of: current).sorted { $0.time < $1.time }
@@ -621,5 +643,26 @@ private struct WhoIsThisPane: View {
         var w = size.width, h = w / aspect
         if h > size.height { h = size.height; w = h * aspect }
         return CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h)
+    }
+}
+
+private extension View {
+    /// Shows `image` big while the pointer is over this (Mac), or in a preview on touch and hold
+    /// (iPhone and iPad).
+    func peekable(_ image: CGImage, peek: Binding<CGImage?>) -> some View {
+        #if os(macOS)
+        onHover { inside in
+            if inside { peek.wrappedValue = image } else if peek.wrappedValue === image { peek.wrappedValue = nil }
+        }
+        #else
+        contextMenu {
+            Text("Close-up")
+        } preview: {
+            Image(decorative: image, scale: 1)
+                .resizable()
+                .scaledToFit()
+                .frame(minWidth: 280, minHeight: 420)
+        }
+        #endif
     }
 }
