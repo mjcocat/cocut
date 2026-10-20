@@ -499,6 +499,49 @@ final class RallyFinder {
         }
     }
 
+    // MARK: Next steps
+
+    /// What to do after a match is analyzed, in order.
+    enum GuideStep: Int, CaseIterable {
+        case roster, warmUp, identify, use
+    }
+
+    /// Progress through the next-steps guide (saved with the match).
+    private(set) var guide = MatchStore.Guide() {
+        didSet { if guide != oldValue { scheduleSave() } }
+    }
+
+    /// Whether a step is done (or passed over).
+    func isDone(_ step: GuideStep) -> Bool {
+        if guide.passed.contains(step.rawValue) { return true }
+        switch step {
+        case .roster:
+            return !roster().isEmpty
+        case .warmUp:
+            // Any of the first few rallies left out: the warm-up was dealt with.
+            return rallies.sorted { $0.start < $1.start }.prefix(4).contains { !$0.isIncluded }
+        case .identify:
+            guard canTeach else { return true }
+            guard !people.isEmpty, !isMatching else { return false }
+            return unknownRallyShare < 0.1 || suggestedQuestions == 0
+        case .use:
+            return guide.used
+        }
+    }
+
+    /// The first step not yet done, unless the guide is hidden.
+    var nextStep: GuideStep? {
+        guard !guide.hidden, analysis != nil else { return nil }
+        return GuideStep.allCases.first { !isDone($0) }
+    }
+
+    func pass(_ step: GuideStep) { guide.passed.insert(step.rawValue) }
+    func hideGuide() { guide.hidden = true }
+    func showGuide() {
+        guide.hidden = false
+        guide.passed = []
+    }
+
     // MARK: Check accuracy
 
     /// Which rallies players are really in, as marked by the user.
@@ -738,7 +781,7 @@ final class RallyFinder {
                                      rallies: rallies, includeServeSetup: includeServeSetup,
                                      analysisVersion: MatchStore.analysisVersion,
                                      answersVersion: MatchStore.answersVersion,
-                                     notTracks: notTracks, truth: truth)
+                                     notTracks: notTracks, truth: truth, guide: guide)
         saveTask = Task {
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
@@ -781,6 +824,7 @@ final class RallyFinder {
         skippedTracks = []
         notTracks = [:]
         truth = []
+        guide = MatchStore.Guide()
         if let project = projectDirectory() {
             memory = PlayerMemory.load(project: project)
             // Players remembered with an older appearance model can't be compared: start over.
@@ -800,6 +844,7 @@ final class RallyFinder {
                 // Answers about followed players belong to the analysis they were given on; rally
                 // edits (times, checks, players) carry over to a fresh analysis.
                 truth = saved.truth ?? []
+                guide = saved.guide ?? MatchStore.Guide()
                 if saved.analysisVersion == MatchStore.analysisVersion, saved.answersVersion == MatchStore.answersVersion {
                     frameExamples = saved.frameExamples
                     taughtTracks = saved.taughtTracks
@@ -873,6 +918,7 @@ final class RallyFinder {
         skippedTracks = []
         notTracks = [:]
         truth = []
+        guide = MatchStore.Guide()
         autoListed = [:]
         unsmoothedListed = [:]
         baselineListed = [:]
@@ -947,6 +993,7 @@ final class RallyFinder {
         skippedTracks = []
         notTracks = [:]
         truth = []
+        guide = MatchStore.Guide()
         autoListed = [:]
         unsmoothedListed = [:]
         baselineListed = [:]
@@ -1225,6 +1272,7 @@ final class RallyFinder {
             Log.info("Added \(ids.count) rallies from \(base) to Clips")
             state = .review
             lastAddedCount = ids.count
+            if !ids.isEmpty { guide.used = true }
         }
     }
 
@@ -1263,6 +1311,7 @@ final class RallyFinder {
                 }
                 state = .review
                 lastCondensedURL = output
+                guide.used = true
                 Log.info("Exported condensed match to \(output.path(percentEncoded: false))")
                 Platform.reveal([output])
             } catch is CancellationError {

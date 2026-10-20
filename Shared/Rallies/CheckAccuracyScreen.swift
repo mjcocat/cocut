@@ -51,7 +51,8 @@ struct CheckAccuracyScreen: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #else
-            .frame(minWidth: 1180, minHeight: 760)
+            .frame(minWidth: 1200, idealWidth: 1440, maxWidth: .infinity,
+                   minHeight: 760, idealHeight: 900, maxHeight: .infinity)
             #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done", action: onClose) }

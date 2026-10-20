@@ -39,6 +39,16 @@ struct RallyFinderView: View {
                 .help("Choose a full match video to find rallies in")
                 .disabled(isBusy)
             }
+            if finder.analysis != nil, finder.guide.hidden {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        finder.showGuide()
+                    } label: {
+                        Label("Show Tips", systemImage: "lightbulb")
+                    }
+                    .help("Show the next steps for this match again")
+                }
+            }
             if finder.analysis != nil {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
@@ -62,10 +72,12 @@ struct RallyFinderView: View {
         }
         .sheet(isPresented: $checkingAccuracy) {
             CheckAccuracyScreen(finder: finder) { checkingAccuracy = false }
+                .presentationSizing(.fitted)
         }
         .sheet(isPresented: $teaching) {
             if let url = finder.sourceURL {
                 TeachPlayerScreen(finder: finder, url: url, time: finder.currentTime) { teaching = false }
+                    .presentationSizing(.fitted)
             }
         }
         .sheet(item: Binding(get: { finder.pendingMatch }, set: { finder.pendingMatch = $0 })) { url in
@@ -210,6 +222,10 @@ struct RallyFinderView: View {
             if let count = finder.lastAddedCount {
                 addedBanner(count)
             }
+            NextStepsBar(finder: finder, onRoster: { editingRoster = true }, onIdentify: {
+                finder.pause()
+                teaching = true
+            })
             HSplitView {
                 VStack(spacing: 12) {
                     ZStack {
