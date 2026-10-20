@@ -395,6 +395,9 @@ private struct RallyListView: View {
                     .contentShape(Rectangle())
                     .onTapGesture { finder.play(rally) }
                     .tag(rally.id)
+                    .swipeActions(edge: .leading) {
+                        Button("Leave Out Earlier", systemImage: "arrow.up.to.line") { finder.leaveOutBefore(rally.id) }
+                    }
                     .swipeActions {
                         Button("Remove", systemImage: "trash", role: .destructive) { finder.delete(rally.id) }
                         Button("Add Player", systemImage: "person.badge.plus") {

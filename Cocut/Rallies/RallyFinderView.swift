@@ -560,6 +560,8 @@ private struct RallyList: View {
                     if let id = ids.first, let rally = finder.rallies.first(where: { $0.id == id }) {
                         Button("Play") { finder.play(rally) }
                         Button(rally.isIncluded ? "Leave Out" : "Keep") { finder.toggle(rally.id) }
+                        Button("Leave Out Earlier Rallies") { finder.leaveOutBefore(rally.id) }
+                            .help("For the warm-up and lineup before the first serve")
                         if rally.isManual {
                             Divider()
                             Button("Remove", role: .destructive) { finder.delete(rally.id) }

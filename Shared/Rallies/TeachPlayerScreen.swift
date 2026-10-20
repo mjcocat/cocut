@@ -317,20 +317,27 @@ private struct WhoIsThisPane: View {
 
     var body: some View {
         let queue = self.queue
-        let share = finder.identifiedShare
+        // How much of the player time during rallies is sorted out, and how many questions are
+        // worth answering (the people covering most of what's left; the rest are glimpses).
+        let share = 1 - finder.unknownRallyShare
+        let worth = finder.suggestedQuestions
+        let mostlyDone = finder.unknownRallyShare < 0.1 || worth == 0
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Who's this?").font(.title2.weight(.semibold))
                 Spacer()
                 if finder.isMatching { ProgressView().controlSize(.small) }
-                Text("\(Int((share * 100).rounded()))% of player time identified")
+                Text(mostlyDone ? "Mostly done" : "About \(worth) more worth answering")
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
             ProgressView(value: share)
-                .tint(share >= 0.9 ? .green : .accentColor)
-            if share >= 0.9 && current != nil {
-                Text("Mostly done: what's left is mostly brief glimpses. Keep going only if a rally is missing someone.")
+                .tint(mostlyDone ? .green : .accentColor)
+            Text("\(Int((share * 100).rounded()))% of the players seen during rallies are sorted out. People seen only between rallies, or never clearly, aren't asked about.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if mostlyDone && current != nil {
+                Text("That's enough to list players on most rallies. What's left is brief glimpses: keep going only if a rally is missing someone.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -579,19 +586,27 @@ private struct WhoIsThisPane: View {
         guard let current else { picture = nil; closeUps = []; views = []; return }
         loading = true
         let frames = finder.sightings(of: current).sorted { $0.time < $1.time }
-        guard let main = frames.max(by: { $0.box.height < $1.box.height }) else { loading = false; return }
+        // The best view: the biggest clear box (one player, shaped like one), not a sliver or a
+        // box around several people.
+        func quality(_ s: RallyDetector.PersonSighting) -> Double {
+            Double(s.box.height) * (RallyDetector.isClear(s.box) ? 1 : 0.2)
+        }
+        guard let main = frames.max(by: { quality($0) < quality($1) }) else { loading = false; return }
 
         // Several stretches: the biggest view of each of the longest ones (the main one first).
         var perStretch: [RallyDetector.PersonSighting] = [main]
         let byTrack = Dictionary(grouping: frames.filter { $0.track != main.track }, by: \.track)
-        for (_, stretch) in byTrack.sorted(by: { $0.value.count > $1.value.count }).prefix(Self.confirmLimit - 1) {
-            if let best = stretch.max(by: { $0.box.height < $1.box.height }) { perStretch.append(best) }
+        // Stretches never seen clearly are left out: a sliver can't be told apart.
+        for (_, stretch) in byTrack.sorted(by: { $0.value.count > $1.value.count }) where perStretch.count < Self.confirmLimit {
+            if let best = stretch.max(by: { quality($0) < quality($1) }), RallyDetector.isClear(best.box) { perStretch.append(best) }
         }
-        // One stretch: other moments of it, spread over time.
+        // One stretch: other clear moments of it, spread over time.
         var moments: [RallyDetector.PersonSighting] = []
-        if perStretch.count < 2, frames.count > 1 {
+        let clearFrames = frames.filter { RallyDetector.isClear($0.box) }
+        let pool = clearFrames.count > 1 ? clearFrames : frames
+        if perStretch.count < 2, pool.count > 1 {
             for k in 0..<4 where moments.count < 3 {
-                let s = frames[min(frames.count - 1, k * (frames.count - 1) / 3)]
+                let s = pool[min(pool.count - 1, k * (pool.count - 1) / 3)]
                 if s.time != main.time, !moments.contains(where: { $0.time == s.time }) { moments.append(s) }
             }
         }

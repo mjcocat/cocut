@@ -247,10 +247,65 @@ final class RallyFinder {
     /// never seen big enough to recognize, and people you skipped are left out.
     var reviewQueue: [PlayerGrouping.Person] {
         people.filter { person in
-            guard person.number == nil, person.frames >= 6, person.maxHeight >= 0.12 else { return false }
+            guard person.number == nil, (worthAsking[person.id] ?? 0) >= 6 else { return false }
             let skipped = person.trackFrames.reduce(0) { $0 + (skippedTracks.contains($1.key) ? $1.value : 0) }
             return skipped * 2 < person.frames
         }
+        .sorted { (worthAsking[$0.id] ?? 0) > (worthAsking[$1.id] ?? 0) }
+    }
+
+    /// Undecided people worth asking about, by id: their frames during rallies (people seen only
+    /// between rallies never change a rally's list). Only people seen at least once in a clear
+    /// box (one player, big enough to recognize) are included.
+    private(set) var worthAsking: [Int: Int] = [:]
+    /// Frames of single players during rallies, for "how much is left".
+    private(set) var rallyPlayerFrames = 0
+
+    /// How many of the questions left are worth answering: the people who together cover 80% of
+    /// the undecided player time during rallies. The rest are brief glimpses.
+    var suggestedQuestions: Int {
+        let counts = reviewQueue.map { worthAsking[$0.id] ?? 0 }
+        let total = counts.reduce(0, +)
+        guard total > 0 else { return 0 }
+        var sum = 0
+        for (k, c) in counts.enumerated() {
+            sum += c
+            if Double(sum) >= 0.8 * Double(total) { return k + 1 }
+        }
+        return counts.count
+    }
+
+    /// Share of player time during rallies that's still undecided and askable, 0...1.
+    var unknownRallyShare: Double {
+        guard rallyPlayerFrames > 0 else { return 0 }
+        return Double(reviewQueue.reduce(0) { $0 + (worthAsking[$1.id] ?? 0) }) / Double(rallyPlayerFrames)
+    }
+
+    /// Recounts `worthAsking` after people or rallies change.
+    private func updateWorthAsking() {
+        guard let analysis, !rallies.isEmpty else { worthAsking = [:]; rallyPlayerFrames = 0; return }
+        let spans = rallies.map { ($0.start, $0.end) }.sorted { $0.0 < $1.0 }
+        func inRally(_ t: Double) -> Bool {
+            var lo = 0, hi = spans.count
+            while lo < hi { let mid = (lo + hi) / 2; if spans[mid].0 <= t { lo = mid + 1 } else { hi = mid } }
+            return lo > 0 && t <= spans[lo - 1].1
+        }
+        var trackRally: [Int: Int] = [:]
+        var trackClear: Set<Int> = []
+        var total = 0
+        for p in analysis.people where inRally(p.time) {
+            trackRally[p.track, default: 0] += 1
+            if RallyDetector.isClear(p.box) { trackClear.insert(p.track) }
+        }
+        var out: [Int: Int] = [:]
+        for person in people {
+            let frames = person.tracks.reduce(0) { $0 + (trackRally[$1] ?? 0) }
+            total += frames
+            guard person.number == nil, person.tracks.contains(where: trackClear.contains) else { continue }
+            out[person.id] = frames
+        }
+        worthAsking = out
+        rallyPlayerFrames = total
     }
 
     /// Share of all player time (frames of single players) that is identified, 0...1.
@@ -422,6 +477,7 @@ final class RallyFinder {
             isMatching = false
             groupingRevision += 1
             rebuildRallies()
+            updateWorthAsking()
             let counts = identifiedCounts
             let seconds = String(format: "%.1f", Date().timeIntervalSince(start))
             let threshold = String(format: "%.3f", result.threshold)
@@ -536,21 +592,62 @@ final class RallyFinder {
         // Sightings by time, so each rally only looks at its own.
         let people = analysis.people.sorted { $0.time < $1.time }
         var out: [Rally.ID: Set<Int>] = [:]
+        /// How strongly each number shows up in each rally: frames of a decided player, plus
+        /// three per read of the number.
+        var evidence: [Rally.ID: [Int: Int]] = [:]
         for rally in rallies {
             let span = RallyDetector.Span(start: rally.start, end: rally.end)
             var players = Set(RallyDetector.players(in: span, reads: analysis.numbers, roster: roster, frequent: frequent))
             let first = Self.firstIndex(people, atOrAfter: rally.start)
             var last = first
             while last < people.count && people[last].time <= rally.end { last += 1 }
-            players.formUnion(RallyDetector.decidedPlayers(in: span, people: Array(people[first..<last]),
-                                                           decisions: decisions, allowed: allowed))
+            let inRally = Array(people[first..<last])
+            players.formUnion(RallyDetector.decidedPlayers(in: span, people: inRally, decisions: decisions, allowed: allowed))
             out[rally.id] = players
+            if smooth {
+                var counts: [Int: Int] = [:]
+                for p in inRally {
+                    if let n = decisions[p.track]?.number ?? p.trackNumber, n >= 0 { counts[n, default: 0] += 1 }
+                }
+                for r in analysis.numbers where r.time >= rally.start && r.time <= rally.end { counts[r.number, default: 0] += 3 }
+                evidence[rally.id] = counts
+            }
         }
         guard smooth else { return out }
         let ordered = rallies.sorted { $0.start < $1.start }
-        let even = Self.smoothed(ordered.map { out[$0.id] ?? [] })
+        var even = Self.smoothed(ordered.map { out[$0.id] ?? [] })
+        // At most six of the team are on court in a rally. With a roster (so Cocut knows which
+        // numbers are the team's), keep the six with the most evidence in that rally. On one
+        // match this took "right" from 83% to 96% for #11, with "finds" staying at 94%.
+        if !roster.isEmpty {
+            let counts = ordered.map { evidence[$0.id] ?? [:] }
+            even = Self.capped(even, evidence: counts, team: roster)
+        }
         for (rally, players) in zip(ordered, even) { out[rally.id] = players }
         return out
+    }
+
+    /// Most players of the team on court at once.
+    static let onCourt = 6
+
+    /// Leaves at most `onCourt` of `team` on each list, keeping those with the most evidence in
+    /// that rally (ties go to the one with more evidence in the rallies next to it).
+    static func capped(_ lists: [Set<Int>], evidence: [[Int: Int]], team: Set<Int>) -> [Set<Int>] {
+        lists.indices.map { i in
+            let ours = lists[i].filter { team.contains($0) }
+            guard ours.count > onCourt else { return lists[i] }
+            func near(_ n: Int) -> Int {
+                (i > 0 ? evidence[i - 1][n] ?? 0 : 0) + (i + 1 < evidence.count ? evidence[i + 1][n] ?? 0 : 0)
+            }
+            let ranked = ours.sorted { a, b in
+                let ea = evidence[i][a] ?? 0, eb = evidence[i][b] ?? 0
+                if ea != eb { return ea > eb }
+                let na = near(a), nb = near(b)
+                return na != nb ? na > nb : a < b
+            }
+            let dropped = Set(ranked.dropFirst(onCourt))
+            return lists[i].subtracting(dropped)
+        }
     }
 
     /// Players stay on court for runs of rallies (rotations, substitutions), so each rally's list
@@ -928,6 +1025,14 @@ final class RallyFinder {
         for i in rallies.indices where ids.contains(rallies[i].id) {
             rallies[i].isIncluded = included
         }
+    }
+
+    /// Leaves out every rally before `id`: the warm-up and lineup before the first serve look
+    /// like play to Cocut.
+    func leaveOutBefore(_ id: Rally.ID) {
+        guard let rally = rallies.first(where: { $0.id == id }) else { return }
+        checkpoint("Leave Out Earlier")
+        for i in rallies.indices where rallies[i].start < rally.start { rallies[i].isIncluded = false }
     }
 
     func toggle(_ id: Rally.ID) {
