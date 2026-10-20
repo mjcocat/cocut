@@ -336,15 +336,13 @@ private struct WhoIsThisPane: View {
     }
 
     /// Mostly done: the questions left would barely change any rally's list.
-    private var isMostlyDone: Bool {
-        finder.unknownRallyShare < 0.1 || finder.suggestedQuestions == 0
-    }
+    private var isMostlyDone: Bool { finder.identifyMostlyDone }
 
     var body: some View {
         let queue = self.queue
         // How much of the player time during rallies is sorted out, and how many questions are
         // worth answering (the people covering most of what's left; the rest are glimpses).
-        let share = 1 - finder.unknownRallyShare
+        let share = finder.identifyProgress
         let worth = finder.suggestedQuestions
         let mostlyDone = isMostlyDone
         VStack(alignment: .leading, spacing: 10) {
@@ -353,11 +351,14 @@ private struct WhoIsThisPane: View {
                 ProgressView(value: share)
                     .tint(mostlyDone ? .green : .accentColor)
                     .frame(maxWidth: 260)
-                Text("\(Int((share * 100).rounded()))% sorted out")
+                    .animation(.easeOut(duration: 0.6), value: share)
+                Text("\(Int((share * 100).rounded()))% done")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-                    .help("Of the players seen during rallies. People seen only between rallies, or never clearly, aren't asked about.")
+                    .contentTransition(.numericText())
+                    .animation(.easeOut(duration: 0.6), value: share)
+                    .help("Of the players seen during rallies that Cocut couldn't place when you started. The people seen most come first, so the first answers count the most.")
                 Spacer()
                 if finder.isMatching { ProgressView().controlSize(.small) }
                 Text(mostlyDone ? "Mostly done: the rest are brief glimpses" : "About \(worth) more worth answering")

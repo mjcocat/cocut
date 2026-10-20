@@ -8,9 +8,7 @@ struct RallyFinderView: View {
     @Environment(\.openWindow) private var openWindow
 
     private var finder: RallyFinder { model.rallies }
-    @State private var teaching = false
     @State private var editingRoster = false
-    @State private var checkingAccuracy = false
 
     var body: some View {
         Group {
@@ -53,7 +51,7 @@ struct RallyFinderView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         finder.pause()
-                        checkingAccuracy = true
+                        openWindow(id: "accuracy")
                     } label: {
                         Label("Check Accuracy…", systemImage: "checkmark.seal")
                     }
@@ -69,16 +67,6 @@ struct RallyFinderView: View {
         .sheet(isPresented: $editingRoster) {
             RosterView()
                 .frame(minWidth: 420, minHeight: 460)
-        }
-        .sheet(isPresented: $checkingAccuracy) {
-            CheckAccuracyScreen(finder: finder) { checkingAccuracy = false }
-                .presentationSizing(.fitted)
-        }
-        .sheet(isPresented: $teaching) {
-            if let url = finder.sourceURL {
-                TeachPlayerScreen(finder: finder, url: url, time: finder.currentTime) { teaching = false }
-                    .presentationSizing(.fitted)
-            }
         }
         .sheet(item: Binding(get: { finder.pendingMatch }, set: { finder.pendingMatch = $0 })) { url in
             CourtAreaScreen(url: url) { area in
@@ -224,7 +212,7 @@ struct RallyFinderView: View {
             }
             NextStepsBar(finder: finder, onRoster: { editingRoster = true }, onIdentify: {
                 finder.pause()
-                teaching = true
+                openWindow(id: "identify")
             })
             HSplitView {
                 VStack(spacing: 12) {
@@ -305,7 +293,7 @@ struct RallyFinderView: View {
 
             Button {
                 finder.pause()
-                teaching = true
+                openWindow(id: "identify")
             } label: {
                 Label("Identify Players…", systemImage: "person.badge.plus")
             }

@@ -123,6 +123,26 @@ jobs:
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: What's new in this version
+        id: notes
+        if: steps.release.outputs.publish == 'true'
+        run: |
+          # This version's section of CHANGELOG.md (the "## X.Y.Z" heading down to the next one).
+          SECTION="$(awk -v v="$VERSION" '/^## /{ on = ($2 == v || $2 == "v" v) ; next } on' CHANGELOG.md | sed '/^[[:space:]]*$/d')"
+          if [[ -z "$SECTION" ]]; then
+            echo "::warning::CHANGELOG.md has no entry for $VERSION; the update window will have no What's New"
+          fi
+          {
+            echo "whatsnew<<COCUT_EOF"
+            if [[ -n "$SECTION" ]]; then
+              echo "## What's new"
+              echo
+              echo "$SECTION"
+              echo
+            fi
+            echo "COCUT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Publish release
         if: steps.release.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
@@ -133,6 +153,7 @@ jobs:
           files: Cocut.zip
           generate_release_notes: true
           body: |
+            ${{ steps.notes.outputs.whatsnew }}
             ## Installing Cocut
 
             **Already have Cocut?** It updates itself. Choose **Cocut › Check for Updates…**.

@@ -56,7 +56,7 @@ struct UpdateView: View {
             }
         }
         .padding(24)
-        .frame(width: 480)
+        .frame(width: 520)
         .animation(.snappy, value: updater.state)
     }
 
@@ -74,15 +74,38 @@ struct UpdateView: View {
             }
         }
 
-        if !release.notes.isEmpty {
-            ScrollView {
-                Text(Self.markdown(release.notes))
+        if !release.whatsNew.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("What's new").font(.headline)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(release.whatsNew) { changes in
+                            VStack(alignment: .leading, spacing: 5) {
+                                if release.whatsNew.count > 1 {
+                                    Text("Version \(changes.version)")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                ForEach(changes.items, id: \.self) { item in
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        Text("•").foregroundStyle(.secondary)
+                                        Text(Self.markdown(item))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
                     .padding(12)
+                }
+                .frame(maxHeight: 280)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.quaternary.opacity(0.5)))
             }
-            .frame(maxHeight: 220)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.quaternary.opacity(0.5)))
+        } else {
+            Button("See What's New on GitHub") { NSWorkspace.shared.open(release.pageURL) }
+                .buttonStyle(.link)
         }
 
         HStack {
