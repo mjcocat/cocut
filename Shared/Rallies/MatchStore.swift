@@ -58,8 +58,8 @@ enum MatchStore {
         var passed: Set<Int> = []
         /// Kept rallies were added to Clips or exported.
         var used = false
-        /// Player time during rallies still to sort out when Who's This? started on this match
-        /// (frames), so its progress starts at 0% and counts up.
+        /// Not used since v0.28 (progress is worked out from your answers); kept so saved
+        /// matches still load.
         var identifyStart: Int?
     }
 
