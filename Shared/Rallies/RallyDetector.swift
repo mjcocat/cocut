@@ -85,23 +85,56 @@ enum RallyDetector {
         let duration = try await asset.load(.duration).seconds
         let audioTrack = try await asset.loadTracks(withMediaType: .audio).first
 
-        // The ball pass is most of the work (0–80%); reading jersey numbers is the rest.
+        // The ball pass is most of the work (0–80%); reading jersey numbers is the rest. With a
+        // court area, rallies are read while the ball pass goes on (see `settleSeconds`).
         let start = Date()
+        let (snapshots, snapshotSink) = AsyncStream.makeStream(of: (bursts: [Span], time: Double).self)
+        let (spanStream, spanSink) = AsyncStream.makeStream(of: Span.self)
         async let videoPart = { () async throws -> ([Span], Double, Double) in
-            let (bursts, zone) = try await RallyDetector.videoPass(asset: asset, track: track, duration: duration, courtArea: courtArea) { progress($0 * 0.8) }
+            defer { snapshotSink.finish() }
+            let (bursts, zone) = try await RallyDetector.videoPass(
+                asset: asset, track: track, duration: duration, courtArea: courtArea,
+                snapshot: { _ = snapshotSink.yield(($0, $1)) }) { progress($0 * 0.8) }
             return (bursts, zone, Date().timeIntervalSince(start))
         }()
         async let audioPart = { () async -> ([Double], Double) in
             (await RallyDetector.whistles(asset: asset, track: audioTrack), Date().timeIntervalSince(start))
         }()
-        let (bursts, zone, videoSeconds) = try await videoPart
+        async let readingPart = RallyDetector.readRallies(asset: asset, track: track, spans: spanStream,
+                                                          quickReading: quickReading) { progress(0.8 + $0 * 0.2) }
+
+        // Rallies the ball pass is well past go to the number pass straight away.
         let (whistles, audioSeconds) = await audioPart
+        var sent: Set<Span> = []
+        for await snapshot in snapshots {
+            let partial = Result(duration: duration, bursts: snapshot.bursts, whistles: whistles, ballZone: 0)
+            for span in rallies(from: partial, includeSetup: true)
+            where span.end < snapshot.time - settleSeconds && !sent.contains(span) {
+                sent.insert(span)
+                spanSink.yield(span)
+            }
+        }
+        let video: ([Span], Double, Double)
+        do {
+            video = try await videoPart
+        } catch {
+            spanSink.finish()
+            throw error
+        }
+        let (bursts, zone, videoSeconds) = video
         var result = Result(duration: duration, bursts: bursts, whistles: whistles, ballZone: zone)
+        // The rest, and any rally that came out differently in the end (read again).
         let spans = rallies(from: result, includeSetup: true)
-        let numbersStart = Date()
-        (result.numbers, result.people) = try await readNumbers(asset: asset, track: track, spans: spans, quickReading: quickReading) { progress(0.8 + $0 * 0.2) }
-        Log.info(String(format: "Rally analysis took %.0fs: ball pass %.0fs, whistle pass %.0fs (alongside), number pass %.0fs",
-                        Date().timeIntervalSince(start), videoSeconds, audioSeconds, Date().timeIntervalSince(numbersStart)))
+        let early = spans.filter { sent.contains($0) }.count
+        for span in spans where !sent.contains(span) { spanSink.yield(span) }
+        spanSink.finish()
+        let readings = try await readingPart
+        (result.numbers, result.people) = assemble(spans.compactMap { readings[$0] }, quickReading: quickReading)
+        Log.info(String(format: "Rally analysis took %.0fs: ball pass %.0fs, whistle pass %.0fs (alongside), jersey numbers done %.0fs after the ball pass (%ld of %ld rallies read during it)",
+                        Date().timeIntervalSince(start), videoSeconds, audioSeconds,
+                        Date().timeIntervalSince(start) - videoSeconds, early, spans.count))
+        let changed = sent.count - early
+        if changed > 0 { Log.info("\(changed) rallies read during the ball pass came out differently in the end and were read again") }
         Log.info("Rally analysis\(courtArea.map { " (court area \(Int($0.minX * 100))–\(Int($0.maxX * 100))% across, \(Int($0.minY * 100))–\(Int($0.maxY * 100))% down)" } ?? " (automatic area)"): \(bursts.count) ball bursts, \(whistles.count) whistles, ball zone \(Int(zone * 100))% of height, \(Int(duration))s")
         Log.info("Read \(result.numbers.count) jersey numbers in \(spans.count) rallies: \(readSummary(result.numbers))")
         Log.info("Saw \(result.people.count) nearby players (\(result.people.filter { $0.number != nil }.count) with a number read)")
@@ -110,7 +143,10 @@ enum RallyDetector {
 
     // MARK: - Video: the ball above the players
 
+    /// `snapshot`, when given, gets the bursts found so far and how far the pass has got, every
+    /// 30 s of video (only with a court area: otherwise the ball zone is decided at the end).
     private static func videoPass(asset: AVURLAsset, track: AVAssetTrack, duration: Double, courtArea: CGRect?,
+                                  snapshot: (([Span], Double) -> Void)? = nil,
                                   progress: @escaping @Sendable (Double) -> Void) async throws -> ([Span], Double) {
         let natural = try await track.load(.naturalSize)
         let transform = try await track.load(.preferredTransform)
@@ -139,11 +175,16 @@ enum RallyDetector {
 
         var finder = BallFinder(width: w, height: h, area: courtArea)
         var lastReport = -1.0
+        var nextSnapshot = 30.0
         while let sample = output.copyNextSampleBuffer() {
             try Task.checkCancellation()
             guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
             let time = CMSampleBufferGetPresentationTimeStamp(sample).seconds
             finder.add(luma: luma(of: buffer, width: w, height: h), time: time)
+            if let snapshot, courtArea != nil, time >= nextSnapshot {
+                nextSnapshot = time + 30
+                snapshot(finder.finish().0, time)
+            }
             if duration > 0, time - lastReport > 5 {
                 lastReport = time
                 progress(min(0.99, time / duration))
@@ -593,6 +634,8 @@ enum RallyDetector {
         var people: [PersonSighting] = []
         /// Tracks started in the rally, numbered from 0.
         var tracks = 0
+        /// Frames the rally was read at, and how many of those couldn't be decoded.
+        var frames = 0
         var unread = 0
         var rejected: [String: Int] = [:]
         var problems: [String: Int] = [:]
@@ -605,67 +648,77 @@ enum RallyDetector {
     /// leave most of the machine idle when frames go one at a time.
     static var numberWorkers: Int { max(2, min(4, ProcessInfo.processInfo.activeProcessorCount / 2)) }
 
-    /// Reads jersey numbers twice a second during each rally, with on-device text recognition.
-    /// Players whose backs face the camera are read best; 1080p or better is recommended.
-    /// A few rallies are read at once, each by its own worker going through its frames in order.
-    private static func readNumbers(asset: AVURLAsset, track: AVAssetTrack, spans: [Span], quickReading: Bool,
-                                    progress: @escaping @Sendable (Double) -> Void) async throws -> ([NumberRead], [PersonSighting]) {
-        var timesBySpan: [[Double]] = []
-        var firstIndex: [Int] = []
-        var total = 0
-        for span in spans {
-            var list: [Double] = []
-            var t = span.start
-            while t <= span.end {
-                list.append(t)
-                t += 0.5
-            }
-            firstIndex.append(total)
-            total += list.count
-            timesBySpan.append(list)
-        }
-        guard total > 0 else { return ([], []) }
-        let passStart = Date()
-        let composition = try await RallyFrames.makeComposition(asset: asset, track: track)
+    /// With a court area, the number pass reads a rally while the ball pass goes on once the ball
+    /// pass is this far past the rally's end: nothing found later can change it (bursts merge
+    /// across gaps under 3.5 s, and a rally takes at most 5 s of setup and 3.5 s after the ball).
+    static let settleSeconds = 20.0
 
-        var rallies = [RallyReading?](repeating: nil, count: spans.count)
+    /// The times a rally is read at: twice a second from its start.
+    static func frameTimes(in span: Span) -> [Double] {
+        var list: [Double] = []
+        var t = span.start
+        while t <= span.end {
+            list.append(t)
+            t += 0.5
+        }
+        return list
+    }
+
+    /// Reads jersey numbers twice a second during each rally that comes in on `spans`, with
+    /// on-device text recognition. Players whose backs face the camera are read best; 1080p or
+    /// better is recommended. A few rallies are read at once, each by its own worker going through
+    /// its frames in order. `progress` gets 0...1 once `spans` has finished (until then, how much
+    /// is left isn't known).
+    private static func readRallies(asset: AVURLAsset, track: AVAssetTrack, spans: AsyncStream<Span>, quickReading: Bool,
+                                    progress: @escaping @Sendable (Double) -> Void) async throws -> [Span: RallyReading] {
+        let composition = try await RallyFrames.makeComposition(asset: asset, track: track)
+        var readings: [Span: RallyReading] = [:]
         let workers = numberWorkers
-        try await withThrowingTaskGroup(of: (Int, RallyReading).self) { group in
-            var running = 0, done = 0
-            func collect(_ result: (Int, RallyReading)) {
-                rallies[result.0] = result.1
+        try await withThrowingTaskGroup(of: (Span, RallyReading).self) { group in
+            var running = 0, received = 0, done = 0
+            var allIn = false
+            func collect(_ result: (Span, RallyReading)) {
+                readings[result.0] = result.1
                 running -= 1
-                done += timesBySpan[result.0].count
-                progress(Double(done) / Double(total))
+                done += result.1.frames
+                if allIn, received > 0 { progress(Double(done) / Double(received)) }
             }
-            for k in spans.indices {
+            for await span in spans {
                 try Task.checkCancellation()
                 if running >= workers, let finished = try await group.next() { collect(finished) }
-                let span = spans[k], times = timesBySpan[k], first = firstIndex[k]
+                let times = frameTimes(in: span)
+                received += times.count
                 group.addTask {
                     let reading = try readRally(asset: asset, track: track, composition: composition, span: span,
-                                                times: times, firstIndex: first, quick: quickReading)
-                    return (k, reading)
+                                                times: times, quick: quickReading)
+                    return (span, reading)
                 }
                 running += 1
             }
+            try Task.checkCancellation()
+            allIn = true
             while let finished = try await group.next() { collect(finished) }
         }
+        return readings
+    }
 
-        // The rallies in time order, with tracks numbered across the match.
+    /// The rallies' readings, in time order, put together: tracks numbered across the match,
+    /// signs left out, and each track labeled with the number read on it.
+    private static func assemble(_ rallies: [RallyReading], quickReading: Bool) -> ([NumberRead], [PersonSighting]) {
         var reads: [NumberRead] = []
         var people: [PersonSighting] = []
         var rejected: [String: Int] = [:]
         var problems: [String: Int] = [:]
         var stages = StageTimes()
         var counts = CloseUpCounts()
-        var unreadFrames = 0, decoding = 0.0, trackOffset = 0
-        for case let rally? in rallies {
+        var frames = 0, unreadFrames = 0, decoding = 0.0, trackOffset = 0
+        for rally in rallies {
             reads += rally.reads
             let first = people.count
             people += rally.people
             for i in first..<people.count { people[i].track += trackOffset }
             trackOffset += rally.tracks
+            frames += rally.frames
             unreadFrames += rally.unread
             decoding += rally.decoding
             rejected.merge(rally.rejected, uniquingKeysWith: +)
@@ -673,9 +726,8 @@ enum RallyDetector {
             stages.add(rally.stages)
             counts.add(rally.counts)
         }
-        progress(1)
         func s(_ v: Double) -> String { String(format: "%.0fs", v) }
-        Log.info("Number pass: \(total) frames, \(unreadFrames) couldn't be read, \(s(Date().timeIntervalSince(passStart))) with \(workers) workers (decoding \(s(decoding)); summed over frames: whole-frame text \(s(stages.text)), finding players \(s(stages.bodies)), appearance \(s(stages.looks)), close-ups \(s(stages.closeUps + stages.fastCloseUps)))")
+        Log.info("Number pass: \(frames) frames, \(unreadFrames) couldn't be read, \(numberWorkers) workers (summed over frames: decoding \(s(decoding)), whole-frame text \(s(stages.text)), finding players \(s(stages.bodies)), appearance \(s(stages.looks)), close-ups \(s(stages.closeUps + stages.fastCloseUps)))")
         Log.info("Close-ups\(quickReading ? " (quick number reading)" : ""): \(counts.accurate) accurate reads in \(s(stages.closeUps)) found \(counts.accurateReads) numbers (\(counts.accurateNew) not read in the whole frame); \(counts.fast) fast second tries in \(s(stages.fastCloseUps)) found \(counts.fastReads) (\(counts.fastNew) not read in the whole frame); \(counts.skipped) left out, number already clear")
         if !problems.isEmpty {
             let list = problems.sorted { $0.value > $1.value }.prefix(10).map { "\($0.key) ×\($0.value)" }
@@ -697,11 +749,12 @@ enum RallyDetector {
 
     /// Reads one rally, frame by frame in order, following each player through it. Every frame:
     /// the numbers in the whole lower part, and the nearby players and how they look. Once a
-    /// second, also each player's torso up close (with `quick`, not for players whose number is
-    /// already clear in this rally). `firstIndex` is the rally's first frame over the match.
+    /// second (from the rally's first frame), also each player's torso up close (with `quick`, not
+    /// for players whose number is already clear in this rally).
     private static func readRally(asset: AVURLAsset, track: AVAssetTrack, composition: AVVideoComposition,
-                                  span: Span, times: [Double], firstIndex: Int, quick: Bool) throws -> RallyReading {
+                                  span: Span, times: [Double], quick: Bool) throws -> RallyReading {
         var out = RallyReading()
+        out.frames = times.count
         var frames = RallyFrames(asset: asset, track: track, composition: composition, spans: [span], times: [times])
         var tracker = Tracker()
         var rejected: [String: Int] = [:], problems: [String: Int] = [:]
@@ -728,7 +781,7 @@ enum RallyDetector {
             }
             tracker.update(&out.people, from: first, time: t, span: 0)
 
-            let closeUps = (firstIndex + next.index) % 2 == 0
+            let closeUps = next.index % 2 == 0
             var found = frame.reads
             for (b, body) in frame.bodies.enumerated() {
                 var reads: [(number: Int, x: Double, y: Double)] = []

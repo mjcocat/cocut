@@ -51,6 +51,16 @@ enum MatchStore {
         var truth: [TruthMark]?
         /// Where the user is in the next-steps guide for this match.
         var guide: Guide?
+        /// A few frames of each track answered, skipped or unticked, so the answers can be put back
+        /// on the same players when the match is analyzed again (tracks are numbered afresh, and
+        /// shift when a rally gains or loses a frame). Nil before 0.32.
+        var trackAnchors: [Int: [TrackAnchor]]?
+    }
+
+    /// One frame of a followed player: when, and where (unit coordinates, bottom-left origin).
+    struct TrackAnchor: Codable, Hashable {
+        var time: Double
+        var box: CGRect
     }
 
     /// The next-steps guide for one match: steps passed over, and whether it's hidden.
