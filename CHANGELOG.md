@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.30.0
+- Find Rallies reads jersey numbers and follows players faster: it looks at several frames at once and no longer jumps around the video for each one.
+- The log shows how long each part of Find Rallies took, to help make it faster still.
+
 ## 0.29.0
 - Mark your libero in the Team Roster. After you identify her once in Who's This?, Find Rallies finds her by her different-coloured jersey, so she stops coming up again and again.
 - Nothing has to be analyzed again: your answers and what Cocut has learned are kept.
