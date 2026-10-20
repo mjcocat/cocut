@@ -55,6 +55,14 @@ It also shows what comes after: rate, spotlight, Player Card, Preview, Export. *
 
 Each **project** has its own clips, sections, tags, roster and Player Card, for example one per season, team or athlete ("Fall 2026 Club", "HS Season"). Use the project menu at the top of the sidebar to switch, create, rename, show in Finder, or delete (to the Trash). A new project can start with a copy of the current Player Card. Your existing library becomes the first project automatically. Projects live in `~/Movies/Cocut/Projects`.
 
+## Import from YouTube
+
+For a whole video, such as a full match someone posted, **File › Import from YouTube…** (**⇧⌘I**) is cleaner than recording the screen: it downloads the original video, up to 1080p, with no browser or player controls in the picture. Paste the link (a link already on the clipboard fills in by itself), choose whether it's **a full match** (opens Find Rallies) or **a clip** (goes into Clips), and click **Download**. Matches are kept in `~/Movies/Cocut/Downloads`.
+
+The download is done by [yt-dlp](https://github.com/yt-dlp/yt-dlp). On the first import Cocut fetches its macOS build from the official release, checks it against the release's published SHA-256 checksums, and keeps it in `~/Library/Application Support/Cocut/Tools`. It checks for a newer one weekly, since sites change and yt-dlp keeps up. YouTube serves 1080p picture and sound separately; Cocut joins them itself, so ffmpeg isn't needed.
+
+Only download film you have the right to use, like your own uploads or your team's. YouTube's terms allow downloading only where YouTube offers it or with the owner's permission.
+
 ## Recording
 
 1. Open the game film in your browser. Pause it just before the first play.

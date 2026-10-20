@@ -3,6 +3,11 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.35.0
+- New: **Import from YouTube** (File menu, ⇧⌘I). Paste a link and Cocut downloads the whole video in its original quality, up to 1080p, which is cleaner than recording the screen. Say whether it's a full match (opens Find Rallies) or a clip (goes into Clips).
+- The first import fetches a small download tool (yt-dlp) from its official release and checks it. It stays up to date by itself.
+- Only for film you have the right to use, like your own uploads or your team's.
+
 ## 0.34.5
 - The floating recording control is easy to read over any video, and the dashed recording outline no longer runs through it.
 - Start and Done keep their color while you record, instead of looking grayed out.

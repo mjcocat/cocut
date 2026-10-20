@@ -170,6 +170,16 @@ struct GetStartedView: View {
                     VStack(spacing: 14) { cards }
                 }
 
+                HStack(spacing: Design.Space.s) {
+                    Image(systemName: "play.rectangle.fill")
+                        .foregroundStyle(Design.record)
+                        .accessibilityHidden(true)
+                    Text("The whole video is on YouTube?")
+                    Button("Import from YouTube…") { openWindow(id: "youtube") }
+                        .buttonStyle(.link)
+                }
+                .font(.callout)
+
                 if !model.canRecordLastRegion {
                     Text("Recording works from any app, even with the video in fullscreen: ⌥⌘N picks a region, ⌥⌘F records the full screen. Press the same keys to finish.")
                         .font(.callout)

@@ -42,6 +42,14 @@ struct CocutApp: App {
         .restorationBehavior(.disabled)
         .commandsRemoved()
 
+        Window("Import from YouTube", id: "youtube") {
+            YouTubeImportView()
+                .environment(model)
+        }
+        .windowResizability(.contentSize)
+        .restorationBehavior(.disabled)
+        .commandsRemoved()
+
         Window("Reel Preview", id: "preview") {
             ReelPreviewView()
                 .environment(model)
@@ -116,6 +124,11 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("i", modifiers: [.command])
             .disabled(model.isBusy)
+
+            Button("Import from YouTube…") {
+                openWindow(id: "youtube")
+            }
+            .keyboardShortcut("i", modifiers: [.command, .shift])
 
             Button("Find Rallies in a Match…") {
                 openWindow(id: "rallies")

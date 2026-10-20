@@ -156,8 +156,16 @@ struct RallyFinderView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
 
-            Button("Team Roster…") { editingRoster = true }
-                .help("Your team's jersey numbers: only these are listed on rallies, so opponents and misreads are left out")
+            HStack(spacing: Design.Space.m) {
+                Button {
+                    openWindow(id: "youtube")
+                } label: {
+                    Label("Import from YouTube…", systemImage: "play.rectangle")
+                }
+                .help("Download a whole match from YouTube, then find its rallies (⇧⌘I)")
+                Button("Team Roster…") { editingRoster = true }
+                    .help("Your team's jersey numbers: only these are listed on rallies, so opponents and misreads are left out")
+            }
 
             RecentMatchesList(finder: finder)
 
