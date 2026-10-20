@@ -60,6 +60,11 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build | xcbeautify --renderer github-actions
 
+      - name: Check the player model is in the app
+        run: |
+          APP="build/Build/Products/Release/Cocut.app"
+          test -d "$APP/Contents/Resources/PersonReID.mlmodelc" || { echo "::error::PersonReID.mlmodelc missing from the app"; ls "$APP/Contents/Resources"; exit 1; }
+
       - name: Import signing certificate
         if: env.HAS_CERT == 'true'
         env:

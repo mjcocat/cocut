@@ -323,14 +323,22 @@ private struct WhoIsThisPane: View {
                     }
                     .frame(maxWidth: .infinity)
                     VStack(alignment: .leading, spacing: 12) {
-                        if !closeUps.isEmpty {
-                            HStack(spacing: 6) {
-                                ForEach(closeUps.indices, id: \.self) { i in
-                                    Image(decorative: closeUps[i], scale: 1)
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(height: 120)
-                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        if let first = closeUps.first {
+                            // The player up close where they're biggest, then from other stretches.
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(decorative: first, scale: 1)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(height: 220)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                VStack(spacing: 6) {
+                                    ForEach(closeUps.indices.dropFirst(), id: \.self) { i in
+                                        Image(decorative: closeUps[i], scale: 1)
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(height: 70)
+                                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    }
                                 }
                             }
                         }
@@ -476,6 +484,7 @@ private struct WhoIsThisPane: View {
                 picture = (image, main.box, main.time)
             }
             var crops: [CGImage] = []
+            if let image = picture?.0, let crop = Self.crop(image, around: main.box) { crops.append(crop) }
             for s in others.prefix(3) {
                 if let image = await VideoFrames.firstFrame(url: url, at: s.time, crop: nil),
                    let crop = Self.crop(image, around: s.box) {

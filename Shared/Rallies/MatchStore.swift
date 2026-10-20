@@ -13,7 +13,8 @@ import SwiftUI
 ///     players.memory                fingerprints of identified players, across matches
 enum MatchStore {
     /// Bump when the analysis changes enough that saved analyses should be redone.
-    static let analysisVersion = 3
+    /// 4: appearance from the person re-identification model (not comparable with earlier prints).
+    static let analysisVersion = 4
 
     struct Saved: Codable {
         var version: Int
@@ -32,6 +33,8 @@ enum MatchStore {
         var skippedTracks: Set<Int> = []
         var rallies: [Rally] = []
         var includeServeSetup = false
+        /// The analysis the answers belong to (followed players are numbered per analysis).
+        var analysisVersion: Int?
     }
 
     /// One saved match, for the Recent Matches list.
@@ -178,6 +181,14 @@ struct PlayerMemory {
     static let perPlayer = 150
 
     var labels: [Int] { Array(Set(examples.map(\.label))).sorted() }
+
+    /// Drops examples made by a different appearance model (their length differs). Returns
+    /// whether any were dropped.
+    mutating func keepOnly(dims: Int) -> Bool {
+        let before = examples.count
+        examples.removeAll { $0.print.count != dims }
+        return examples.count != before
+    }
 
     static func url(project: URL) -> URL { project.appending(path: "players.memory") }
 

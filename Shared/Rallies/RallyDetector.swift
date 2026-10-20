@@ -704,8 +704,14 @@ enum RallyDetector {
 
     // MARK: - Appearance (teach a player)
 
-    /// An appearance fingerprint of `region` (unit coordinates, bottom-left origin), unit length.
+    /// An appearance fingerprint of `region` (unit coordinates, bottom-left origin), unit length:
+    /// from the person re-identification model, which is trained to tell people apart (build,
+    /// hair, shoes, knee pads) rather than just describe a picture. Apple's general image
+    /// fingerprint is the fallback if the model can't be loaded.
     static func featurePrint(_ handler: VNImageRequestHandler, region: CGRect) -> [Float]? {
+        if let model = PersonReID.shared {
+            return PersonReID.embedding(handler, region: region, model: model)
+        }
         let request = VNGenerateImageFeaturePrintRequest()
         request.regionOfInterest = region.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         request.imageCropAndScaleOption = .scaleFit

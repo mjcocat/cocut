@@ -20,6 +20,8 @@ enum PlayerGrouping {
         var trackFrames: [Int: Int]
         /// Frames over all its stretches.
         var frames: Int
+        /// Their tallest box (share of the picture height): small means hard to recognize.
+        var maxHeight: Double
         /// Who it is, when decided (a jersey number, or `RallyDetector.otherTeam`).
         var number: Int?
         var source: RallyDetector.TrackDecision.Source
@@ -54,7 +56,8 @@ enum PlayerGrouping {
         }
         let dims = printDims + 3
 
-        // 1. Boxes around several people: they contain two or more other players' centers.
+        // 1. Boxes around several people: they contain another player's center, or are wider than
+        //    one standing or crouching player (on a 16:9 picture).
         var isGroupSighting = [Bool](repeating: false, count: sightings.count)
         let byTime = Dictionary(grouping: sightings.indices, by: { sightings[$0].time })
         for (_, members) in byTime {
@@ -65,7 +68,7 @@ enum PlayerGrouping {
                     let other = sightings[j].box
                     if box.contains(CGPoint(x: other.midX, y: other.midY)) { inside += 1 }
                 }
-                if inside >= 2 || box.width * 16 / 9 / max(box.height, 0.001) > 1.2 { isGroupSighting[i] = true }
+                if inside >= 1 || box.width * 16 / 9 / max(box.height, 0.001) > 0.9 { isGroupSighting[i] = true }
             }
         }
 
@@ -210,8 +213,9 @@ enum PlayerGrouping {
             let frames = list.reduce(0) { $0 + stretches[$1].members.count }
             var trackFrames: [Int: Int] = [:]
             for idx in list { trackFrames[stretches[idx].track] = stretches[idx].members.count }
+            let tallest = list.flatMap { stretches[$0].members }.map { Double(sightings[$0].box.height) }.max() ?? 0
             var person = Person(id: stretches[root].track, tracks: list.map { stretches[$0].track },
-                                trackFrames: trackFrames, frames: frames,
+                                trackFrames: trackFrames, frames: frames, maxHeight: tallest,
                                 number: nil, source: .uncertain, guess: nil, reads: readVotes[root])
             if let taught = label[root] {
                 person.number = taught

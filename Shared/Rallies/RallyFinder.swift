@@ -208,11 +208,11 @@ final class RallyFinder {
     /// Whether this analysis has appearance data to identify players from.
     var canTeach: Bool { !(analysis?.people.isEmpty ?? true) }
 
-    /// People worth asking about, biggest first: ones Cocut couldn't decide. Short glimpses and
-    /// people you skipped are left out.
+    /// People worth asking about, biggest first: ones Cocut couldn't decide. Short glimpses, people
+    /// never seen big enough to recognize, and people you skipped are left out.
     var reviewQueue: [PlayerGrouping.Person] {
         people.filter { person in
-            guard person.number == nil, person.frames >= 6 else { return false }
+            guard person.number == nil, person.frames >= 6, person.maxHeight >= 0.12 else { return false }
             let skipped = person.trackFrames.reduce(0) { $0 + (skippedTracks.contains($1.key) ? $1.value : 0) }
             return skipped * 2 < person.frames
         }
@@ -380,7 +380,8 @@ final class RallyFinder {
         guard !loadingState, let source = sourceURL, analysis != nil, let project = projectDirectory() else { return }
         saveTask?.cancel()
         let state = MatchStore.State(taughtTracks: taughtTracks, frameExamples: frameExamples, skippedTracks: skippedTracks,
-                                     rallies: rallies, includeServeSetup: includeServeSetup)
+                                     rallies: rallies, includeServeSetup: includeServeSetup,
+                                     analysisVersion: MatchStore.analysisVersion)
         saveTask = Task {
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
@@ -423,14 +424,25 @@ final class RallyFinder {
         skippedTracks = []
         if let project = projectDirectory() {
             memory = PlayerMemory.load(project: project)
+            // Players remembered with an older appearance model can't be compared: start over.
+            if let dims = analysis?.people.first?.print.count, memory.keepOnly(dims: dims) {
+                memory.save(project: project)
+                Log.info("Cocut now recognizes players with a new model, so earlier remembered players were cleared")
+            }
             priorExamples = memory.byLabel.mapValues { $0.map { RallyDetector.features($0, color: nil) } }
             if let saved = MatchStore.loadState(source: source, project: project) {
                 restoring = true
                 includeServeSetup = saved.includeServeSetup
                 restoring = false
-                frameExamples = saved.frameExamples
-                taughtTracks = saved.taughtTracks
-                skippedTracks = saved.skippedTracks
+                // Answers about followed players belong to the analysis they were given on; rally
+                // edits (times, checks, players) carry over to a fresh analysis.
+                if saved.analysisVersion == MatchStore.analysisVersion {
+                    frameExamples = saved.frameExamples
+                    taughtTracks = saved.taughtTracks
+                    skippedTracks = saved.skippedTracks
+                } else if !saved.taughtTracks.isEmpty {
+                    Log.info("This match was analyzed again, so its earlier Who's This? answers were cleared")
+                }
                 for (number, examples) in frameExamples {
                     taught[number, default: []].append(contentsOf: examples)
                     taughtClicks[number, default: 0] += examples.count
