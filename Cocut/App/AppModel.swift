@@ -34,6 +34,8 @@ final class AppModel {
     var requestedSection: SidebarItem?
     /// Shows the Setup Guide sheet (first launch, Help menu).
     var showingSetupGuide = false
+    /// Add from Other Projects is open (shown over Clips).
+    var showingAddFromProjects = false
 
     private(set) var phase: RecordingPhase = .idle {
         // An update found mid-recording is offered once Cocut is idle again.

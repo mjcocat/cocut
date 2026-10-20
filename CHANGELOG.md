@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.36.0
+- New: **Add from Other Projects**. Making a season reel? Pull the best plays from each tournament's project. Filter by rating (starts at ★★★★ and up), player or tag, pick the clips, and they're copied in with their trim, rating, tags, players and spotlight. Each project can get its own section.
+- Find it on Get Started, in the + menu under the clip list, and in the File menu. Clips already added are marked, so nothing comes in twice.
+
 ## 0.35.3
 - You can delete your last project. Cocut starts over with an empty one, on the Get Started screen.
 

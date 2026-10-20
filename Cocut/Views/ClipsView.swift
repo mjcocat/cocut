@@ -99,6 +99,10 @@ struct ClipsView: View {
         .sheet(isPresented: $showingRoster) {
             RosterView()
         }
+        .sheet(isPresented: Binding(get: { model.showingAddFromProjects },
+                                    set: { model.showingAddFromProjects = $0 })) {
+            AddFromProjectsView()
+        }
     }
 
     // MARK: Detail routing
@@ -396,6 +400,9 @@ private struct ClipListPane: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Menu {
+                Button("Add from Other Projects…") { model.showingAddFromProjects = true }
+                    .disabled(model.projects.projects.count < 2)
+                Divider()
                 Button("New Section…") { actions.newSection([]) }
                 Button("New Tag…") { actions.newTag([]) }
                 Divider()

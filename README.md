@@ -55,6 +55,12 @@ It also shows what comes after: rate, spotlight, Player Card, Preview, Export. *
 
 Each **project** has its own clips, sections, tags, roster and Player Card, for example one per season, team or athlete ("Fall 2026 Club", "HS Season"). Use the project menu at the top of the sidebar to switch, create, rename, show in Finder, or delete (to the Trash). A new project can start with a copy of the current Player Card. Your existing library becomes the first project automatically. Projects live in `~/Movies/Cocut/Projects`.
 
+## Season reels from several projects
+
+Keep one project per tournament, and rate the best plays as you go (1–5 in the clip list). For an end-of-season reel, make a new project and choose **Add from Other Projects…** (on Get Started, in the **+** menu under the clip list, or **File › Add Clips from Other Projects…**). It lists the clips of every other project, grouped by project. Filter by rating (it starts at ★★★★ and up when you've rated clips), player or tag, tick the clips you want, and click **Add**. Each clip is copied in with its trim, crop, rating, tags, players, plays and spotlight. With **Put each project in its own section** on, every project becomes a section named after it. Turn on a section's divider card for a title between events.
+
+Copies are independent: trimming or deleting a clip in the season project doesn't change the tournament's, and deleting a tournament project doesn't affect the season reel. Cocut remembers where each copy came from, so a clip already added shows as **Already added**.
+
 ## Import from YouTube
 
 For a whole video, such as a full match someone posted, **File › Import from YouTube…** (**⇧⌘I**) is cleaner than recording the screen: it downloads the original video, up to 1080p, with no browser or player controls in the picture. Paste the link (a link already on the clipboard fills in by itself), choose whether it's **a full match** (opens Find Rallies) or **a clip** (goes into Clips), and click **Download**. Matches are kept in `~/Movies/Cocut/Downloads`.

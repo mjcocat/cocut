@@ -31,6 +31,8 @@ struct Clip: Identifiable, Codable, Hashable {
     var rating: Int?
     /// A ring around the athlete on the clip's first frame (frozen for a moment in the reel).
     var spotlight: Spotlight?
+    /// Copied in from another project: which one, and which clip there.
+    var origin: ClipOrigin?
     var stars: Int { rating ?? 0 }
     var playerList: [Int] { players ?? [] }
     /// Everyone in the clip: listed players plus anyone tagged in a play.
@@ -61,6 +63,16 @@ struct Clip: Identifiable, Codable, Hashable {
         let total = Int(seconds.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
     }
+}
+
+/// Where a copied clip came from, so the same clip isn't added to a project twice.
+struct ClipOrigin: Codable, Hashable {
+    var projectID: UUID
+    var clipID: UUID
+    /// The project's name when the clip was copied.
+    var projectName: String
+
+    var key: String { "\(projectID.uuidString)/\(clipID.uuidString)" }
 }
 
 /// Where to circle the athlete: center and radius as fractions of the picture shown (after any
@@ -586,6 +598,91 @@ final class ClipLibrary {
             if await addClip(at: destination, title: base) != nil { imported += 1 }
         }
         return imported
+    }
+
+    /// A free file name in the Clips folder.
+    private func uniqueDestination(base: String, ext: String) -> URL {
+        var destination = clipsDirectory.appending(path: "\(base).\(ext)")
+        var n = 2
+        while FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
+            destination = clipsDirectory.appending(path: "\(base) \(n).\(ext)")
+            n += 1
+        }
+        return destination
+    }
+
+    // MARK: From other projects
+
+    /// Clips already copied in, by where they came from (`ClipOrigin.key`).
+    var copiedOrigins: Set<String> { Set(clips.compactMap { $0.origin?.key }) }
+
+    /// A clip in another project to copy in.
+    struct CopyRequest {
+        var clip: Clip
+        /// Its file in the other project.
+        var file: URL
+        /// Its tags as that project defines them (tags are matched here by name).
+        var tags: [ClipTag]
+        var origin: ClipOrigin
+    }
+
+    /// Copies clips from other projects into this one, keeping their trim, crop, rating, tags,
+    /// players, plays and spotlight. With `sections`, each group goes under a section named for
+    /// it at the end of the list. `progress` gets the number copied so far. Returns how many.
+    func addCopies(_ groups: [(title: String, requests: [CopyRequest])], sections: Bool,
+                   progress: (Int) -> Void = { _ in }) async -> Int {
+        beginUndoGroup("Add from Other Projects")
+        defer { endUndoGroup() }
+        var added = 0
+        var lastID: Clip.ID?
+        for group in groups where !group.requests.isEmpty {
+            var newItems: [LibraryItem] = []
+            for request in group.requests {
+                let source = request.file
+                let base = source.deletingPathExtension().lastPathComponent
+                let destination = uniqueDestination(base: base, ext: source.pathExtension.isEmpty ? "mov" : source.pathExtension)
+                do {
+                    // Off the main thread: clips can be large.
+                    try await Task.detached(priority: .userInitiated) {
+                        try FileManager.default.copyItem(at: source, to: destination)
+                    }.value
+                } catch {
+                    Log.error("Couldn't copy \(source.lastPathComponent) from \(group.title): \(error.localizedDescription)")
+                    continue
+                }
+                let old = request.clip
+                let tagIDs = request.tags.map { tag -> UUID in
+                    if let existing = tags.first(where: { $0.name.caseInsensitiveCompare(tag.name) == .orderedSame }) {
+                        return existing.id
+                    }
+                    let copy = ClipTag(name: tag.name, color: tag.color)
+                    tags.append(copy)
+                    return copy.id
+                }
+                let clip = Clip(id: UUID(), title: old.title, fileName: destination.lastPathComponent,
+                                createdAt: old.createdAt, duration: old.duration,
+                                pixelWidth: old.pixelWidth, pixelHeight: old.pixelHeight,
+                                trimStart: old.trimStart, trimEnd: old.trimEnd, isExcluded: nil,
+                                tagIDs: tagIDs.isEmpty ? nil : tagIDs, crop: old.crop, cropChecked: old.cropChecked,
+                                plays: old.plays, players: old.players, rating: old.rating,
+                                spotlight: old.spotlight, origin: request.origin)
+                newItems.append(.clip(clip))
+                lastID = clip.id
+                added += 1
+                progress(added)
+            }
+            guard !newItems.isEmpty else { continue }
+            checkpoint("Add from Other Projects")
+            if sections {
+                items.append(.section(ReelSection(title: uniqueSectionTitle(group.title))))
+                items.append(contentsOf: newItems)
+            } else {
+                items.insert(contentsOf: newItems, at: insertionIndex())
+            }
+            save()
+        }
+        if let lastID { recentlyAddedID = lastID }
+        return added
     }
 
     func revealInFinder(_ clip: Clip? = nil) {

@@ -130,6 +130,12 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("i", modifiers: [.command, .shift])
 
+            Button("Add Clips from Other Projects…") {
+                model.requestedSection = .clips
+                model.showingAddFromProjects = true
+            }
+            .disabled(model.projects.projects.count < 2 || model.isBusy)
+
             Button("Find Rallies in a Match…") {
                 openWindow(id: "rallies")
             }

@@ -212,6 +212,10 @@ struct GetStartedView: View {
                     }
                 }
 
+                if model.projects.projects.count > 1 {
+                    OtherProjectsTile()
+                }
+
                 if !model.canRecordLastRegion {
                     Text("Recording works from any app, even with the video in fullscreen: ⌥⌘N picks a region, ⌥⌘F records the full screen. Press the same keys to finish.")
                         .font(.callout)
