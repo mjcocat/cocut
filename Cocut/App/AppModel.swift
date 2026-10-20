@@ -138,6 +138,7 @@ final class AppModel {
         updater.isBusy = { [weak self] in self?.isBusy ?? false }
         updater.startAutomaticChecks()
         rallies.roster = { [weak self] in Set(self?.library.roster.map(\.number) ?? []) }
+        rallies.addToRoster = { [weak self] in self?.library.addPlayer(number: $0, name: "") }
         rallies.liberos = { [weak self] in Set(self?.library.roster.filter(\.isLibero).map(\.number) ?? []) }
         rallies.projectDirectory = { [weak self] in
             guard let self else { return nil }

@@ -525,6 +525,8 @@ private struct WhoIsThisPane: View {
                                 RoundedRectangle(cornerRadius: 6)
                                     .strokeBorder(out ? Color.red.opacity(0.8) : Color.clear, lineWidth: 2)
                             }
+                            // Anywhere on the close-up ticks or unticks it, not just the picture.
+                            .contentShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
                     .help(out ? "Not this player: click to tick again" : "Click if this isn't the same player")
@@ -584,8 +586,8 @@ private struct WhoIsThisPane: View {
                 #if os(iOS)
                 .keyboardType(.numberPad)
                 #endif
-                .onSubmit { if let n = Int(otherNumber) { answer(n) } }
-            Button("Use") { if let n = Int(otherNumber) { answer(n) } }
+                .onSubmit { if let n = Int(otherNumber) { answerOther(n) } }
+            Button("Use") { if let n = Int(otherNumber) { answerOther(n) } }
                 .disabled(Int(otherNumber) == nil)
         }
         HStack(spacing: 8) {
@@ -627,6 +629,18 @@ private struct WhoIsThisPane: View {
                 }
             }
         }
+    }
+
+    /// A number typed in. With a team roster, a number not on it joins it, so it's a button for
+    /// the next questions. Without one it isn't added (a roster of one would leave everyone else
+    /// off every rally); it becomes a button anyway once Cocut has grouped with the answer.
+    private func answerOther(_ number: Int) {
+        let roster = finder.roster()
+        if number >= 0, !roster.isEmpty, !roster.contains(number) {
+            finder.addToRoster(number)
+            Log.info("Added #\(number) to the roster from Who's This?")
+        }
+        answer(number)
     }
 
     private func answer(_ number: Int) {
