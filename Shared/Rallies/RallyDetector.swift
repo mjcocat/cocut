@@ -552,6 +552,14 @@ enum RallyDetector {
 
     /// Wider than one standing or crouching person (in a 16:9 frame): the rectangle detector
     /// sometimes boxes a whole cluster of people.
+    /// A box that shows one player well enough to recognize: shaped like one person (not a
+    /// sliver of one, not several side by side) and not tiny. On a 16:9 picture.
+    static func isClear(_ box: CGRect) -> Bool {
+        guard box.height >= 0.12 else { return false }
+        let aspect = box.width * 16 / 9 / box.height
+        return aspect >= 0.25 && aspect <= 0.75
+    }
+
     static func looksLikeGroup(_ box: CGRect) -> Bool {
         box.height > 0 && box.width * 16 / 9 / box.height > 0.9
     }
