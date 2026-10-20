@@ -76,7 +76,8 @@ struct FilmSourceCard: View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: source.icon)
                 .font(.system(size: 30, weight: .regular))
-                .foregroundStyle(source == .online ? Color.red : Color.accentColor)
+                .foregroundStyle(source == .online ? Design.record : Color.accentColor)
+                .accessibilityHidden(true)
                 .frame(height: 36)
             Text(source.title)
                 .font(.headline)
@@ -88,20 +89,21 @@ struct FilmSourceCard: View {
             if showsAction {
                 Button(source.action, action: onAction)
                     .buttonStyle(.borderedProminent)
-                    .tint(source == .online ? .red : .accentColor)
+                    .tint(source == .online ? Design.record : .accentColor)
             }
         }
-        .padding(18)
+        .padding(Design.Space.l + 2)
         .frame(maxWidth: .infinity, minHeight: 200, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.primary.opacity(selected ? 0.09 : 0.045))
+            RoundedRectangle(cornerRadius: Design.Radius.large, style: .continuous)
+                .fill(selected ? Color.accentColor.opacity(0.08) : Design.panelFill)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: selected ? 2.5 : 1)
+            RoundedRectangle(cornerRadius: Design.Radius.large, style: .continuous)
+                .strokeBorder(selected ? Color.accentColor : Design.hairline, lineWidth: selected ? 2 : 1)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: Design.Radius.large, style: .continuous))
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
 
@@ -117,9 +119,7 @@ struct NextStepsPath: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("THEN")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+            SectionLabel("Then")
             ViewThatFits {
                 HStack(spacing: 8) { items(arrows: true) }
                 VStack(alignment: .leading, spacing: 6) { items(arrows: false) }

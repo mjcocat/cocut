@@ -28,6 +28,55 @@ struct RallyFinderView: View {
         .navigationTitle("Find Rallies")
         .navigationSubtitle(subtitle)
         .toolbar {
+            // Working on this match: who's on the team, who's who, where the court is, and how
+            // well Cocut lists players. Finishing (Add to Clips, Export) is along the bottom.
+            if finder.analysis != nil {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        editingRoster = true
+                    } label: {
+                        Label("Team Roster", systemImage: "person.3")
+                    }
+                    .help("Your team's jersey numbers: only these are listed on rallies, so opponents and misreads are left out. Changes apply right away.")
+
+                    Button {
+                        finder.pause()
+                        openWindow(id: "identify")
+                    } label: {
+                        Label("Identify Players", systemImage: "person.badge.plus")
+                    }
+                    .help("Answer \"Who's this?\" for the players Cocut isn't sure of, or click any player on a frame")
+                    .disabled(isBusy || !finder.canTeach)
+
+                    Menu {
+                        Button {
+                            finder.pendingMatch = finder.sourceURL
+                        } label: {
+                            Label("Mark Court Area Again…", systemImage: "rectangle.dashed")
+                        }
+                        .help("Mark the air above your court again and find the rallies again")
+                        .disabled(isBusy)
+                        Button {
+                            finder.pause()
+                            openWindow(id: "accuracy")
+                        } label: {
+                            Label("Check Accuracy…", systemImage: "checkmark.seal")
+                        }
+                        .disabled(isBusy || !finder.canTeach)
+                        if finder.guide.hidden {
+                            Divider()
+                            Button {
+                                finder.showGuide()
+                            } label: {
+                                Label("Show Next Steps", systemImage: "lightbulb")
+                            }
+                        }
+                    } label: {
+                        Label("More", systemImage: "ellipsis.circle")
+                    }
+                    .help("Court area, Check Accuracy and tips")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     finder.chooseMatch()
@@ -36,28 +85,6 @@ struct RallyFinderView: View {
                 }
                 .help("Choose a full match video to find rallies in")
                 .disabled(isBusy)
-            }
-            if finder.analysis != nil, finder.guide.hidden {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        finder.showGuide()
-                    } label: {
-                        Label("Show Tips", systemImage: "lightbulb")
-                    }
-                    .help("Show the next steps for this match again")
-                }
-            }
-            if finder.analysis != nil {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        finder.pause()
-                        openWindow(id: "accuracy")
-                    } label: {
-                        Label("Check Accuracy…", systemImage: "checkmark.seal")
-                    }
-                    .help("Mark which rallies a player is really in, and see how well Cocut lists them")
-                    .disabled(isBusy || !finder.canTeach)
-                }
             }
         }
         .onChange(of: model.isBusy) { _, busy in
@@ -139,10 +166,9 @@ struct RallyFinderView: View {
                 tip("hand.tap", "You review every rally before anything is saved, and can fix or add any it got wrong.")
             }
             .font(.callout)
-            .padding(18)
-            .frame(maxWidth: 560, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.04)))
-            .padding(.top, 8)
+            .frame(maxWidth: 524, alignment: .leading)
+            .panel(padding: Design.Space.l + 2)
+            .padding(.top, Design.Space.s)
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -158,6 +184,7 @@ struct RallyFinderView: View {
             Text(text)
         } icon: {
             Image(systemName: icon).foregroundStyle(Color.accentColor)
+                .accessibilityHidden(true)
         }
     }
 
@@ -223,7 +250,7 @@ struct RallyFinderView: View {
                         }
                     }
                     .aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .mediaFrame()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     MatchTransport()
@@ -248,65 +275,40 @@ struct RallyFinderView: View {
     }
 
     private func addedBanner(_ count: Int) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-            Text("Added \(count) \(count == 1 ? "rally" : "rallies") to Clips, in a section called “\(finder.matchName)”.")
-            Spacer()
+        Banner(tone: .success, icon: "checkmark.circle.fill",
+               title: "Added \(count) \(count == 1 ? "rally" : "rallies") to Clips",
+               message: "They're in a section called “\(finder.matchName)”.",
+               style: .strip,
+               onDismiss: { finder.lastAddedCount = nil }) {
             Button("Show Clips") {
                 model.requestedSection = .clips
                 openWindow(id: "main")
             }
-            Button {
-                finder.lastAddedCount = nil
-            } label: {
-                Image(systemName: "xmark")
-            }
-            .buttonStyle(.borderless)
         }
-        .font(.callout)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 9)
-        .background(Color.green.opacity(0.1))
     }
 
+    /// Finishing: what's kept, and what to do with it.
     private var bottomBar: some View {
         @Bindable var finder = self.finder
-        return HStack(spacing: 14) {
+        return HStack(spacing: Design.Space.l) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(finder.keptRallies.count) of \(finder.rallies.count) rallies kept")
+                    .font(.callout.weight(.medium))
+                    .monospacedDigit()
+                Text("\(RallyFinderView.time(finder.keptSeconds)) of \(RallyFinderView.time(finder.duration)) of film")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
             Toggle(isOn: $finder.includeServeSetup) {
                 Text("Include serve setup")
             }
+            .toggleStyle(.switch)
+            .controlSize(.small)
             .help("Start each rally at the serve whistle, so you see the server get ready. Off starts just before the serve.")
 
-            Text("\(finder.keptRallies.count) of \(finder.rallies.count) rallies · \(RallyFinderView.time(finder.keptSeconds)) kept of \(RallyFinderView.time(finder.duration))")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-
             Spacer()
-
-            Button {
-                editingRoster = true
-            } label: {
-                Label("Team Roster…", systemImage: "person.3")
-            }
-            .help("Your team's jersey numbers: only these are listed on rallies, so opponents and misreads are left out. Changes apply right away.")
-
-            Button {
-                finder.pause()
-                openWindow(id: "identify")
-            } label: {
-                Label("Identify Players…", systemImage: "person.badge.plus")
-            }
-            .help("Answer \"Who's this?\" for the players Cocut isn't sure of, or click any player on a frame")
-            .disabled(isBusy || !finder.canTeach)
-
-            Button {
-                finder.pendingMatch = finder.sourceURL
-            } label: {
-                Label("Court Area…", systemImage: "rectangle.dashed")
-            }
-            .help("Mark the air above your court again and find the rallies again (replaces your changes to the rallies)")
-            .disabled(isBusy)
 
             Button {
                 finder.exportCondensed()
@@ -323,11 +325,13 @@ struct RallyFinderView: View {
                       systemImage: "film.stack")
             }
             .buttonStyle(.borderedProminent)
-            .help("Make each kept rally a clip, so you can tag the best plays and put them in your highlight reel")
+            .keyboardShortcut(.return, modifiers: [.command])
+            .help("Make each kept rally a clip, so you can tag the best plays and put them in your highlight reel (⌘Return)")
             .disabled(finder.keptRallies.isEmpty || isBusy)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .controlSize(.large)
+        .padding(.horizontal, Design.Space.l)
+        .padding(.vertical, Design.Space.m)
     }
 
     private func workingOverlay(_ message: String, _ fraction: Double?) -> some View {
@@ -342,8 +346,8 @@ struct RallyFinderView: View {
                 }
                 Button("Cancel") { finder.cancelWork() }
             }
-            .padding(24)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.regularMaterial))
+            .padding(Design.Space.xl)
+            .background(RoundedRectangle(cornerRadius: Design.Radius.large, style: .continuous).fill(.regularMaterial))
         }
     }
 }
@@ -478,8 +482,7 @@ private struct RallyEditor: View {
                              onAdd: { finder.addPlayer($0, to: rally.id) },
                              onRemove: { finder.removePlayer($0, from: rally.id) })
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .panel(padding: Design.Space.m, radius: Design.Radius.medium)
     }
 
     private func edgeControl(_ label: String, minus: @escaping () -> Void, plus: @escaping () -> Void,
@@ -514,9 +517,7 @@ private struct RallyList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text("RALLIES")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                SectionLabel("Rallies")
                 Spacer()
                 PlayerFilterMenu()
             }
@@ -607,7 +608,7 @@ private struct RallyRow: View {
                 .fill(Color.accentColor)
                 .frame(width: 3, height: 26)
                 .opacity(isCurrent ? 1 : 0)
-            Toggle("", isOn: Binding(get: { rally.isIncluded }, set: { _ in model.rallies.toggle(rally.id) }))
+            Toggle("Keep Rally \(number)", isOn: Binding(get: { rally.isIncluded }, set: { _ in model.rallies.toggle(rally.id) }))
                 .toggleStyle(.checkbox)
                 .labelsHidden()
             VStack(alignment: .leading, spacing: 1) {
@@ -616,7 +617,7 @@ private struct RallyRow: View {
                         .fontWeight(isCurrent ? .bold : .medium)
                         .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
                     if rally.isManual {
-                        Text("added").font(.caption2).foregroundStyle(.secondary)
+                        Pill(text: "Added")
                     }
                 }
                 Text("\(RallyFinderView.time(rally.start)) · \(String(format: "%.0f", rally.duration))s\(rally.players.isEmpty ? "" : "  ·  " + rally.players.map { "#\($0)" }.joined(separator: " "))")
