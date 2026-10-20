@@ -2,7 +2,7 @@
 
 A native macOS app for building athlete highlight reels: record plays from YouTube or Hudl by selecting the video area on screen, collect them as clips, add a player intro card, and export one finished video.
 
-**Status: v0.18.1.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
+**Status: v0.19.** Everything from capture to a finished reel works on the Mac, and an iPhone/iPad version is in testing (see [iPhone and iPad](#iphone-and-ipad)):
 - play-to-record capture, including with the video in fullscreen
 - a reorderable clip library with trimming and import
 - a player card designer
@@ -118,6 +118,7 @@ Clips are saved to `~/Movies/Cocut/Clips` as 60 fps H.264 `.mov` files at full R
 - Missed someone? Select the rally and type their number in the players row. Remove a wrong one with its ×.
 - Cocut follows each nearby player through the rally (body-pose detection plus appearance), so a number read once labels that player for as long as they're followed.
 - **Identify Players…** fills in the rest. **Who's This?** shows the followed players Cocut isn't sure of, most useful first, and ones whose read number disagrees with how they look: the frame they're biggest in, close-ups from other moments, and Cocut's guess. Tap their number (your roster is offered), **Not Our Team** for opponents and referees, or **Skip**. Each answer teaches Cocut, so similar players are worked out on their own and the list shrinks as you go. **Pick from a Frame** lets you click (or drag a box around) any player on any frame. The **Looser/Stricter** slider sets how many of a player's frames must agree before Cocut decides on its own; stricter asks about more.
+- **Saved and remembered.** Each match's analysis, your answers and rally edits are saved in the project, so choosing the same video again, or **Recent matches** in Find Rallies, reopens it instantly. Players you identify (and **Not Our Team**) are also remembered for the project's next matches, so new films start with what you've taught. Jersey color is compared along with appearance, which sets a libero, the referees and the other team apart; remembered players are matched without it, since uniforms change. **Forget All** in Identify Players clears what the project remembers.
 - Rallies added to Clips keep their players. In Clips, the filter's **Player** section finds every clip with that player.
 - Numbers on backs facing the camera read best. Import matches at **1080p or better**: at 720p, front-row numbers are often too small to read.
 
