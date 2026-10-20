@@ -140,6 +140,10 @@ final class RallyFinder {
     var playerFilter: Int?
     /// The team roster's numbers (supplied by the app), used to ignore referees and opponents.
     @ObservationIgnored var roster: () -> Set<Int> = { [] }
+    /// Roster numbers marked as liberos (supplied by the app).
+    @ObservationIgnored var liberos: () -> Set<Int> = { [] }
+    /// The liberos the last grouping used, to group again when they change.
+    @ObservationIgnored private var groupedLiberos: Set<Int> = []
 
     // Playback
     private(set) var player: AVPlayer?
@@ -504,6 +508,9 @@ final class RallyFinder {
         let prior = remembered
         let tracks = self.taughtTracks
         let nots = self.notTracks
+        let liberos = self.liberos()
+        let team = self.roster()
+        groupedLiberos = liberos
         let strictness = Float(matchSimilarity - 0.65) * 0.3
         let compare = checking || !truth.isEmpty
         isMatching = true
@@ -511,7 +518,7 @@ final class RallyFinder {
             let start = Date()
             let result = await Task.detached(priority: .userInitiated) {
                 PlayerGrouping.group(sightings: sightings, taughtTracks: tracks, notTracks: nots,
-                                     remembered: prior, strictness: strictness)
+                                     remembered: prior, strictness: strictness, liberos: liberos, team: team)
             }.value
             guard !Task.isCancelled else { return }
             decisions = result.decisions
@@ -528,6 +535,11 @@ final class RallyFinder {
             let percent = Int((identifiedShare * 100).rounded())
             let biggest = result.people.first.map { "\($0.tracks.count) stretches / \($0.frames) frames" } ?? "none"
             Log.info("People: \(result.people.count) from \(stretches) stretches (\(result.groupTracks.count) group boxes left out), \(result.anchors) known from reads or answers, \(result.matched) matched by look, biggest \(biggest), same-person threshold \(threshold), \(seconds)s")
+            if !liberos.isEmpty {
+                Log.info(result.liberosByColor.isEmpty
+                         ? "Libero \(liberos.sorted().map { "#\($0)" }.joined(separator: ", ")): not found by jersey colour (identify her once, or her colour isn't distinct on this film)"
+                         : "Libero \(result.liberosByColor.sorted().map { "#\($0)" }.joined(separator: ", ")) found by jersey colour")
+            }
             Log.info("Players: \(counts.identified) identified, \(counts.unknown) not (\(reviewQueue.count) to ask about), \(percent)% of player time identified")
 
             // The v0.21 grouping on the same answers, so Check Accuracy can compare.
@@ -1050,6 +1062,11 @@ final class RallyFinder {
     /// Re-decides who's in each rally, e.g. after the team roster changes. No new analysis needed.
     func refreshPlayers() {
         guard analysis != nil else { return }
+        // Marking a libero changes who's who, not just which numbers are listed.
+        if liberos() != groupedLiberos {
+            refreshDecisions()
+            return
+        }
         rebuildRallies()
     }
 

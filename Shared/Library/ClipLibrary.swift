@@ -143,8 +143,26 @@ struct PlayTag: Codable, Hashable, Identifiable {
 struct RosterPlayer: Codable, Hashable, Identifiable {
     var number: Int
     var name: String
+    /// Wears the libero's different-coloured jersey: Find Rallies finds her by it.
+    var isLibero = false
     var id: Int { number }
     var label: String { name.isEmpty ? "#\(number)" : "#\(number) \(name)" }
+
+    init(number: Int, name: String, isLibero: Bool = false) {
+        self.number = number
+        self.name = name
+        self.isLibero = isLibero
+    }
+
+    private enum CodingKeys: String, CodingKey { case number, name, isLibero }
+
+    // Rosters saved before liberos could be marked have no isLibero.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        number = try c.decode(Int.self, forKey: .number)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        isLibero = try c.decodeIfPresent(Bool.self, forKey: .isLibero) ?? false
+    }
 }
 
 /// A heading in the clip list ("Kills", "Blocks"). Clips below it, up to the next heading,
@@ -792,6 +810,14 @@ final class ClipLibrary {
         checkpoint("Roster")
         guard let i = roster.firstIndex(where: { $0.number == number }) else { return }
         roster[i].name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        save()
+    }
+
+    /// Marks a roster player as a libero (or not).
+    func setLibero(_ number: Int, _ isLibero: Bool) {
+        guard let i = roster.firstIndex(where: { $0.number == number }), roster[i].isLibero != isLibero else { return }
+        checkpoint("Roster")
+        roster[i].isLibero = isLibero
         save()
     }
 
