@@ -271,15 +271,34 @@ struct TeachPlayerScreen: View {
 
 /// One person at a time, the ones on screen most first: "Who's this?" Each answer identifies
 /// every stretch Cocut followed that person, so a handful of answers covers most of the match.
+/// When a person is several stretches, close-ups of them are shown first so a mix-up of two
+/// teammates can be unticked before the answer labels them all.
 private struct WhoIsThisPane: View {
     let finder: RallyFinder
     let url: URL
 
+    /// A close-up of one stretch of the current person.
+    struct CloseUp: Identifiable {
+        var track: Int
+        var image: CGImage
+        var id: Int { track }
+    }
+
+    /// Most stretches shown to confirm.
+    static let confirmLimit = 9
+
     @State private var current: PlayerGrouping.Person?
     @State private var answered: Set<Int> = []
     @State private var picture: (image: CGImage, box: CGRect, time: Double)?
-    @State private var closeUps: [CGImage] = []
+    /// One close-up per stretch, to confirm (when the person is several stretches).
+    @State private var closeUps: [CloseUp] = []
+    /// Extra views of a single stretch (when it's one stretch, nothing to confirm).
+    @State private var views: [CGImage] = []
+    /// Close-ups unticked: not this player.
+    @State private var rejected: Set<Int> = []
     @State private var loading = false
+    /// An answer split a person: wait for Cocut to group again before the next question.
+    @State private var regrouping = false
     @State private var otherNumber = ""
     @State private var answeredCount = 0
 
@@ -290,8 +309,12 @@ private struct WhoIsThisPane: View {
     private let wide = true
     #endif
 
+    private var queue: [PlayerGrouping.Person] {
+        finder.reviewQueue.filter { !$0.tracks.contains(where: answered.contains) }
+    }
+
     var body: some View {
-        let queue = finder.reviewQueue.filter { !$0.tracks.contains(where: answered.contains) }
+        let queue = self.queue
         let share = finder.identifiedShare
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
@@ -323,8 +346,10 @@ private struct WhoIsThisPane: View {
                     }
                     .frame(maxWidth: .infinity)
                     VStack(alignment: .leading, spacing: 12) {
-                        if let first = closeUps.first {
-                            // The player up close where they're biggest, then from other stretches.
+                        if closeUps.count >= 2 {
+                            confirmGrid(for: current)
+                        } else if let first = views.first {
+                            // The player up close where they're biggest, then at other moments.
                             HStack(alignment: .top, spacing: 6) {
                                 Image(decorative: first, scale: 1)
                                     .resizable()
@@ -332,8 +357,8 @@ private struct WhoIsThisPane: View {
                                     .frame(height: 220)
                                     .clipShape(RoundedRectangle(cornerRadius: 6))
                                 VStack(spacing: 6) {
-                                    ForEach(closeUps.indices.dropFirst(), id: \.self) { i in
-                                        Image(decorative: closeUps[i], scale: 1)
+                                    ForEach(views.indices.dropFirst(), id: \.self) { i in
+                                        Image(decorative: views[i], scale: 1)
                                             .resizable()
                                             .scaledToFit()
                                             .frame(height: 70)
@@ -344,19 +369,77 @@ private struct WhoIsThisPane: View {
                         }
                         answerButtons(for: current)
                     }
-                    .frame(width: wide ? 340 : nil)
+                    .frame(width: wide ? 360 : nil)
                 }
+            } else if regrouping || (finder.isMatching && queue.isEmpty) {
+                VStack(spacing: 8) {
+                    ProgressView()
+                    Text("Sorting out who's who with your answer…").foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 200)
             } else if queue.isEmpty {
-                Text(finder.isMatching ? "Working out who everyone is…" : "Nothing left to ask about. Use Pick from a Frame for anyone still missing.")
+                Text("Nothing left to ask about. Use Pick from a Frame for anyone still missing.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 200)
             } else {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 200)
             }
         }
-        .onAppear { if current == nil { current = queue.first } }
-        .onChange(of: queue.first?.id) { _, _ in if current == nil { current = queue.first } }
+        .onAppear { if current == nil, !regrouping { current = queue.first } }
+        .onChange(of: queue.first?.id) { _, _ in if current == nil, !regrouping { current = self.queue.first } }
+        .onChange(of: finder.groupingRevision) { _, _ in
+            guard regrouping else { return }
+            regrouping = false
+            current = self.queue.first
+        }
         .task(id: current?.id) { await load() }
+    }
+
+    /// "Same player?" One close-up per stretch, ticked; untick the ones that aren't them.
+    @ViewBuilder private func confirmGrid(for person: PlayerGrouping.Person) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(person.tracks.count > closeUps.count
+                 ? "The same player in all of these? Untick any who aren't. (\(closeUps.count) of \(person.tracks.count) times they were followed.)"
+                 : "The same player in all of these? Untick any who aren't.")
+                .font(.callout)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], alignment: .leading, spacing: 6) {
+                ForEach(closeUps) { closeUp in
+                    let out = rejected.contains(closeUp.track)
+                    Button {
+                        if out { rejected.remove(closeUp.track) } else { rejected.insert(closeUp.track) }
+                    } label: {
+                        Image(decorative: closeUp.image, scale: 1)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 120)
+                            .background(Color.black)
+                            .opacity(out ? 0.35 : 1)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(alignment: .topTrailing) {
+                                Image(systemName: out ? "xmark.circle.fill" : "checkmark.circle.fill")
+                                    .font(.title3)
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, out ? Color.red : Color.green)
+                                    .padding(4)
+                            }
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(out ? Color.red.opacity(0.8) : Color.clear, lineWidth: 2)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .help(out ? "Not this player: click to tick again" : "Click if this isn't the same player")
+                }
+            }
+            if !rejected.isEmpty {
+                Text(rejected.count == closeUps.count
+                     ? "None of these is your answer: they'll be asked about again."
+                     : "Your answer covers only the ticked ones. The unticked ones are noted as not this player\(person.tracks.count > closeUps.count ? ", and the rest are sorted out again" : "").")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func label(_ number: Int) -> String {
@@ -413,7 +496,7 @@ private struct WhoIsThisPane: View {
                 .help("Not a single player, a mix of people, or can't tell")
         }
         if answeredCount > 0 {
-            Text("\(answeredCount) answered. Each answer covers every stretch of that person, and teaches Cocut who looks like them.")
+            Text("\(answeredCount) answered. Each answer covers every ticked stretch of that person, and teaches Cocut who looks like them.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -444,10 +527,20 @@ private struct WhoIsThisPane: View {
 
     private func answer(_ number: Int) {
         guard let current else { return }
-        finder.identify(current, as: number)
-        answeredCount += 1
         otherNumber = ""
-        advance(skipping: false)
+        answeredCount += 1
+        if rejected.isEmpty {
+            finder.identify(current, as: number)
+            advance(skipping: false)
+        } else {
+            // A mix of people: only the ticked ones are this player. Ask again once Cocut has
+            // grouped the rest with that to go on.
+            let shown = Set(closeUps.map(\.track))
+            let taught = finder.identify(current, as: number, confirmed: shown.subtracting(rejected), rejected: rejected)
+            answered.formUnion(taught)
+            self.current = nil
+            regrouping = true
+        }
     }
 
     private func advance(skipping: Bool) {
@@ -457,45 +550,58 @@ private struct WhoIsThisPane: View {
         self.current = finder.reviewQueue.first { !$0.tracks.contains(where: answered.contains) }
     }
 
-    /// The frame where the person is biggest, and close-ups from other stretches of them (so a
-    /// mix-up of two people is easy to spot).
+    /// The frame where the person is biggest, and close-ups: one per stretch when they're several
+    /// (to confirm), or other moments of the one stretch.
     private func load() async {
-        guard let current else { picture = nil; closeUps = []; return }
+        rejected = []
+        guard let current else { picture = nil; closeUps = []; views = []; return }
         loading = true
         let frames = finder.sightings(of: current).sorted { $0.time < $1.time }
         guard let main = frames.max(by: { $0.box.height < $1.box.height }) else { loading = false; return }
-        var others: [RallyDetector.PersonSighting] = []
-        // The biggest view from each of the other longest stretches, then spread over time.
+
+        // Several stretches: the biggest view of each of the longest ones (the main one first).
+        var perStretch: [RallyDetector.PersonSighting] = [main]
         let byTrack = Dictionary(grouping: frames.filter { $0.track != main.track }, by: \.track)
-        for (_, stretch) in byTrack.sorted(by: { $0.value.count > $1.value.count }).prefix(3) {
-            if let best = stretch.max(by: { $0.box.height < $1.box.height }) { others.append(best) }
+        for (_, stretch) in byTrack.sorted(by: { $0.value.count > $1.value.count }).prefix(Self.confirmLimit - 1) {
+            if let best = stretch.max(by: { $0.box.height < $1.box.height }) { perStretch.append(best) }
         }
-        if others.count < 3, frames.count > 1 {
-            for k in 0..<4 where others.count < 3 {
+        // One stretch: other moments of it, spread over time.
+        var moments: [RallyDetector.PersonSighting] = []
+        if perStretch.count < 2, frames.count > 1 {
+            for k in 0..<4 where moments.count < 3 {
                 let s = frames[min(frames.count - 1, k * (frames.count - 1) / 3)]
-                if s.time != main.time, !others.contains(where: { $0.time == s.time }) { others.append(s) }
+                if s.time != main.time, !moments.contains(where: { $0.time == s.time }) { moments.append(s) }
             }
         }
-        others.sort { $0.time < $1.time }
         let url = self.url
-        let result = await Task.detached(priority: .userInitiated) { () -> ((CGImage, CGRect, Double)?, [CGImage]) in
+        let stretchViews = perStretch.count >= 2 ? perStretch : []
+        let result = await Task.detached(priority: .userInitiated) { () -> ((CGImage, CGRect, Double)?, [CloseUp], [CGImage]) in
             var picture: (CGImage, CGRect, Double)?
             if let image = await VideoFrames.firstFrame(url: url, at: main.time, crop: nil) {
                 picture = (image, main.box, main.time)
             }
-            var crops: [CGImage] = []
-            if let image = picture?.0, let crop = Self.crop(image, around: main.box) { crops.append(crop) }
-            for s in others.prefix(3) {
-                if let image = await VideoFrames.firstFrame(url: url, at: s.time, crop: nil),
-                   let crop = Self.crop(image, around: s.box) {
-                    crops.append(crop)
+            var closeUps: [CloseUp] = []
+            for s in stretchViews {
+                var image = picture?.0
+                if s.time != main.time { image = await VideoFrames.firstFrame(url: url, at: s.time, crop: nil) }
+                if let image, let crop = Self.crop(image, around: s.box) { closeUps.append(CloseUp(track: s.track, image: crop)) }
+            }
+            var views: [CGImage] = []
+            if stretchViews.isEmpty {
+                if let image = picture?.0, let crop = Self.crop(image, around: main.box) { views.append(crop) }
+                for s in moments {
+                    if let image = await VideoFrames.firstFrame(url: url, at: s.time, crop: nil),
+                       let crop = Self.crop(image, around: s.box) {
+                        views.append(crop)
+                    }
                 }
             }
-            return (picture, crops)
+            return (picture, closeUps, views)
         }.value
         guard !Task.isCancelled, current.id == self.current?.id else { return }
         picture = result.0.map { (image: $0.0, box: $0.1, time: $0.2) }
         closeUps = result.1
+        views = result.2
         loading = false
     }
 

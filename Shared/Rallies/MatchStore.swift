@@ -15,6 +15,10 @@ enum MatchStore {
     /// Bump when the analysis changes enough that saved analyses should be redone.
     /// 4: appearance from the person re-identification model (not comparable with earlier prints).
     static let analysisVersion = 4
+    /// Bump when answers mean something different, so saved answers are dropped (rally edits stay).
+    /// 2: an answer covers only the stretches you confirmed (v0.21 answers covered whole chains
+    /// of look-alikes, which often mixed teammates).
+    static let answersVersion = 2
 
     struct Saved: Codable {
         var version: Int
@@ -35,6 +39,14 @@ enum MatchStore {
         var includeServeSetup = false
         /// The analysis the answers belong to (followed players are numbered per analysis).
         var analysisVersion: Int?
+        /// How answers were given (see `MatchStore.answersVersion`). Optional, like the fields
+        /// below, so states saved by earlier versions still load.
+        var answersVersion: Int?
+        /// Stretches you said aren't a player (unticked in Who's This?): track → numbers.
+        var notTracks: [Int: Set<Int>]?
+        /// Which rallies players are really in, marked in Check Accuracy. About the video, so
+        /// they're kept when the match is analyzed again.
+        var truth: [TruthMark]?
     }
 
     /// One saved match, for the Recent Matches list.
@@ -236,6 +248,23 @@ struct PlayerMemory {
     }
 
     mutating func clear() { examples = [] }
+
+    /// What the remembered players were learned from; bumped when earlier ones can't be trusted.
+    /// 2: v0.22 (v0.21 answers often covered several teammates at once).
+    static let version = 2
+
+    /// Clears what was remembered by an earlier version, once per project. Returns whether
+    /// anything was cleared.
+    static func upgrade(project: URL, memory: inout PlayerMemory) -> Bool {
+        let marker = project.appending(path: "players.memory-version")
+        let saved = (try? String(contentsOf: marker, encoding: .utf8)).flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        guard saved != version else { return false }
+        try? String(version).write(to: marker, atomically: true, encoding: .utf8)
+        guard !memory.examples.isEmpty else { return false }
+        memory.clear()
+        memory.save(project: project)
+        return true
+    }
 
     /// Examples grouped by player, for seeding a new match.
     var byLabel: [Int: [[Float]]] {

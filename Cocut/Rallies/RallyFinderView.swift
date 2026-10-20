@@ -10,6 +10,7 @@ struct RallyFinderView: View {
     private var finder: RallyFinder { model.rallies }
     @State private var teaching = false
     @State private var editingRoster = false
+    @State private var checkingAccuracy = false
 
     var body: some View {
         Group {
@@ -38,6 +39,18 @@ struct RallyFinderView: View {
                 .help("Choose a full match video to find rallies in")
                 .disabled(isBusy)
             }
+            if finder.analysis != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        finder.pause()
+                        checkingAccuracy = true
+                    } label: {
+                        Label("Check Accuracy…", systemImage: "checkmark.seal")
+                    }
+                    .help("Mark which rallies a player is really in, and see how well Cocut lists them")
+                    .disabled(isBusy || !finder.canTeach)
+                }
+            }
         }
         .onChange(of: model.isBusy) { _, busy in
             if busy { finder.pause() }
@@ -46,6 +59,9 @@ struct RallyFinderView: View {
         .sheet(isPresented: $editingRoster) {
             RosterView()
                 .frame(minWidth: 420, minHeight: 460)
+        }
+        .sheet(isPresented: $checkingAccuracy) {
+            CheckAccuracyScreen(finder: finder) { checkingAccuracy = false }
         }
         .sheet(isPresented: $teaching) {
             if let url = finder.sourceURL {

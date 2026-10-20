@@ -19,6 +19,7 @@ struct RalliesScreen: View {
     @State private var pendingMatch: URL?
     @State private var teaching = false
     @State private var editingRoster = false
+    @State private var checkingAccuracy = false
 
     var body: some View {
         let finder = model.rallies
@@ -78,6 +79,11 @@ struct RalliesScreen: View {
                                 teaching = true
                             }
                             .disabled(!finder.canTeach)
+                            Button("Check Accuracy…", systemImage: "checkmark.seal") {
+                                finder.pause()
+                                checkingAccuracy = true
+                            }
+                            .disabled(!finder.canTeach)
                             Button("Change Court Area…", systemImage: "rectangle.dashed") {
                                 pendingMatch = finder.sourceURL
                             }
@@ -132,6 +138,9 @@ struct RalliesScreen: View {
                 if let url = finder.sourceURL {
                     TeachPlayerScreen(finder: finder, url: url, time: finder.currentTime) { teaching = false }
                 }
+            }
+            .fullScreenCover(isPresented: $checkingAccuracy) {
+                CheckAccuracyScreen(finder: finder) { checkingAccuracy = false }
             }
             .fullScreenCover(item: $pendingMatch) { url in
                 CourtAreaScreen(url: url) { area in
