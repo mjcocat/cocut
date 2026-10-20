@@ -236,7 +236,7 @@ struct CheckAccuracyScreen: View {
                             Text("Working out v0.21's score to compare…").font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    Text("Right: when Cocut lists #\(number) on a rally, how often they're really in it. Finds: of the rallies #\(number) is in, how many Cocut lists them on. Evening out: a player is listed when they're listed on most of the five rallies around, since players stay on court for runs of rallies. Scores use your Who's This? answers so far.")
+                    Text("Right: when Cocut lists #\(number) on a rally, how often they're really in it. Finds: of the rallies #\(number) is in, how many Cocut lists them on. Evening out: players stay on court for runs of rallies, so a player listed in one of the two rallies before and one of the two after is listed too, and one listed in neither neighboring rally is dropped. Scores use your Who's This? answers so far.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack {

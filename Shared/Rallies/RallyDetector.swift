@@ -1200,6 +1200,34 @@ enum RallyDetector {
 
     // MARK: - Rallies from the signals
 
+    /// Rallies that are really timeouts: the team huddles to one side, so the players seen sit far
+    /// off where they usually are during play, and fewer of them are seen. Judged against this
+    /// match's own typical rally, so it doesn't depend on which side the bench is. On one match
+    /// this caught 8 of 9 timeouts and no real rallies. Returns indices into `spans`.
+    static func breaks(in spans: [Span], people: [PersonSighting]) -> Set<Int> {
+        let sorted = people.sorted { $0.time < $1.time }
+        var medians: [Double?] = []
+        var rates: [Double] = []
+        for span in spans {
+            var lo = 0, hi = sorted.count
+            while lo < hi { let mid = (lo + hi) / 2; if sorted[mid].time < span.start { lo = mid + 1 } else { hi = mid } }
+            var xs: [Double] = []
+            var i = lo
+            while i < sorted.count && sorted[i].time <= span.end { xs.append(Double(sorted[i].box.midX)); i += 1 }
+            // Too few sightings to judge.
+            guard xs.count >= 20 else { medians.append(nil); rates.append(0); continue }
+            xs.sort()
+            medians.append(xs[xs.count / 2])
+            rates.append(Double(xs.count) / max(0.1, span.end - span.start))
+        }
+        let judged = spans.indices.filter { medians[$0] != nil }
+        guard judged.count >= 10 else { return [] }
+        func median(_ v: [Double]) -> Double { let s = v.sorted(); return s[s.count / 2] }
+        let typicalX = median(judged.map { medians[$0]! })
+        let typicalRate = median(judged.map { rates[$0] })
+        return Set(judged.filter { abs(medians[$0]! - typicalX) > 0.15 && rates[$0] < 0.85 * typicalRate })
+    }
+
     /// Turns bursts and whistles into rallies.
     /// - `includeSetup`: start at the serve whistle (shows the server getting ready); otherwise
     ///   start just before the ball first goes up.
