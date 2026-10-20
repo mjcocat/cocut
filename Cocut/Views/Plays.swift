@@ -351,7 +351,7 @@ struct RosterView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Team Roster").font(.title2.weight(.semibold))
-            Text("Jersey numbers for tagging plays. Numbers you type when tagging are added here automatically; add names to make them easier to read.")
+            Text("Jersey numbers for tagging plays. Numbers you type when tagging are added here automatically; add names to make them easier to read. Tick Libero for your libero: Find Rallies then finds her by her different-coloured jersey.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -388,7 +388,7 @@ struct RosterView: View {
             }
         }
         .padding(20)
-        .frame(width: 420, height: 460)
+        .frame(width: 480, height: 480)
     }
 
     private var athleteNumber: Int? {
@@ -421,6 +421,11 @@ private struct RosterRow: View {
             Text(count == 1 ? "1 clip" : "\(count) clips")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Toggle("Libero", isOn: Binding(get: { player.isLibero },
+                                           set: { model.library.setLibero(player.number, $0) }))
+                .toggleStyle(.checkbox)
+                .font(.caption)
+                .help("The libero wears a different colour. After you identify her once in Who's This?, Find Rallies finds her by her jersey.")
             Button {
                 model.library.removePlayer(player.number)
             } label: {

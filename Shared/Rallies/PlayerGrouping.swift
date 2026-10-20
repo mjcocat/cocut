@@ -51,6 +51,8 @@ enum PlayerGrouping {
         var anchors: Int = 0
         /// People matched to a known player by how they look.
         var matched: Int = 0
+        /// Liberos found by their jersey colour.
+        var liberosByColor: Set<Int> = []
     }
 
     // Tuning, in one place so each change can be scored with Check Accuracy.
@@ -76,9 +78,14 @@ enum PlayerGrouping {
     ///     matches or clicked on a frame, by number.
     ///   - strictness: added to the learned threshold when matching undecided people to known
     ///     players (negative is looser).
+    ///   - liberos: roster numbers marked as liberos. A libero wears a different colour from the
+    ///     rest of the team, so once one stretch of her is identified, her jersey colour finds
+    ///     the rest (when it really does stand apart from the team's on this film).
+    ///   - team: the roster's numbers (empty without a roster), for the team's own colour.
     static func group(sightings: [RallyDetector.PersonSighting], taughtTracks: [Int: Int],
                       notTracks: [Int: Set<Int>] = [:],
-                      remembered: [Int: [[Float]]], strictness: Float = 0) -> Result {
+                      remembered: [Int: [[Float]]], strictness: Float = 0,
+                      liberos: Set<Int> = [], team: Set<Int> = []) -> Result {
         guard let printDims = sightings.first?.print.count, printDims > 0 else {
             return Result(people: [], decisions: [:], groupTracks: [], threshold: 0, totalFrames: 0)
         }
@@ -110,6 +117,8 @@ enum PlayerGrouping {
             var start: Double
             var end: Double
             var reads: [Int: Int]
+            /// Typical jersey colour (median of its frames), when measured.
+            var color: [Float]?
         }
         var groupTracks: Set<Int> = []
         var stretches: [Stretch] = []
@@ -126,8 +135,10 @@ enum PlayerGrouping {
                 if let n = sightings[m].number { reads[n, default: 0] += 1 }
             }
             let times = single.map { sightings[$0].time }
+            let colors = single.map { sightings[$0].color }.filter { $0.count == 3 }
             stretches.append(Stretch(track: track, members: single, vector: unit(sum), printOnly: unit(printSum),
-                                     start: times.min()!, end: times.max()!, reads: reads))
+                                     start: times.min()!, end: times.max()!, reads: reads,
+                                     color: colors.isEmpty ? nil : medianColor(colors)))
         }
         stretches.sort { $0.track < $1.track }
         let n = stretches.count
@@ -212,6 +223,45 @@ enum PlayerGrouping {
             guard let read = strongRead(stretches[i].reads), !nots[i].contains(read) else { return nil }
             return read
         }
+        // The libero: once a stretch of her is identified, her jersey colour against the team's.
+        // A stretch clearly in her colour is her; one clearly in the team's colour isn't.
+        var liberoColors: [Int: [Float]] = [:]
+        if !liberos.isEmpty {
+            func median(_ idx: [Int]) -> [Float]? {
+                let cs = idx.compactMap { stretches[$0].color }
+                return cs.isEmpty ? nil : medianColor(cs)
+            }
+            let teamColor = median((0..<n).filter { i in
+                if let l = label[i] { return l >= 0 && !liberos.contains(l) }
+                guard let v = vouched[i] else { return false }
+                return !liberos.contains(v) && (team.isEmpty || team.contains(v))
+            })
+            let otherColor = median((0..<n).filter { label[$0] == RallyDetector.otherTeam })
+            if let teamColor {
+                for number in liberos {
+                    if let c = median((0..<n).filter { label[$0] == number }),
+                       colorDistance(c, teamColor) >= liberoColorGap {
+                        liberoColors[number] = c
+                    }
+                }
+                if !liberoColors.isEmpty {
+                    for i in 0..<n where label[i] == nil {
+                        guard let c = stretches[i].color else { continue }
+                        let nearest = liberoColors.min { colorDistance(c, $0.value) < colorDistance(c, $1.value) }!
+                        let toLibero = colorDistance(c, nearest.value)
+                        let toTeam = colorDistance(c, teamColor)
+                        let toOthers = min(toTeam, otherColor.map { colorDistance(c, $0) } ?? .infinity)
+                        if toLibero < 0.5 * toOthers {
+                            if !nots[i].contains(nearest.key) { vouched[i] = nearest.key }
+                        } else if toTeam < 0.5 * toLibero {
+                            nots[i].formUnion(liberoColors.keys)
+                            if let v = vouched[i], liberoColors[v] != nil { vouched[i] = nil }
+                        }
+                    }
+                }
+            }
+        }
+
         /// Answered (including "not our team") or vouched for: never joined by look alone.
         func known(_ r: Int) -> Bool { label[r] != nil || vouched[r] != nil }
         func identity(_ r: Int) -> Int? { label[r] ?? vouched[r] ?? strongRead(readVotes[r]) }
@@ -406,7 +456,28 @@ enum PlayerGrouping {
         let total = people.reduce(0) { $0 + $1.frames }
         return Result(people: people.sorted { $0.frames > $1.frames }, decisions: decisions, groupTracks: groupTracks,
                       threshold: threshold, totalFrames: total,
-                      anchors: references.filter { $0.number >= 0 }.count, matched: matched)
+                      anchors: references.filter { $0.number >= 0 }.count, matched: matched,
+                      liberosByColor: Set(liberoColors.keys))
+    }
+
+    /// How far apart a libero's jersey colour must be from the team's for colour to find her
+    /// (CIELAB/100, lightness counting half: lighting changes it most). On one film the libero's
+    /// red sat 0.33 from the team's maroon; on another, with no distinct libero colour, 0.04.
+    static let liberoColorGap: Float = 0.12
+
+    /// Distance between two jersey colours (CIELAB/100), lightness counting half.
+    static func colorDistance(_ a: [Float], _ b: [Float]) -> Float {
+        guard a.count == 3, b.count == 3 else { return .infinity }
+        let dl = (a[0] - b[0]) * 0.5, da = a[1] - b[1], db = a[2] - b[2]
+        return (dl * dl + da * da + db * db).squareRoot()
+    }
+
+    /// The median of each channel.
+    static func medianColor(_ colors: [[Float]]) -> [Float] {
+        (0..<3).map { k in
+            let v = colors.map { $0[k] }.sorted()
+            return v[v.count / 2]
+        }
     }
 
     /// The number read on a stretch or person when it clearly wins: at least 3 reads and 60%.

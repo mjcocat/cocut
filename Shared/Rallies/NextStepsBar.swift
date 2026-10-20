@@ -90,7 +90,7 @@ struct NextStepsBar: View {
     private func detail(_ step: RallyFinder.GuideStep) -> String {
         switch step {
         case .roster:
-            return "Your team's numbers keep opponents and referees off the rallies, and let Cocut list at most six of your players per rally."
+            return "Your team's numbers keep opponents and referees off the rallies, and let Cocut list at most six of your players per rally. Mark your libero too, so Cocut can find her by her jersey."
         case .warmUp:
             #if os(macOS)
             return "If the first rallies are the warm-up or lineup, right-click the first real rally › Leave Out Earlier Rallies."

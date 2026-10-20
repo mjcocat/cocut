@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.29.0
+- Mark your libero in the Team Roster. After you identify her once in Who's This?, Find Rallies finds her by her different-coloured jersey, so she stops coming up again and again.
+- Nothing has to be analyzed again: your answers and what Cocut has learned are kept.
+
 ## 0.28.0
 - Who's This? progress is steadier: the bar climbs from 0% with each answer, and "about N more" counts down to 0 instead of going up.
 - The bar reaches 100% only when most players are sorted out, so it no longer jumps there all at once.

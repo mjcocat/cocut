@@ -25,7 +25,7 @@ struct RosterScreen: View {
                             .disabled(Int(number) == nil)
                     }
                 } footer: {
-                    Text("Only roster numbers are listed on rallies, so opponents, referees and misreads are left out.")
+                    Text("Only roster numbers are listed on rallies, so opponents, referees and misreads are left out. Turn on Libero for your libero: after you identify her once in Who's This?, Find Rallies finds her by her different-coloured jersey.")
                 }
                 if !library.roster.isEmpty {
                     Section("\(library.roster.count) players") {
@@ -34,6 +34,11 @@ struct RosterScreen: View {
                                 Text("#\(player.number)").monospacedDigit().frame(width: 48, alignment: .leading)
                                 Text(player.name.isEmpty ? "No name" : player.name)
                                     .foregroundStyle(player.name.isEmpty ? .secondary : .primary)
+                                Spacer()
+                                Toggle("Libero", isOn: Binding(get: { player.isLibero },
+                                                               set: { library.setLibero(player.number, $0) }))
+                                    .fixedSize()
+                                    .font(.caption)
                             }
                         }
                         .onDelete { offsets in
