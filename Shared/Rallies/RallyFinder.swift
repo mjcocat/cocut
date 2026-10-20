@@ -140,6 +140,8 @@ final class RallyFinder {
     var playerFilter: Int?
     /// The team roster's numbers (supplied by the app), used to ignore referees and opponents.
     @ObservationIgnored var roster: () -> Set<Int> = { [] }
+    /// Adds a number to the team roster (supplied by the app).
+    @ObservationIgnored var addToRoster: (Int) -> Void = { _ in }
     /// Roster numbers marked as liberos (supplied by the app).
     @ObservationIgnored var liberos: () -> Set<Int> = { [] }
     /// The liberos the last grouping used, to group again when they change.

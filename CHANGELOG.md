@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.33.0
+- In Who's This?, a number you type under Other # joins your Team Roster, so it's a button for the next questions.
+- Click anywhere on a close-up in Who's This? to tick or untick it.
+
 ## 0.32.0
 - Find Rallies is faster when you mark your court: it reads jersey numbers while it's still looking for the ball, instead of after.
 - When a match is analyzed again, your Who's This? answers stay with the right players. Before, they could end up on someone else.

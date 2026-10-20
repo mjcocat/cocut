@@ -47,6 +47,7 @@ final class IOSModel {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         Log.info("Cocut for iOS \(version) launched")
         rallies.roster = { [weak self] in Set(self?.library.roster.map(\.number) ?? []) }
+        rallies.addToRoster = { [weak self] in self?.library.addPlayer(number: $0, name: "") }
         rallies.liberos = { [weak self] in Set(self?.library.roster.filter(\.isLibero).map(\.number) ?? []) }
         rallies.projectDirectory = { [weak self] in
             guard let self else { return nil }
