@@ -90,6 +90,9 @@ struct PlayerCardEditor: View {
             .labelsHidden()
             .frame(width: 260)
 
+            Spacer(minLength: 0)
+
+            // The card, with its caption right under it.
             GeometryReader { geo in
                 let canvas = PlayerCardView.canvas
                 let scale = min(geo.size.width / canvas.width, geo.size.height / canvas.height)
@@ -100,16 +103,18 @@ struct PlayerCardEditor: View {
                     .shadow(color: .black.opacity(0.25), radius: 14, y: 5)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(.horizontal, 24)
+            .aspectRatio(PlayerCardView.canvas.width / PlayerCardView.canvas.height, contentMode: .fit)
+            .padding(.horizontal, Design.Space.xl)
 
             Text(previewKind == .intro
                  ? "Opens the reel. Blank fields are left off the card."
                  : (store.profile.showEndCard ? "Closes the reel with your contact details." : "The end card is turned off."))
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .padding(.bottom, 18)
+
+            Spacer(minLength: 0)
         }
-        .padding(.top, 18)
+        .padding(.vertical, 18)
         .background(Color(nsColor: .underPageBackgroundColor))
     }
 

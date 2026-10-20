@@ -3,6 +3,11 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.34.1
+- Clips: the selected clip sits at the top with its details right under it, instead of floating in the middle.
+- Export: the spotlight shape and color controls are labeled.
+- Player Card: the caption sits right under the card preview.
+
 ## 0.34.0
 - A cleaner look throughout: one consistent style for panels, banners and labels, in Light and Dark Mode.
 - Record is a red button in the toolbar again, with Full Screen and Same Region in the menu next to it. Import and Find Rallies are in the toolbar too. Undo and Redo are in the Edit menu (⌘Z, ⇧⌘Z).

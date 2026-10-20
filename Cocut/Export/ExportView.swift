@@ -57,7 +57,9 @@ struct ExportView: View {
                         Text("Clips with a spotlight open on a held frame with a ring around the athlete.")
                     }
                     if exporter.options.showSpotlights {
-                        SpotlightStyleControls()
+                        LabeledContent("Spotlight shape and color") {
+                            SpotlightStyleControls()
+                        }
                     }
                     Toggle("Include sound", isOn: $exporter.options.includeSound)
                 }

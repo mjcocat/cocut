@@ -724,15 +724,12 @@ private struct ClipDetailPane: View {
                 )
                 // Rebuild the player when the clip or its trim changes.
                 .id("\(clip.id)-\(clip.trimStart ?? -1)-\(clip.trimEnd ?? -1)-\(String(describing: clip.crop))")
-                // The clip as a framed 16:9 picture on the page, not a pane-sized black void.
+                // The clip as a framed 16:9 picture at the top, its details right under it.
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .mediaFrame()
-                .padding(Design.Space.l)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .underPageBackgroundColor))
+                .padding([.horizontal, .top], Design.Space.l)
+                .frame(maxWidth: .infinity)
                 }
-
-                Divider()
 
                 VStack(alignment: .leading, spacing: Design.Space.m) {
                     // What it is, and whether it's in the reel.
@@ -846,6 +843,8 @@ private struct ClipDetailPane: View {
                 }
                 .padding(.horizontal, Design.Space.l + 2)
                 .padding(.vertical, Design.Space.m + 2)
+
+                Spacer(minLength: 0)
             }
             .onAppear { titleDraft = clip.title }
             .onChange(of: clip.id) { _, _ in titleDraft = clip.title }
