@@ -383,11 +383,8 @@ struct SelectionOverlayView: View {
             } label: {
                 Label(state.mode == .auto ? "Start" : "Record",
                       systemImage: state.mode == .auto ? "play.circle.fill" : "record.circle.fill")
-                    .fontWeight(.semibold)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .controlSize(.large)
+            .buttonStyle(SolidButtonStyle(tint: Design.record))
         }
         .padding(.leading, 12)
         .padding(.trailing, 8)

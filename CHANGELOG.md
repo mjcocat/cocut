@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.34.5
+- The floating recording control is easy to read over any video, and the dashed recording outline no longer runs through it.
+- Start and Done keep their color while you record, instead of looking grayed out.
+
 ## 0.34.4
 - While recording, the red light on the floating control pulses, so you can tell at a glance it's recording. The discard button sits apart from Done.
 

@@ -21,10 +21,10 @@ final class SessionHUDController {
             origin.y = frame.maxY + 14
         }
         if origin.y + size.height > visible.maxY - 8 {
-            // Full screen or a very tall region: tuck it into the top-right corner, over the picture.
-            // It's left out of the recording either way.
-            origin.y = visible.maxY - size.height - 20
-            origin.x = visible.maxX - size.width - 20
+            // Full screen or a very tall region: tuck it into the top-right corner, over the picture
+            // and well inside the recording outline. It's left out of the recording either way.
+            origin.y = visible.maxY - size.height - 36
+            origin.x = visible.maxX - size.width - 36
         }
         origin.x = min(max(origin.x, visible.minX + 8), visible.maxX - size.width - 8)
 
@@ -48,7 +48,8 @@ final class HUDPanel: NSPanel {
         self.init(contentRect: contentRect, styleMask: [.borderless, .nonactivatingPanel],
                   backing: .buffered, defer: false)
         isFloatingPanel = true
-        level = .statusBar
+        // Above the recording outline (at .statusBar), so its dashed line never crosses the control.
+        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         hidesOnDeactivate = false
         isOpaque = false
         backgroundColor = .clear
@@ -98,10 +99,8 @@ struct SessionHUDView: View {
                     Task { await model.stopSession() }
                 } label: {
                     Label("Done", systemImage: "checkmark")
-                        .fontWeight(.semibold)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .buttonStyle(SolidButtonStyle())
                 .help("Finish recording and go back to Cocut (\(AppModel.hotKeyHint))")
             }
 
@@ -113,7 +112,11 @@ struct SessionHUDView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(width: 540, height: 128)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        // Nearly solid: it floats over busy video and web pages, and must stay readable.
+        .background(RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .fill(Color(nsColor: .windowBackgroundColor).opacity(0.96)))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .strokeBorder(Design.hairline, lineWidth: 1))
     }
 
     private var statusDot: some View {

@@ -187,3 +187,22 @@ extension View {
         modifier(MotionModifier(animation: animation, value: value))
     }
 }
+
+/// A filled capsule button that keeps its color in windows that never become key, like the
+/// region bar and the recording control floating over other apps, where the system's prominent
+/// style fades as if it were disabled.
+struct SolidButtonStyle: ButtonStyle {
+    var tint: Color = .accentColor
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(tint.opacity(configuration.isPressed ? 0.75 : 1)))
+            .opacity(isEnabled ? 1 : 0.45)
+            .contentShape(Capsule())
+    }
+}
