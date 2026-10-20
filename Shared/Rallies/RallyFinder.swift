@@ -687,6 +687,7 @@ final class RallyFinder {
         let frequent = frequentNumbers
         let taughtNumbers = Set(taught.keys.filter { $0 >= 0 })
         let allowed = roster.isEmpty ? frequent.union(taughtNumbers) : roster
+        let established = RallyDetector.establishedNumbers(reads: analysis.numbers)
         // Sightings by time, so each rally only looks at its own.
         let people = analysis.people.sorted { $0.time < $1.time }
         var out: [Rally.ID: Set<Int>] = [:]
@@ -695,7 +696,8 @@ final class RallyFinder {
         var evidence: [Rally.ID: [Int: Int]] = [:]
         for rally in rallies {
             let span = RallyDetector.Span(start: rally.start, end: rally.end)
-            var players = Set(RallyDetector.players(in: span, reads: analysis.numbers, roster: roster, frequent: frequent))
+            var players = Set(RallyDetector.players(in: span, reads: analysis.numbers, roster: roster, frequent: frequent,
+                                                          established: established))
             let first = Self.firstIndex(people, atOrAfter: rally.start)
             var last = first
             while last < people.count && people[last].time <= rally.end { last += 1 }
