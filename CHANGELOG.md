@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.35.1
+- Import from YouTube checks what it got: if a video offered in 1080p comes through at less, it tells you and offers to try again instead of quietly using a lower quality.
+
 ## 0.35.0
 - New: **Import from YouTube** (File menu, ⇧⌘I). Paste a link and Cocut downloads the whole video in its original quality, up to 1080p, which is cleaner than recording the screen. Say whether it's a full match (opens Find Rallies) or a clip (goes into Clips).
 - The first import fetches a small download tool (yt-dlp) from its official release and checks it. It stays up to date by itself.

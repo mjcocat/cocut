@@ -20,6 +20,9 @@ final class YouTubeImporter {
         /// What's downloading, and how far along (nil while unknown).
         case downloading(String, Double?)
         case finished(URL)
+        /// Saved, but at a lower resolution than the video is offered in (the file, what came
+        /// through, what was expected): the user decides whether to use it.
+        case lower(URL, got: Int, expected: Int)
         case failed(String)
     }
 
@@ -65,18 +68,23 @@ final class YouTubeImporter {
             try Task.checkCancellation()
 
             state = .preparing("Looking up the video…")
-            let info = try await runner.run(tool, ["--no-playlist", "--skip-download", "--print", "title", link])
+            // The title, and the tallest picture the video is offered in (any format).
+            let info = try await runner.run(tool, ["--no-playlist", "--skip-download", "-f", "bv*/b",
+                                                   "--print", "title", "--print", "%(height)s", link])
             try Task.checkCancellation()
             guard info.status == 0 else { throw ImportError.download(Self.reason(from: info.output)) }
-            // The title is the last line that isn't one of yt-dlp's own messages.
-            let title = info.output.split(separator: "\n").map(String.init)
-                .last { !$0.hasPrefix("WARNING") && !$0.hasPrefix("ERROR") && !$0.hasPrefix("[") }?
+            // The last two lines that aren't yt-dlp's own messages.
+            let printed = info.output.split(separator: "\n").map(String.init)
+                .filter { !$0.hasPrefix("WARNING") && !$0.hasPrefix("ERROR") && !$0.hasPrefix("[") }
+            let offered = printed.last.flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            let title = (offered != nil ? printed.dropLast().last : printed.last)?
                 .trimmingCharacters(in: .whitespaces) ?? "YouTube video"
-            Log.info("YouTube import: \(title)")
+            Log.info("YouTube import: \(title), offered up to \(offered.map { "\($0)p" } ?? "unknown")")
 
-            // H.264 video up to 1080p (what AVFoundation plays everywhere), then the sound.
+            // H.264 video up to 1080p: what AVFoundation plays on every Mac. Never AV1 or VP9, which
+            // older Macs can't play; the combined file (360p at most) only when nothing else exists.
             state = .downloading("Downloading the video…", 0)
-            let video = try await download(tool, link, format: "bv*[ext=mp4][vcodec^=avc1][height<=1080]/bv*[ext=mp4][height<=1080]/b[ext=mp4]",
+            let video = try await download(tool, link, format: "bv*[vcodec^=avc1][height<=1080]/b[vcodec^=avc1]",
                                            to: work, name: "video", label: "Downloading the video…", range: 0...0.85)
             try Task.checkCancellation()
             var audio: URL?
@@ -95,8 +103,14 @@ final class YouTubeImporter {
             try FileManager.default.createDirectory(at: Self.downloadsFolder, withIntermediateDirectories: true)
             let output = Self.uniqueURL(for: title)
             try await Self.merge(video: video, audio: audio, to: output)
-            Log.info("YouTube import saved \(output.lastPathComponent)")
-            state = .finished(output)
+            let got = await Self.height(of: output)
+            Log.info("YouTube import saved \(output.lastPathComponent) at \(got.map { "\($0)p" } ?? "unknown height")")
+            // Expect 1080p, or the video's best when it's posted lower.
+            if let got, let offered, got < min(offered, 1080) {
+                state = .lower(output, got: got, expected: min(offered, 1080))
+            } else {
+                state = .finished(output)
+            }
         } catch {
             // Cancelling stops yt-dlp, which then reports a failure: that's not one to show.
             if error is CancellationError || Task.isCancelled {
@@ -126,6 +140,15 @@ final class YouTubeImporter {
             throw ImportError.download("The download finished but no file was saved.")
         }
         return file
+    }
+
+    /// The picture's upright height in pixels.
+    nonisolated static func height(of file: URL) async -> Int? {
+        let asset = AVURLAsset(url: file)
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let size = try? await track.load(.naturalSize),
+              let transform = try? await track.load(.preferredTransform) else { return nil }
+        return Int(abs(CGRect(origin: .zero, size: size).applying(transform).height).rounded())
     }
 
     /// "[download]  42.3% of …" → 0.423.
@@ -418,6 +441,17 @@ struct YouTubeImportView: View {
         switch importer.state {
         case .idle, .finished:
             EmptyView()
+        case .lower(let file, let got, let expected):
+            Banner(tone: .warning, icon: "exclamationmark.triangle.fill", title: "Only \(got)p came through",
+                   message: "YouTube offers this video at \(expected)p, but the download was \(got)p. Trying again often gets the full quality.") {
+                Button("Use \(got)p") { use(file) }
+                Button("Try Again") {
+                    try? FileManager.default.removeItem(at: file)
+                    importer.reset()
+                    start()
+                }
+                .buttonStyle(.borderedProminent)
+            }
         case .preparing(let message):
             HStack(spacing: Design.Space.s) {
                 ProgressView().controlSize(.small)
