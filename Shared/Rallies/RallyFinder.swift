@@ -260,17 +260,19 @@ final class RallyFinder {
     private(set) var worthAsking: [Int: Int] = [:]
     /// Frames of single players during rallies, for "how much is left".
     private(set) var rallyPlayerFrames = 0
+    /// Frames during rallies, per followed stretch.
+    @ObservationIgnored private var trackRallyFrames: [Int: Int] = [:]
 
-    /// How many of the questions left are worth answering: the people who together cover 80% of
-    /// the undecided player time during rallies. The rest are brief glimpses.
+    /// How many more answers are worth giving: the fewest of the people left (most rally time
+    /// first) that would bring the match to "mostly done". It counts down as you answer.
     var suggestedQuestions: Int {
         let counts = reviewQueue.map { worthAsking[$0.id] ?? 0 }
-        let total = counts.reduce(0, +)
-        guard total > 0 else { return 0 }
-        var sum = 0
+        var left = counts.reduce(0, +)
+        let target = identifyTarget
+        guard Double(left) > target else { return 0 }
         for (k, c) in counts.enumerated() {
-            sum += c
-            if Double(sum) >= 0.8 * Double(total) { return k + 1 }
+            left -= c
+            if Double(left) <= target { return k + 1 }
         }
         return counts.count
     }
@@ -284,24 +286,40 @@ final class RallyFinder {
     /// Player time during rallies (frames) still worth asking about.
     var unknownRallyFrames: Int { reviewQueue.reduce(0) { $0 + (worthAsking[$1.id] ?? 0) } }
 
-    /// Who's This? progress for this match, 0...1: how much of what was left to sort out when it
-    /// started is done. The first answers (the people seen most) move it a lot, glimpses barely.
-    /// Never goes back down, even when an unticked close-up makes someone be asked about again.
+    /// Player time during rallies (frames) you've dealt with in Who's This?: answered or skipped.
+    var answeredRallyFrames: Int {
+        var tracks = Set(taughtTracks.keys)
+        tracks.formUnion(skippedTracks)
+        return tracks.reduce(0) { $0 + (trackRallyFrames[$1] ?? 0) }
+    }
+
+    /// What was there to sort out on this match: what you've dealt with plus what's left.
+    private var identifyTotal: Int { answeredRallyFrames + unknownRallyFrames }
+
+    /// "Mostly done" is when what's left is under a fifth of what there was to sort out (or under
+    /// a tenth of all player time in rallies): the rest are brief glimpses.
+    private var identifyTarget: Double {
+        max(0.2 * Double(identifyTotal), 0.1 * Double(rallyPlayerFrames))
+    }
+
+    /// Who's This? progress, 0...1: from 0% before any answers to 100% at "mostly done". The
+    /// first answers, about the people seen most, move it the most; glimpses barely move it.
+    /// It doesn't slide back when an answer makes Cocut ask about someone again.
     var identifyProgress: Double {
         if identifyMostlyDone { return 1 }
-        guard let start = guide.identifyStart, start > 0 else { return 0 }
-        let done = 1 - Double(unknownRallyFrames) / Double(start)
-        return max(identifyBest, min(1, max(0, done)))
+        let span = Double(identifyTotal) - identifyTarget
+        guard span > 0 else { return 0 }
+        // 100% is kept for "mostly done", so the bar never says done while questions are left.
+        let done = min(0.99, max(0, Double(answeredRallyFrames) / span))
+        identifyBest = max(identifyBest, done)
+        return identifyBest
     }
     @ObservationIgnored private var identifyBest: Double = 0
 
-    /// The questions left would barely change any rally's list: under a fifth of what was left
-    /// when Who's This? started, under a tenth of all player time in rallies, or none worth asking.
+    /// The questions left would barely change any rally's list.
     var identifyMostlyDone: Bool {
         guard canTeach, !people.isEmpty else { return false }
-        if suggestedQuestions == 0 || unknownRallyShare < 0.1 { return true }
-        if let start = guide.identifyStart, start > 0 { return Double(unknownRallyFrames) <= 0.2 * Double(start) }
-        return false
+        return reviewQueue.isEmpty || Double(unknownRallyFrames) <= identifyTarget
     }
 
     /// Recounts `worthAsking` after people or rallies change.
@@ -327,15 +345,9 @@ final class RallyFinder {
             guard person.number == nil, person.tracks.contains(where: trackClear.contains) else { continue }
             out[person.id] = frames
         }
+        trackRallyFrames = trackRally
         worthAsking = out
         rallyPlayerFrames = total
-        // Where Who's This? starts from on this match: the first time people are worked out.
-        if guide.identifyStart == nil, !people.isEmpty {
-            guide.identifyStart = unknownRallyFrames
-        }
-        if let start = guide.identifyStart, start > 0 {
-            identifyBest = max(identifyBest, min(1, max(0, 1 - Double(unknownRallyFrames) / Double(start))))
-        }
     }
 
     /// Share of all player time (frames of single players) that is identified, 0...1.
@@ -464,6 +476,7 @@ final class RallyFinder {
         taughtClicks[number] = nil
         frameExamples[number] = nil
         taughtTracks = taughtTracks.filter { $0.value != number }
+        identifyBest = 0
         notTracks = notTracks.compactMapValues { nots in
             let left = nots.subtracting([number])
             return left.isEmpty ? nil : left
@@ -901,8 +914,6 @@ final class RallyFinder {
                     taughtClicks[number, default: 0] += 1
                 }
                 if !saved.rallies.isEmpty { rallies = saved.rallies }
-                // No answers yet (or they were cleared): Who's This? starts again from 0%.
-                if taughtTracks.isEmpty, skippedTracks.isEmpty, notTracks.isEmpty { guide.identifyStart = nil }
                 Log.info("Restored \(taughtTracks.count) answers, \(saved.rallies.count) rallies and \(truth.count) accuracy marks")
             }
             if !memory.examples.isEmpty {

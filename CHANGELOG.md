@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.28.0
+- Who's This? progress is steadier: the bar climbs from 0% with each answer, and "about N more" counts down to 0 instead of going up.
+- The bar reaches 100% only when most players are sorted out, so it no longer jumps there all at once.
+
 ## 0.27.0
 - Identify Players and Check Accuracy open in their own windows on the Mac, so you can move them anywhere and size them freely.
 - The Who's This? progress bar starts at 0% on each match and counts up as you answer. The first answers, about the players seen most, move it the most.
