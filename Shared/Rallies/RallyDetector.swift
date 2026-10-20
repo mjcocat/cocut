@@ -87,11 +87,11 @@ enum RallyDetector {
         // The ball pass is most of the work (0–80%); reading jersey numbers is the rest.
         let start = Date()
         async let videoPart = { () async throws -> ([Span], Double, Double) in
-            let (bursts, zone) = try await videoPass(asset: asset, track: track, duration: duration, courtArea: courtArea) { progress($0 * 0.8) }
+            let (bursts, zone) = try await RallyDetector.videoPass(asset: asset, track: track, duration: duration, courtArea: courtArea) { progress($0 * 0.8) }
             return (bursts, zone, Date().timeIntervalSince(start))
         }()
         async let audioPart = { () async -> ([Double], Double) in
-            (await whistles(asset: asset, track: audioTrack), Date().timeIntervalSince(start))
+            (await RallyDetector.whistles(asset: asset, track: audioTrack), Date().timeIntervalSince(start))
         }()
         let (bursts, zone, videoSeconds) = try await videoPart
         let (whistles, audioSeconds) = await audioPart
