@@ -124,32 +124,26 @@ struct SetupGuideView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Text(title).font(.headline)
-                    if optional {
-                        Text("Recommended")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(Capsule().strokeBorder(Color.secondary.opacity(0.4)))
-                    }
                     if done {
-                        Text("Done").font(.caption.weight(.semibold)).foregroundStyle(.green)
+                        Pill(text: "Done", tint: .green)
+                    } else if optional {
+                        Pill(text: "Recommended")
                     }
                 }
-                Text(detail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 10) { actions() }
-                    .padding(.top, 2)
+                // A finished step is just its title; the how-to is for the ones left.
+                if !done {
+                    Text(detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 10) { actions() }
+                        .padding(.top, 2)
+                }
             }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(done ? Color.green.opacity(0.06) : Color.primary.opacity(0.04))
-        )
+        .panel()
+        .motion(value: done)
     }
 
     private func tip(_ icon: String, _ text: LocalizedStringKey) -> some View {

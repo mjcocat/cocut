@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.34.3
+- Check Accuracy: the "is in it" and "Not in it" buttons are bigger and colored, and the rally list shows just two things to scan, Listed and your mark, with a warning where Cocut is wrong.
+- Setup Guide: finished steps fold down to one line.
+
 ## 0.34.2
 - Find Rallies: Team Roster, Identify Players and Open Match show their names in the toolbar. The rally list no longer picks up color from what's behind the window.
 - Who's This?: number buttons line up evenly, and Other #, Not Our Team and Skip sit on one row.

@@ -176,15 +176,18 @@ struct CheckAccuracyScreen: View {
                     }
                 }
                 HStack(spacing: 8) {
-                    markButton("#\(number) is in it", systemImage: "checkmark", selected: marked == true, key: "i") {
+                    markButton("#\(number) is in it", systemImage: "checkmark", selected: marked == true,
+                               tint: .green, key: "i") {
                         mark(true, rally)
                     }
-                    markButton("Not in it", systemImage: "xmark", selected: marked == false, key: "o") {
+                    markButton("Not in it", systemImage: "xmark", selected: marked == false,
+                               tint: .orange, key: "o") {
                         mark(false, rally)
                     }
                     Button("Next") { playNext(after: rally) }
                         .keyboardShortcut("n", modifiers: [])
                 }
+                .controlSize(.large)
                 #if os(macOS)
                 Text("Keys: I is in it, O not in it, N next, Space play/pause, Z magnify. Marking plays the next unmarked rally.")
                     .font(.caption)
@@ -202,7 +205,8 @@ struct CheckAccuracyScreen: View {
         }
     }
 
-    private func markButton(_ title: String, systemImage: String, selected: Bool, key: Character,
+    /// The answer you give for every rally: big, colored by meaning, filled once chosen.
+    private func markButton(_ title: String, systemImage: String, selected: Bool, tint: Color, key: Character,
                             action: @escaping () -> Void) -> some View {
         Group {
             if selected {
@@ -213,6 +217,7 @@ struct CheckAccuracyScreen: View {
                     .buttonStyle(.bordered)
             }
         }
+        .tint(tint)
         .keyboardShortcut(KeyEquivalent(key), modifiers: [])
     }
 
@@ -329,18 +334,24 @@ struct CheckAccuracyScreen: View {
                     .monospacedDigit()
             }
             Spacer()
-            Text(listed ? "Cocut lists" : "Not listed")
-                .font(.caption)
-                .foregroundStyle(mark != nil && mark != listed ? Color.red : Color.secondary)
-            if let mark {
-                Label(mark ? "In" : "Not in", systemImage: mark ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(mark ? Color.green : Color.orange)
-                    .frame(width: 70, alignment: .leading)
-            } else {
-                Text("–").foregroundStyle(.tertiary).frame(width: 70, alignment: .leading)
+            // Two columns to scan: what Cocut says, and what you said. Only what's there shows.
+            Group {
+                if listed { Pill(text: "Listed", tint: .accentColor) }
             }
+            .frame(width: 62, alignment: .trailing)
+            .help(listed ? "Cocut lists #\(number ?? 0) on this rally" : "")
+            Group {
+                if let mark {
+                    if mark != listed {
+                        Pill(text: mark ? "In" : "Not in", icon: "exclamationmark.triangle.fill", tint: .red)
+                            .help("Cocut is wrong here")
+                    } else {
+                        Pill(text: mark ? "In" : "Not in", icon: mark ? "checkmark" : "xmark",
+                             tint: mark ? .green : .orange)
+                    }
+                }
+            }
+            .frame(width: 80, alignment: .leading)
         }
         .contentShape(Rectangle())
         #if os(iOS)
