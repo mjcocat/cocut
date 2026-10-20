@@ -54,7 +54,7 @@ struct ProjectSwitcher: View {
             listAction("Delete “\(projects.current.name)”…", "trash", destructive: true) {
                 deleting = projects.current
             }
-            .disabled(projects.projects.count < 2 || model.isBusy)
+            .disabled(model.isBusy)
         }
         .padding(10)
         .frame(width: 280)
@@ -133,7 +133,9 @@ struct ProjectSwitcher: View {
                 if let deleting { model.deleteProject(deleting.id) }
             }
         } message: {
-            Text("Its clips and Player Card go to the Trash too. You can put them back from the Trash in Finder.")
+            Text(projects.projects.count == 1
+                 ? "Its clips and Player Card go to the Trash too, and Cocut starts over with an empty project. You can put them back from the Trash in Finder."
+                 : "Its clips and Player Card go to the Trash too. You can put them back from the Trash in Finder.")
         }
     }
 }

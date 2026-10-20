@@ -192,6 +192,8 @@ final class AppModel {
             library = ClipLibrary(directory: dir)
             profile = ProfileStore(directory: dir)
             preview.close()
+            // A match open in Find Rallies belonged to the deleted project.
+            rallies.reset()
         }
     }
 

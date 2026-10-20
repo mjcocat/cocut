@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.35.3
+- You can delete your last project. Cocut starts over with an empty one, on the Get Started screen.
+
 ## 0.35.2
 - A new Get Started screen: four big tiles to pick from (a full match, a video on YouTube, clips on your Mac, or recording your screen). Click anywhere on a tile.
 

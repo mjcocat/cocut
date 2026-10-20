@@ -118,9 +118,13 @@ final class ProjectStore {
         save()
     }
 
-    /// Moves a project's folder to the Trash. The last project can't be deleted.
+    /// Moves a project's folder to the Trash. Deleting the last one starts a fresh, empty project,
+    /// so Cocut is back at its new-user screen.
     func delete(_ id: UUID) throws {
-        guard projects.count > 1, let project = projects.first(where: { $0.id == id }) else { return }
+        guard let project = projects.first(where: { $0.id == id }) else { return }
+        if projects.count == 1 {
+            create(name: "My Reel", copyingCardFrom: nil)
+        }
         let dir = directory(for: project)
         if FileManager.default.fileExists(atPath: dir.path(percentEncoded: false)) {
             try Platform.moveToTrash(dir)
