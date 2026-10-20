@@ -269,12 +269,13 @@ struct TeachPlayerScreen: View {
     }
 }
 
-/// One followed player at a time, least certain first: "Who's this?"
+/// One person at a time, the ones on screen most first: "Who's this?" Each answer identifies
+/// every stretch Cocut followed that person, so a handful of answers covers most of the match.
 private struct WhoIsThisPane: View {
     let finder: RallyFinder
     let url: URL
 
-    @State private var current: RallyDetector.TrackDecision?
+    @State private var current: PlayerGrouping.Person?
     @State private var answered: Set<Int> = []
     @State private var picture: (image: CGImage, box: CGRect, time: Double)?
     @State private var closeUps: [CGImage] = []
@@ -290,16 +291,23 @@ private struct WhoIsThisPane: View {
     #endif
 
     var body: some View {
-        let queue = finder.reviewQueue.filter { !answered.contains($0.track) }
-        let counts = finder.identifiedCounts
+        let queue = finder.reviewQueue.filter { !$0.tracks.contains(where: answered.contains) }
+        let share = finder.identifiedShare
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Who's this?").font(.title2.weight(.semibold))
                 Spacer()
                 if finder.isMatching { ProgressView().controlSize(.small) }
-                Text("\(queue.count) to check · \(counts.identified) players identified")
+                Text("\(Int((share * 100).rounded()))% of player time identified")
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+            }
+            ProgressView(value: share)
+                .tint(share >= 0.9 ? .green : .accentColor)
+            if share >= 0.9 && current != nil {
+                Text("Mostly done: what's left is mostly brief glimpses. Keep going only if a rally is missing someone.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
             if let current {
                 let layout = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 16))
@@ -339,37 +347,37 @@ private struct WhoIsThisPane: View {
             }
         }
         .onAppear { if current == nil { current = queue.first } }
-        .onChange(of: queue.first?.track) { _, _ in if current == nil { current = queue.first } }
-        .task(id: current?.track) { await load() }
+        .onChange(of: queue.first?.id) { _, _ in if current == nil { current = queue.first } }
+        .task(id: current?.id) { await load() }
     }
 
     private func label(_ number: Int) -> String {
         number == RallyDetector.otherTeam ? "the other team" : "#\(number)"
     }
 
-    private func prompt(for d: RallyDetector.TrackDecision) -> String {
+    private func prompt(for p: PlayerGrouping.Person) -> String {
         let when = picture.map { "At \(Clip.format($0.time)). " } ?? ""
-        if d.source == .conflict, let read = d.number, let guess = d.guess {
-            return when + "Cocut read \(label(read)) on this player, but they look more like \(label(guess)). Who is it?"
+        let share = finder.totalPlayerFrames > 0 ? Double(p.frames) / Double(finder.totalPlayerFrames) : 0
+        let size = share >= 0.005 ? "About \(max(1, Int((share * 100).rounded())))% of player time"
+                                  : "Seen in \(p.tracks.count) stretch\(p.tracks.count == 1 ? "" : "es")"
+        let read = p.reads.max(by: { $0.value < $1.value }).map { " Read as \(label($0.key)) \($0.value)×." } ?? ""
+        if let guess = p.guess {
+            return when + size + ". Looks a bit like \(label(guess)), but Cocut isn't sure." + read
         }
-        if let guess = d.guess {
-            return when + "Followed for \(d.count) frames. Looks a bit like \(label(guess)), but Cocut isn't sure."
-        }
-        return when + "Followed for \(d.count) frames."
+        return when + size + "." + read
     }
 
     /// Numbers to offer: the roster, or the numbers Cocut has read in this match.
     private var candidates: [Int] {
         let roster = finder.roster()
         if !roster.isEmpty { return roster.sorted() }
-        let known = finder.decisions.values.compactMap { d -> Int? in
-            (d.source == .read || d.source == .taught) ? d.number : nil
+        let known = finder.people.compactMap { p -> Int? in
+            (p.source == .read || p.source == .taught) ? p.number : nil
         }
-        let counts = Dictionary(grouping: known.filter { $0 >= 0 }, by: { $0 }).mapValues(\.count)
-        return counts.filter { $0.value >= 3 }.keys.sorted()
+        return Set(known.filter { $0 >= 0 }).sorted()
     }
 
-    @ViewBuilder private func answerButtons(for d: RallyDetector.TrackDecision) -> some View {
+    @ViewBuilder private func answerButtons(for d: PlayerGrouping.Person) -> some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 58), spacing: 8)], alignment: .leading, spacing: 8) {
             ForEach(candidates, id: \.self) { n in
                 if n == d.guess {
@@ -394,10 +402,10 @@ private struct WhoIsThisPane: View {
             Button("Not Our Team") { answer(RallyDetector.otherTeam) }
                 .help("An opponent, referee or coach: players who look like this won't be listed")
             Button("Skip") { advance(skipping: true) }
-                .help("Not a single player, or can't tell")
+                .help("Not a single player, a mix of people, or can't tell")
         }
         if answeredCount > 0 {
-            Text("\(answeredCount) answered. Each answer teaches Cocut, so similar players are worked out on their own.")
+            Text("\(answeredCount) answered. Each answer covers every stretch of that person, and teaches Cocut who looks like them.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -428,7 +436,7 @@ private struct WhoIsThisPane: View {
 
     private func answer(_ number: Int) {
         guard let current else { return }
-        finder.identify(track: current.track, as: number)
+        finder.identify(current, as: number)
         answeredCount += 1
         otherNumber = ""
         advance(skipping: false)
@@ -436,24 +444,31 @@ private struct WhoIsThisPane: View {
 
     private func advance(skipping: Bool) {
         guard let current else { return }
-        if skipping { finder.skip(track: current.track) }
-        answered.insert(current.track)
-        self.current = finder.reviewQueue.first { !answered.contains($0.track) }
+        if skipping { finder.skip(current) }
+        answered.formUnion(current.tracks)
+        self.current = finder.reviewQueue.first { !$0.tracks.contains(where: answered.contains) }
     }
 
-    /// The frame where the player is biggest, and a few close-ups from other moments.
+    /// The frame where the person is biggest, and close-ups from other stretches of them (so a
+    /// mix-up of two people is easy to spot).
     private func load() async {
         guard let current else { picture = nil; closeUps = []; return }
         loading = true
-        let frames = finder.sightings(ofTrack: current.track).sorted { $0.time < $1.time }
+        let frames = finder.sightings(of: current).sorted { $0.time < $1.time }
         guard let main = frames.max(by: { $0.box.height < $1.box.height }) else { loading = false; return }
         var others: [RallyDetector.PersonSighting] = []
-        if frames.count > 1 {
-            for k in 0..<4 {
+        // The biggest view from each of the other longest stretches, then spread over time.
+        let byTrack = Dictionary(grouping: frames.filter { $0.track != main.track }, by: \.track)
+        for (_, stretch) in byTrack.sorted(by: { $0.value.count > $1.value.count }).prefix(3) {
+            if let best = stretch.max(by: { $0.box.height < $1.box.height }) { others.append(best) }
+        }
+        if others.count < 3, frames.count > 1 {
+            for k in 0..<4 where others.count < 3 {
                 let s = frames[min(frames.count - 1, k * (frames.count - 1) / 3)]
                 if s.time != main.time, !others.contains(where: { $0.time == s.time }) { others.append(s) }
             }
         }
+        others.sort { $0.time < $1.time }
         let url = self.url
         let result = await Task.detached(priority: .userInitiated) { () -> ((CGImage, CGRect, Double)?, [CGImage]) in
             var picture: (CGImage, CGRect, Double)?
@@ -469,7 +484,7 @@ private struct WhoIsThisPane: View {
             }
             return (picture, crops)
         }.value
-        guard !Task.isCancelled, current.track == self.current?.track else { return }
+        guard !Task.isCancelled, current.id == self.current?.id else { return }
         picture = result.0.map { (image: $0.0, box: $0.1, time: $0.2) }
         closeUps = result.1
         loading = false
