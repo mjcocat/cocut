@@ -113,6 +113,8 @@ struct RallyFinderView: View {
             Button("Team Roster…") { editingRoster = true }
                 .help("Your team's jersey numbers: only these are listed on rallies, so opponents and misreads are left out")
 
+            RecentMatchesList(finder: finder)
+
             VStack(alignment: .leading, spacing: 8) {
                 tip("camera.fill", "Works best with a camera on a tripod, behind the end line, that doesn't pan or zoom.")
                 tip("arrow.up.and.down", "Leave some wall or ceiling above the net in the picture. That's where Cocut looks for the ball.")

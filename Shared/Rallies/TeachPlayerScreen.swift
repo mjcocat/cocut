@@ -13,7 +13,7 @@ struct TeachPlayerScreen: View {
 
     @State private var time: Double
     @State private var frame: CGImage?
-    @State private var people: [(box: CGRect, print: [Float])] = []
+    @State private var people: [(box: CGRect, print: [Float], color: [Float])] = []
     @State private var loading = false
     @State private var selected: Int?
     @State private var numberText = ""
@@ -96,6 +96,18 @@ struct TeachPlayerScreen: View {
     /// Who's been identified, with a way to undo, and how strict matching is.
     @ViewBuilder private var identifiedList: some View {
         @Bindable var finder = finder
+                    if !finder.memory.examples.isEmpty {
+                        HStack {
+                            Text("Remembered from earlier matches: " + finder.memory.labels
+                                .map { $0 == RallyDetector.otherTeam ? "other team" : "#\($0)" }.joined(separator: ", "))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Forget All", role: .destructive) { finder.clearMemory() }
+                                .buttonStyle(.borderless)
+                                .help("Forget the players this project remembers (this match's answers stay)")
+                        }
+                    }
                     if !finder.taught.isEmpty {
                         DisclosureGroup("Identified (\(finder.taught.keys.count))") {
                         ForEach(finder.taught.keys.sorted(), id: \.self) { number in
@@ -196,7 +208,7 @@ struct TeachPlayerScreen: View {
         loading = true
         selected = nil
         let url = self.url, at = time
-        let result = await Task.detached(priority: .userInitiated) { () -> (CGImage?, [(box: CGRect, print: [Float])], String) in
+        let result = await Task.detached(priority: .userInitiated) { () -> (CGImage?, [(box: CGRect, print: [Float], color: [Float])], String) in
             guard let image = await VideoFrames.firstFrame(url: url, at: at, crop: nil) else {
                 return (nil, [], "the frame couldn't be read")
             }
@@ -222,14 +234,17 @@ struct TeachPlayerScreen: View {
             .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         guard unit.width > 0.01, unit.height > 0.02 else { return }
         Task {
-            let print = await Task.detached(priority: .userInitiated) {
-                RallyDetector.featurePrint(of: frame, region: unit)
+            let found = await Task.detached(priority: .userInitiated) { () -> ([Float], [Float])? in
+                guard let print = RallyDetector.featurePrint(of: frame, region: unit) else { return nil }
+                // The torso is roughly the middle of a box drawn around a player.
+                let torso = CGRect(x: unit.minX, y: unit.minY + unit.height * 0.42, width: unit.width, height: unit.height * 0.48)
+                return (print, RallyDetector.jerseyColor(frame, torso: torso))
             }.value
-            guard let print else {
-                Log.error("Teach a Player: no appearance for a drawn box")
+            guard let found else {
+                Log.error("Identify Players: no appearance for a drawn box")
                 return
             }
-            people.append((unit, print))
+            people.append((unit, found.0, found.1))
             selected = people.count - 1
         }
     }
@@ -240,7 +255,8 @@ struct TeachPlayerScreen: View {
 
     private func teach() {
         guard let selected, people.indices.contains(selected), let number = parsedNumber else { return }
-        finder.teach(number, print: people[selected].print, box: people[selected].box, time: time)
+        finder.teach(number, print: people[selected].print, color: people[selected].color,
+                     box: people[selected].box, time: time)
         self.selected = nil
     }
 

@@ -35,6 +35,8 @@ enum RallyDetector {
         var box: CGRect
         /// Unit-length appearance features (Vision image feature print).
         var print: [Float]
+        /// Jersey color (CIELAB, L/100, a/100, b/100), measured on the middle of the torso.
+        var color: [Float] = []
         /// The number read on this player in this frame, if any.
         var number: Int?
         /// Which track (the same player followed through a rally) this is part of; -1 for none.
@@ -406,7 +408,8 @@ enum RallyDetector {
             }
             let first = people.count
             for person in frame.people {
-                people.append(PersonSighting(time: t, box: person.box, print: person.print, number: person.number))
+                people.append(PersonSighting(time: t, box: person.box, print: person.print, color: person.color,
+                                             number: person.number))
             }
             tracker.update(&people, from: first, time: t, span: spanOf[i])
         }
@@ -448,7 +451,7 @@ enum RallyDetector {
     /// One- or two-digit numbers in the lower part of the picture (where the near team is), with
     /// where each was read. Short text that isn't a number is counted in `rejected` for the log.
     typealias FrameNumbers = (reads: [(number: Int, x: Double, y: Double)],
-                              people: [(box: CGRect, print: [Float], number: Int?)])
+                              people: [(box: CGRect, print: [Float], color: [Float], number: Int?)])
 
     static func numbers(in image: CGImage, closeUps: Bool = false, wantPeople: Bool = false,
                         rejected: inout [String: Int], problems: inout [String: Int]) -> FrameNumbers {
@@ -460,7 +463,7 @@ enum RallyDetector {
 
         // The nearby players (big enough for a readable number).
         let bodies = playerBodies(handler, minHeight: 0.10, maxMidY: 0.8, problems: &problems)
-        var people: [(box: CGRect, print: [Float], number: Int?)] = []
+        var people: [(box: CGRect, print: [Float], color: [Float], number: Int?)] = []
         let fullFrame = found
         for body in bodies {
             var reads: [(number: Int, x: Double, y: Double)] = []
@@ -484,7 +487,7 @@ enum RallyDetector {
             let zone = body.torso.insetBy(dx: -0.01, dy: -0.01)
             let onThem = Set(reads.map(\.number) + fullFrame.filter { zone.contains(CGPoint(x: $0.x, y: $0.y)) }.map(\.number))
             if let print = featurePrint(handler, region: body.box) ?? featurePrint(of: image, region: body.box) {
-                people.append((body.box, print, onThem.count == 1 ? onThem.first : nil))
+                people.append((body.box, print, jerseyColor(image, torso: body.torso), onThem.count == 1 ? onThem.first : nil))
             }
         }
         return (found, people)
@@ -646,6 +649,59 @@ enum RallyDetector {
         return Set(counts.filter { $0.value >= 2 && (allowed.isEmpty || allowed.contains($0.key)) }.keys)
     }
 
+    // MARK: - Jersey color
+
+    /// The average color of the middle of the torso (unit, bottom-left origin), in CIELAB scaled
+    /// to about -1...1: tells a libero's jersey, the other team and the referees apart.
+    static func jerseyColor(_ image: CGImage, torso: CGRect) -> [Float] {
+        let w = CGFloat(image.width), h = CGFloat(image.height)
+        // The middle half of the torso, away from arms and background.
+        let core = torso.insetBy(dx: torso.width * 0.25, dy: torso.height * 0.25)
+        let pixels = CGRect(x: core.minX * w, y: (1 - core.maxY) * h, width: core.width * w, height: core.height * h).integral
+        guard pixels.width >= 2, pixels.height >= 2, let crop = image.cropping(to: pixels),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: 6, height: 6, bitsPerComponent: 8, bytesPerRow: 24, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return [] }
+        ctx.interpolationQuality = .medium
+        ctx.draw(crop, in: CGRect(x: 0, y: 0, width: 6, height: 6))
+        guard let data = ctx.data else { return [] }
+        let px = data.assumingMemoryBound(to: UInt8.self)
+        var r = 0.0, g = 0.0, b = 0.0
+        for i in 0..<36 {
+            r += Double(px[i * 4]); g += Double(px[i * 4 + 1]); b += Double(px[i * 4 + 2])
+        }
+        return lab(r / 36 / 255, g / 36 / 255, b / 36 / 255)
+    }
+
+    /// sRGB (0...1) to CIELAB (D65), scaled: L/100, a/100, b/100.
+    static func lab(_ r: Double, _ g: Double, _ b: Double) -> [Float] {
+        func linear(_ c: Double) -> Double { c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
+        let rl = linear(r), gl = linear(g), bl = linear(b)
+        let x = (0.4124 * rl + 0.3576 * gl + 0.1805 * bl) / 0.95047
+        let y = 0.2126 * rl + 0.7152 * gl + 0.0722 * bl
+        let z = (0.0193 * rl + 0.1192 * gl + 0.9505 * bl) / 1.08883
+        func f(_ t: Double) -> Double { t > 0.008856 ? cbrt(t) : 7.787 * t + 16.0 / 116 }
+        let L = 116 * f(y) - 16, A = 500 * (f(x) - f(y)), B = 200 * (f(y) - f(z))
+        return [Float(L / 100), Float(A / 100), Float(B / 100)]
+    }
+
+    /// How strongly jersey color counts next to the rest of the appearance.
+    static let colorWeight: Float = 1.5
+
+    /// Appearance plus jersey color, as one unit-length vector for comparing players. With no
+    /// color (a player remembered from another match, whose uniform may differ) the color part is
+    /// zero, so it neither helps nor hurts any match.
+    static func features(_ print: [Float], color: [Float]?) -> [Float] {
+        var v = print
+        if let color, color.count == 3 {
+            v.append(contentsOf: color.map { $0 * colorWeight })
+        } else {
+            v.append(contentsOf: [0, 0, 0])
+        }
+        let norm = v.reduce(0) { $0 + $1 * $1 }.squareRoot()
+        return norm > 0 ? v.map { $0 / norm } : v
+    }
+
     // MARK: - Appearance (teach a player)
 
     /// An appearance fingerprint of `region` (unit coordinates, bottom-left origin), unit length.
@@ -675,14 +731,14 @@ enum RallyDetector {
 
     /// Everyone big enough to click on in a frame, with their appearance (for teaching a player).
     /// Also returns a line for the log saying what was found or what went wrong.
-    static func people(in image: CGImage) -> (people: [(box: CGRect, print: [Float])], note: String) {
+    static func people(in image: CGImage) -> (people: [(box: CGRect, print: [Float], color: [Float])], note: String) {
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         var problems: [String: Int] = [:]
         let bodies = playerBodies(handler, minHeight: 0.06, maxMidY: 1, problems: &problems)
-        var out: [(box: CGRect, print: [Float])] = []
+        var out: [(box: CGRect, print: [Float], color: [Float])] = []
         for body in bodies {
             if let print = featurePrint(handler, region: body.box) ?? featurePrint(of: image, region: body.box) {
-                out.append((body.box, print))
+                out.append((body.box, print, jerseyColor(image, torso: body.torso)))
             }
         }
         var note = "\(bodies.count) people found, \(out.count) with appearance, frame \(image.width)×\(image.height)"
@@ -742,7 +798,9 @@ enum RallyDetector {
     /// appearance features happen to scale, unlike a similarity threshold.
     static func decide(people: [PersonSighting], taught: [Int: [[Float]]], taughtTracks: [Int: Int],
                        agreement: Float, neighbors: Int = 7) -> [Int: TrackDecision] {
-        guard let dims = people.first?.print.count, dims > 0 else { return [:] }
+        guard let printDims = people.first?.print.count, printDims > 0 else { return [:] }
+        let dims = printDims + 3
+        let vectors = people.map { features($0.print, color: $0.color) }
         func label(of p: PersonSighting) -> Int? { taughtTracks[p.track] ?? p.trackNumber }
 
         var labels: [Int] = []
@@ -753,10 +811,11 @@ enum RallyDetector {
             examples.append(contentsOf: print)
         }
         for (number, prints) in taught { prints.forEach { add($0, number) } }
-        let known = Dictionary(grouping: people.filter { label(of: $0) != nil && !looksLikeGroup($0.box) }, by: { label(of: $0)! })
+        let labeled = people.indices.filter { label(of: people[$0]) != nil && !looksLikeGroup(people[$0].box) }
+        let known = Dictionary(grouping: labeled, by: { label(of: people[$0])! })
         for (number, list) in known where list.count >= 5 || taught[number] != nil {
             let step = max(1, list.count / 60)
-            for i in stride(from: 0, to: list.count, by: step).prefix(60) { add(list[i].print, number) }
+            for i in stride(from: 0, to: list.count, by: step).prefix(60) { add(vectors[list[i]], number) }
         }
 
         let tracks = Dictionary(grouping: people.indices, by: { people[$0].track })
@@ -783,8 +842,8 @@ enum RallyDetector {
         while start < people.count {
             let rows = min(chunk, people.count - start)
             var block = [Float](repeating: 0, count: rows * dims)
-            for r in 0..<rows where people[start + r].print.count == dims {
-                block.replaceSubrange(r * dims..<(r + 1) * dims, with: people[start + r].print)
+            for r in 0..<rows where vectors[start + r].count == dims {
+                block.replaceSubrange(r * dims..<(r + 1) * dims, with: vectors[start + r])
             }
             var sims = [Float](repeating: 0, count: rows * l)
             vDSP_mmul(block, 1, transposed, 1, &sims, 1, vDSP_Length(rows), vDSP_Length(l), vDSP_Length(dims))

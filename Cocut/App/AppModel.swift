@@ -138,6 +138,10 @@ final class AppModel {
         updater.isBusy = { [weak self] in self?.isBusy ?? false }
         updater.startAutomaticChecks()
         rallies.roster = { [weak self] in Set(self?.library.roster.map(\.number) ?? []) }
+        rallies.projectDirectory = { [weak self] in
+            guard let self else { return nil }
+            return self.projects.directory(for: self.projects.current)
+        }
     }
 
     // MARK: Projects

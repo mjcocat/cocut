@@ -6,7 +6,7 @@ import Foundation
 import UniformTypeIdentifiers
 
 /// A rally found in a match, which the user can adjust before using it.
-struct Rally: Identifiable, Hashable {
+struct Rally: Identifiable, Hashable, Codable {
     let id: UUID
     var start: Double
     var end: Double
@@ -17,6 +17,8 @@ struct Rally: Identifiable, Hashable {
     var players: [Int] = []
     /// The user changed `players`; keep their list when rallies are rebuilt.
     var playersEdited = false
+    /// The user moved the start or end; keep their times when rallies are rebuilt.
+    var timesEdited = false
 
     var duration: Double { max(0, end - start) }
 
@@ -44,7 +46,9 @@ final class RallyFinder {
     private(set) var state: State = .empty
     private(set) var sourceURL: URL?
     private(set) var analysis: RallyDetector.Result?
-    var rallies: [Rally] = []
+    var rallies: [Rally] = [] {
+        didSet { scheduleSave() }
+    }
     var selectedID: Rally.ID?
     /// Start each rally at the serve whistle (shows the server getting ready) instead of just
     /// before the serve. Off by default: in a busy hall the setup is mostly walking around.
@@ -161,7 +165,20 @@ final class RallyFinder {
     /// Appearance examples per player: number (or `RallyDetector.otherTeam`) → examples. Per match.
     private(set) var taught: [Int: [[Float]]] = [:]
     /// Tracks the user identified: track → number (the whole stretch they were followed).
-    private(set) var taughtTracks: [Int: Int] = [:]
+    private(set) var taughtTracks: [Int: Int] = [:] {
+        didSet { scheduleSave() }
+    }
+    /// Players clicked on a frame who weren't followed: number → features.
+    @ObservationIgnored private var frameExamples: [Int: [[Float]]] = [:]
+    /// Players identified in earlier matches of this project.
+    private(set) var memory = PlayerMemory()
+    /// The memory's examples as features (without jersey color, since uniforms change).
+    @ObservationIgnored private var priorExamples: [Int: [[Float]]] = [:]
+    /// The project folder, where matches and the player memory are saved (supplied by the app).
+    @ObservationIgnored var projectDirectory: () -> URL? = { nil }
+    @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// Don't save while a saved match is being restored.
+    @ObservationIgnored private var loadingState = false
     /// How many times each number was taught (answers and clicks), for the list.
     private(set) var taughtClicks: [Int: Int] = [:]
     /// How much of a followed player's frames must agree on who they look like for Cocut to
@@ -179,7 +196,9 @@ final class RallyFinder {
     /// Deciding is running (it takes a moment on a long match).
     private(set) var isMatching = false
     /// Tracks the user skipped in "Who's this?".
-    private(set) var skippedTracks: Set<Int> = []
+    private(set) var skippedTracks: Set<Int> = [] {
+        didSet { scheduleSave() }
+    }
     @ObservationIgnored private var matchTask: Task<Void, Never>?
 
     /// Whether this analysis has appearance data to identify players from.
@@ -210,14 +229,17 @@ final class RallyFinder {
         analysis?.people.filter { $0.track == track } ?? []
     }
 
-    /// The user says who a followed player is: `number`, or `RallyDetector.otherTeam`.
+    /// The user says who a followed player is: `number`, or `RallyDetector.otherTeam`. It's also
+    /// remembered for the project's next matches.
     func identify(track: Int, as number: Int) {
         let frames = sightings(ofTrack: track)
         guard !frames.isEmpty else { return }
         taughtTracks[track] = number
-        let step = max(1, frames.count / 30)
-        taught[number, default: []].append(contentsOf: stride(from: 0, to: frames.count, by: step).prefix(30).map { frames[$0].print })
+        addExamples(fromTrack: track, as: number)
         taughtClicks[number, default: 0] += 1
+        let step = max(1, frames.count / 10)
+        memory.add(stride(from: 0, to: frames.count, by: step).prefix(10).map { frames[$0].print }, label: number)
+        if let project = projectDirectory() { memory.save(project: project) }
         Log.info("Identified a player as \(number == RallyDetector.otherTeam ? "other team" : "#\(number)") (\(frames.count) frames)")
         refreshDecisions()
     }
@@ -226,26 +248,48 @@ final class RallyFinder {
         skippedTracks.insert(track)
     }
 
+    /// Up to 30 frames of a track, spread out, as examples of `number`.
+    private func addExamples(fromTrack track: Int, as number: Int) {
+        let frames = sightings(ofTrack: track)
+        let step = max(1, frames.count / 30)
+        taught[number, default: []].append(contentsOf: stride(from: 0, to: frames.count, by: step).prefix(30).map {
+            RallyDetector.features(frames[$0].print, color: frames[$0].color)
+        })
+    }
+
+    /// Forgets everything the project remembers about players (this match's answers stay).
+    func clearMemory() {
+        memory.clear()
+        priorExamples = [:]
+        if let project = projectDirectory() { memory.save(project: project) }
+        refreshDecisions()
+    }
+
     /// Teaches `number` from a player clicked at `time` (box in unit, bottom-left coordinates).
     /// When that player was followed during analysis, their whole track is identified too.
-    func teach(_ number: Int, print: [Float], box: CGRect, time: Double) {
+    func teach(_ number: Int, print: [Float], color: [Float], box: CGRect, time: Double) {
+        let example = RallyDetector.features(print, color: color)
         if let people = analysis?.people,
            let match = people.filter({ abs($0.time - time) <= 0.6 && $0.track >= 0 })
                .max(by: { RallyDetector.overlap($0.box, box) < RallyDetector.overlap($1.box, box) }),
            RallyDetector.overlap(match.box, box) > 0.4 {
-            taught[number, default: []].append(print)
+            taught[number, default: []].append(example)
             identify(track: match.track, as: number)
             return
         }
-        taught[number, default: []].append(print)
+        taught[number, default: []].append(example)
+        frameExamples[number, default: []].append(example)
         taughtClicks[number, default: 0] += 1
+        scheduleSave()
         Log.info("Taught #\(number) from a frame (not followed)")
         refreshDecisions()
     }
 
+    /// Forgets `number` in this match (the project memory keeps it unless cleared).
     func forget(_ number: Int) {
         taught[number] = nil
         taughtClicks[number] = nil
+        frameExamples[number] = nil
         taughtTracks = taughtTracks.filter { $0.value != number }
         refreshDecisions()
     }
@@ -260,7 +304,9 @@ final class RallyFinder {
             rebuildRallies()
             return
         }
-        let taught = self.taught
+        // This match's examples, plus players remembered from earlier matches.
+        var taught = self.priorExamples
+        for (number, examples) in self.taught { taught[number, default: []].append(contentsOf: examples) }
         let tracks = self.taughtTracks
         let agreement = Float(matchSimilarity)
         isMatching = true
@@ -274,6 +320,81 @@ final class RallyFinder {
             rebuildRallies()
             let counts = identifiedCounts
             Log.info("Players: \(counts.identified) identified, \(counts.unknown) not (\(reviewQueue.count) to ask about)")
+        }
+    }
+
+    // MARK: Saving
+
+    /// Saves answers and edits a moment after the last change.
+    private func scheduleSave() {
+        guard !loadingState, let source = sourceURL, analysis != nil, let project = projectDirectory() else { return }
+        saveTask?.cancel()
+        let state = MatchStore.State(taughtTracks: taughtTracks, frameExamples: frameExamples, skippedTracks: skippedTracks,
+                                     rallies: rallies, includeServeSetup: includeServeSetup)
+        saveTask = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            MatchStore.saveState(state, source: source, project: project)
+        }
+    }
+
+    /// Matches saved in this project, newest first.
+    func recentMatches() -> [MatchStore.Summary] {
+        guard let project = projectDirectory() else { return [] }
+        return MatchStore.recent(project: project)
+    }
+
+    /// Reopens a saved match (instant: nothing is analyzed again).
+    func open(_ match: MatchStore.Summary) {
+        guard match.sourceExists else {
+            state = .failed("“\(match.name)” isn't where it was when it was analyzed, so it can't be reopened.")
+            return
+        }
+        if let project = projectDirectory(), let area = MatchStore.savedCourtArea(source: match.sourceURL, project: project) {
+            courtArea = area
+        }
+        analyze(match.sourceURL)
+    }
+
+    func removeSaved(_ match: MatchStore.Summary) {
+        guard let project = projectDirectory() else { return }
+        MatchStore.remove(match, project: project)
+    }
+
+    /// After an analysis is ready (new or reopened): restore saved answers and edits, and load
+    /// what the project remembers about players.
+    private func restore(for source: URL) {
+        loadingState = true
+        defer { loadingState = false }
+        taught = [:]
+        taughtClicks = [:]
+        frameExamples = [:]
+        taughtTracks = [:]
+        skippedTracks = []
+        if let project = projectDirectory() {
+            memory = PlayerMemory.load(project: project)
+            priorExamples = memory.byLabel.mapValues { $0.map { RallyDetector.features($0, color: nil) } }
+            if let saved = MatchStore.loadState(source: source, project: project) {
+                restoring = true
+                includeServeSetup = saved.includeServeSetup
+                restoring = false
+                frameExamples = saved.frameExamples
+                taughtTracks = saved.taughtTracks
+                skippedTracks = saved.skippedTracks
+                for (number, examples) in frameExamples {
+                    taught[number, default: []].append(contentsOf: examples)
+                    taughtClicks[number, default: 0] += examples.count
+                }
+                for (track, number) in taughtTracks {
+                    addExamples(fromTrack: track, as: number)
+                    taughtClicks[number, default: 0] += 1
+                }
+                if !saved.rallies.isEmpty { rallies = saved.rallies }
+                Log.info("Restored \(taughtTracks.count) answers and \(saved.rallies.count) rallies")
+            }
+            if !memory.examples.isEmpty {
+                Log.info("Remembered players: \(memory.labels.map { $0 == RallyDetector.otherTeam ? "other team" : "#\($0)" }.joined(separator: ", "))")
+            }
         }
     }
 
@@ -318,20 +439,34 @@ final class RallyFinder {
         state = .analyzing(0)
         Log.info("Finding rallies in \(url.lastPathComponent)")
         let area = courtArea
+        let project = projectDirectory()
 
         task = Task {
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try await RallyDetector.analyze(url: url, courtArea: area) { fraction in
-                        Task { @MainActor [weak self] in
-                            guard let self, case .analyzing = self.state else { return }
-                            self.state = .analyzing(fraction)
-                        }
-                    }
+                let result: RallyDetector.Result
+                let saved = await Task.detached(priority: .userInitiated) {
+                    project.flatMap { MatchStore.load(source: url, courtArea: area, project: $0) }
                 }.value
-                try Task.checkCancellation()
+                if let saved {
+                    result = saved
+                    Log.info("Reopened the saved analysis of \(url.lastPathComponent)")
+                } else {
+                    result = try await Task.detached(priority: .userInitiated) {
+                        try await RallyDetector.analyze(url: url, courtArea: area) { fraction in
+                            Task { @MainActor [weak self] in
+                                guard let self, case .analyzing = self.state else { return }
+                                self.state = .analyzing(fraction)
+                            }
+                        }
+                    }.value
+                    try Task.checkCancellation()
+                    if let project {
+                        Task.detached(priority: .utility) { MatchStore.save(result, source: url, courtArea: area, project: project) }
+                    }
+                }
                 analysis = result
-                rebuildRallies()
+                restore(for: url)
+                if rallies.isEmpty { rebuildRallies() }
                 refreshDecisions()
                 makePlayer(url: url)
                 state = .review
@@ -380,6 +515,7 @@ final class RallyFinder {
         let unchecked = rallies.filter { !$0.isIncluded && !$0.isManual }
         let edited = rallies.filter { $0.playersEdited && !$0.isManual }
         let manual = rallies.filter(\.isManual)
+        let retimed = rallies.filter { $0.timesEdited && !$0.isManual }
         let spans = RallyDetector.rallies(from: analysis, includeSetup: includeServeSetup)
         let frequent = RallyDetector.frequentNumbers(spans: spans, reads: analysis.numbers)
         let roster = self.roster()
@@ -405,6 +541,13 @@ final class RallyFinder {
             if let old = edited.first(where: { Self.overlap($0, fresh[i]) > 0.5 * fresh[i].duration }) {
                 fresh[i].players = old.players
                 fresh[i].playersEdited = true
+            }
+        }
+        for i in fresh.indices {
+            if let old = retimed.first(where: { Self.overlap($0, fresh[i]) > 0.5 * fresh[i].duration }) {
+                fresh[i].start = old.start
+                fresh[i].end = old.end
+                fresh[i].timesEdited = true
             }
         }
         rallies = (fresh + manual).sorted { $0.start < $1.start }
@@ -436,24 +579,28 @@ final class RallyFinder {
         checkpoint("Set Start")
         guard let i = selectedIndex else { return }
         rallies[i].start = min(currentTime, rallies[i].end - 0.5)
+        rallies[i].timesEdited = true
     }
 
     func setEndToPlayhead() {
         checkpoint("Set End")
         guard let i = selectedIndex else { return }
         rallies[i].end = max(currentTime, rallies[i].start + 0.5)
+        rallies[i].timesEdited = true
     }
 
     func nudge(start delta: Double) {
         checkpoint("Adjust Start")
         guard let i = selectedIndex else { return }
         rallies[i].start = max(0, min(rallies[i].start + delta, rallies[i].end - 0.5))
+        rallies[i].timesEdited = true
     }
 
     func nudge(end delta: Double) {
         checkpoint("Adjust End")
         guard let i = selectedIndex else { return }
         rallies[i].end = min(duration, max(rallies[i].end + delta, rallies[i].start + 0.5))
+        rallies[i].timesEdited = true
     }
 
     /// Adds a rally around the playhead (for one the finder missed).

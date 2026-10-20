@@ -171,6 +171,8 @@ struct RalliesScreen: View {
                     .buttonStyle(.borderedProminent)
                 Button("Choose from Files") { showingFiles = true }
                 Button("Team Roster…") { editingRoster = true }
+                RecentMatchesList(finder: finder)
+                    .padding(.top, 8)
             }
         }
     }
