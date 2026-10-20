@@ -6,7 +6,7 @@ import Vision
 /// picture of one person in, a 512-number description out, where the same person seen at
 /// different moments comes out close and different people far apart, even in the same uniform.
 /// It runs on the device (Neural Engine where available).
-enum PersonReID {
+enum ReIDModel {
     /// The model, or nil if it couldn't be loaded (Cocut then falls back to Apple's image fingerprint).
     static let shared: VNCoreMLModel? = {
         guard let url = Bundle.main.url(forResource: "PersonReID", withExtension: "mlmodelc") else {

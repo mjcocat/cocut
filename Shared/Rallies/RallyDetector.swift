@@ -709,8 +709,8 @@ enum RallyDetector {
     /// hair, shoes, knee pads) rather than just describe a picture. Apple's general image
     /// fingerprint is the fallback if the model can't be loaded.
     static func featurePrint(_ handler: VNImageRequestHandler, region: CGRect) -> [Float]? {
-        if let model = PersonReID.shared {
-            return PersonReID.embedding(handler, region: region, model: model)
+        if let model = ReIDModel.shared {
+            return ReIDModel.embedding(handler, region: region, model: model)
         }
         let request = VNGenerateImageFeaturePrintRequest()
         request.regionOfInterest = region.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
