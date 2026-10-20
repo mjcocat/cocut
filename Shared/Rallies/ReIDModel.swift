@@ -36,10 +36,25 @@ enum ReIDModel {
               let array = observation.featureValue.multiArrayValue else { return nil }
         let count = array.count
         guard count > 0 else { return nil }
-        var values = [Float](repeating: 0, count: count)
-        for i in 0..<count { values[i] = array[i].floatValue }
+        let values: [Float]
+        if array.dataType == .float32, isContiguous(array) {
+            values = array.withUnsafeBufferPointer(ofType: Float.self) { Array($0.prefix(count)) }
+        } else {
+            values = (0..<count).map { array[$0].floatValue }
+        }
         let norm = values.reduce(0) { $0 + $1 * $1 }.squareRoot()
         guard norm > 0, norm.isFinite else { return nil }
         return values.map { $0 / norm }
+    }
+
+    /// The values are laid out one after another (no padding), so they can be copied in one go.
+    private static func isContiguous(_ array: MLMultiArray) -> Bool {
+        let shape = array.shape.map(\.intValue), strides = array.strides.map(\.intValue)
+        var expected = 1
+        for d in shape.indices.reversed() {
+            if shape[d] > 1, strides[d] != expected { return false }
+            expected *= shape[d]
+        }
+        return true
     }
 }
