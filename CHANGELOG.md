@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.31.0
+- New option when you mark your court: **Quick number reading**. Find Rallies stops reading a player's number up close once it's clearly read in the rally, which makes it faster. It's off by default; turn it on, then compare in Check Accuracy.
+- Turning it on or off analyzes a match again the next time you open it. Your answers and edits are kept.
+
 ## 0.30.0
 - Find Rallies reads jersey numbers and follows players faster: it looks at several frames at once and no longer jumps around the video for each one.
 - The log shows how long each part of Find Rallies took, to help make it faster still.

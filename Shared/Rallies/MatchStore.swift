@@ -27,6 +27,8 @@ enum MatchStore {
         var courtArea: CGRect?
         var savedAt: Date
         var result: RallyDetector.Result
+        /// Analyzed with quick number reading (see `RallyDetector.quickReadsNeeded`). Nil before 0.31.
+        var quickReading: Bool?
     }
 
     /// Answers and edits for one match.
@@ -92,14 +94,15 @@ enum MatchStore {
 
     // MARK: Analysis
 
-    static func save(_ result: RallyDetector.Result, source: URL, courtArea: CGRect?, project: URL) {
+    static func save(_ result: RallyDetector.Result, source: URL, courtArea: CGRect?, quickReading: Bool, project: URL) {
         let dir = folder(project, key(for: source))
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             var slim = result
             for i in slim.people.indices { slim.people[i].print = [] }
             let saved = Saved(version: analysisVersion, sourcePath: storedPath(source),
-                              sourceName: source.lastPathComponent, courtArea: courtArea, savedAt: Date(), result: slim)
+                              sourceName: source.lastPathComponent, courtArea: courtArea, savedAt: Date(), result: slim,
+                              quickReading: quickReading)
             try JSONEncoder().encode(saved).write(to: dir.appending(path: "analysis.json"), options: .atomic)
             try Fingerprints.encode(result.people.map(\.print)).write(to: dir.appending(path: "people.bin"), options: .atomic)
             Log.info("Saved the analysis of \(source.lastPathComponent)")
@@ -108,12 +111,14 @@ enum MatchStore {
         }
     }
 
-    /// The saved analysis of `source`, if there is one from this version with the same court area.
-    static func load(source: URL, courtArea: CGRect?, project: URL) -> RallyDetector.Result? {
+    /// The saved analysis of `source`, if there is one from this version with the same court area
+    /// and number reading.
+    static func load(source: URL, courtArea: CGRect?, quickReading: Bool, project: URL) -> RallyDetector.Result? {
         let dir = folder(project, key(for: source))
         guard let data = try? Data(contentsOf: dir.appending(path: "analysis.json")),
               let saved = try? JSONDecoder().decode(Saved.self, from: data),
               saved.version == analysisVersion, sameArea(saved.courtArea, courtArea),
+              (saved.quickReading ?? false) == quickReading,
               let bin = try? Data(contentsOf: dir.appending(path: "people.bin")) else { return nil }
         var result = saved.result
         let prints = Fingerprints.decode(bin)

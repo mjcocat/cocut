@@ -77,7 +77,8 @@ enum RallyDetector {
     /// Runs both passes. `progress` gets 0...1 (from the video pass, which takes longest).
     /// `courtArea` is the air above the user's court (unit coordinates, top-left origin): when set,
     /// the ball is only looked for there, which ignores neighboring courts, crowds and walkers.
-    static func analyze(url: URL, courtArea: CGRect? = nil,
+    /// `quickReading`: see `quickReadsNeeded`.
+    static func analyze(url: URL, courtArea: CGRect? = nil, quickReading: Bool = false,
                         progress: @escaping @Sendable (Double) -> Void) async throws -> Result {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw DetectError.noVideo }
@@ -98,7 +99,7 @@ enum RallyDetector {
         var result = Result(duration: duration, bursts: bursts, whistles: whistles, ballZone: zone)
         let spans = rallies(from: result, includeSetup: true)
         let numbersStart = Date()
-        (result.numbers, result.people) = try await readNumbers(asset: asset, track: track, spans: spans) { progress(0.8 + $0 * 0.2) }
+        (result.numbers, result.people) = try await readNumbers(asset: asset, track: track, spans: spans, quickReading: quickReading) { progress(0.8 + $0 * 0.2) }
         Log.info(String(format: "Rally analysis took %.0fs: ball pass %.0fs, whistle pass %.0fs (alongside), number pass %.0fs",
                         Date().timeIntervalSince(start), videoSeconds, audioSeconds, Date().timeIntervalSince(numbersStart)))
         Log.info("Rally analysis\(courtArea.map { " (court area \(Int($0.minX * 100))–\(Int($0.maxX * 100))% across, \(Int($0.minY * 100))–\(Int($0.maxY * 100))% down)" } ?? " (automatic area)"): \(bursts.count) ball bursts, \(whistles.count) whistles, ball zone \(Int(zone * 100))% of height, \(Int(duration))s")
@@ -181,7 +182,7 @@ enum RallyDetector {
     /// through by its own reader, rather than seeking back to a keyframe for every frame.
     struct RallyFrames {
         struct Frame {
-            /// Position over all rallies' times.
+            /// Position over the times of all its rallies.
             var index: Int
             /// Nil when the frame couldn't be decoded.
             var image: CGImage?
@@ -206,7 +207,16 @@ enum RallyDetector {
         private var held: CMSampleBuffer?
         private(set) var problems: [String: Int] = [:]
 
-        init(asset: AVURLAsset, track: AVAssetTrack, spans: [Span], times: [[Double]]) async throws {
+        init(asset: AVURLAsset, track: AVAssetTrack, composition: AVVideoComposition, spans: [Span], times: [[Double]]) {
+            self.asset = asset
+            self.track = track
+            self.composition = composition
+            self.spans = spans
+            self.times = times
+        }
+
+        /// Frames of `track` up to `maxSide`, the right way up, at 10 fps.
+        static func makeComposition(asset: AVURLAsset, track: AVAssetTrack) async throws -> AVVideoComposition {
             let natural = try await track.load(.naturalSize)
             let transform = try await track.load(.preferredTransform)
             let upright = CGRect(origin: .zero, size: natural).applying(transform)
@@ -216,11 +226,7 @@ enum RallyDetector {
             var w = Int((sw * scale).rounded()), h = Int((sh * scale).rounded())
             w -= w % 2
             h -= h % 2
-            self.asset = asset
-            self.track = track
-            self.spans = spans
-            self.times = times
-            composition = try await RallyDetector.scaledComposition(asset: asset, track: track, width: w, height: h)
+            return try await RallyDetector.scaledComposition(asset: asset, track: track, width: w, height: h)
         }
 
         /// The next frame, in time order; nil when every rally is done.
@@ -527,14 +533,17 @@ enum RallyDetector {
         var bodies = 0.0
         /// Each player's appearance (re-identification model) and jersey colour.
         var looks = 0.0
-        /// Reading each player's torso up close.
+        /// Reading each player's torso up close with the accurate reader.
         var closeUps = 0.0
+        /// Second tries with the fast reader, when the accurate one found nothing.
+        var fastCloseUps = 0.0
 
         mutating func add(_ other: StageTimes) {
             text += other.text
             bodies += other.bodies
             looks += other.looks
             closeUps += other.closeUps
+            fastCloseUps += other.fastCloseUps
         }
 
         static func timed<T>(_ seconds: inout Double, _ work: () throws -> T) rethrows -> T {
@@ -544,98 +553,130 @@ enum RallyDetector {
         }
     }
 
-    /// How many frames the number pass looks at at once. Text recognition and the appearance
-    /// model leave most of the machine idle when frames go one at a time.
+    /// What the close-ups did, for the log: how often each reader ran and what it found.
+    struct CloseUpCounts {
+        /// Torsos read with the accurate reader, the numbers it found, and how many of those
+        /// weren't already read in the whole frame.
+        var accurate = 0, accurateReads = 0, accurateNew = 0
+        /// The same for second tries with the fast reader.
+        var fast = 0, fastReads = 0, fastNew = 0
+        /// Close-ups left out because the player's number was already clear in the rally.
+        var skipped = 0
+
+        mutating func add(_ other: CloseUpCounts) {
+            accurate += other.accurate; accurateReads += other.accurateReads; accurateNew += other.accurateNew
+            fast += other.fast; fastReads += other.fastReads; fastNew += other.fastNew
+            skipped += other.skipped
+        }
+    }
+
+    /// The setting for quick number reading (see `quickReadsNeeded`).
+    static let quickReadingKey = "rallyQuickReading"
+
+    /// Quick number reading: once a player's number has been read this many times in a rally (and
+    /// at least twice as often as any other number), their torso isn't read up close again in
+    /// that rally. Close-ups are most of the number pass.
+    static let quickReadsNeeded = 3
+
+    /// The number clearly read on a track so far: see `quickReadsNeeded`.
+    static func clearNumber(_ votes: [Int: Int]?) -> Int? {
+        guard let votes else { return nil }
+        let sorted = votes.sorted { $0.value > $1.value }
+        guard let top = sorted.first, top.value >= quickReadsNeeded else { return nil }
+        let second = sorted.count > 1 ? sorted[1].value : 0
+        return top.value >= 2 * second ? top.key : nil
+    }
+
+    /// What one rally gave.
+    private struct RallyReading {
+        var reads: [NumberRead] = []
+        var people: [PersonSighting] = []
+        /// Tracks started in the rally, numbered from 0.
+        var tracks = 0
+        var unread = 0
+        var rejected: [String: Int] = [:]
+        var problems: [String: Int] = [:]
+        var stages = StageTimes()
+        var counts = CloseUpCounts()
+        var decoding = 0.0
+    }
+
+    /// How many rallies the number pass reads at once. Text recognition and the appearance model
+    /// leave most of the machine idle when frames go one at a time.
     static var numberWorkers: Int { max(2, min(4, ProcessInfo.processInfo.activeProcessorCount / 2)) }
 
     /// Reads jersey numbers twice a second during each rally, with on-device text recognition.
     /// Players whose backs face the camera are read best; 1080p or better is recommended.
-    /// Frames are decoded in order, rally by rally, and looked at by a few workers at once; the
-    /// players are then followed from frame to frame in time order.
-    private static func readNumbers(asset: AVURLAsset, track: AVAssetTrack, spans: [Span],
+    /// A few rallies are read at once, each by its own worker going through its frames in order.
+    private static func readNumbers(asset: AVURLAsset, track: AVAssetTrack, spans: [Span], quickReading: Bool,
                                     progress: @escaping @Sendable (Double) -> Void) async throws -> ([NumberRead], [PersonSighting]) {
         var timesBySpan: [[Double]] = []
-        var times: [Double] = []
-        var spanOf: [Int] = []
-        for (k, span) in spans.enumerated() {
+        var firstIndex: [Int] = []
+        var total = 0
+        for span in spans {
             var list: [Double] = []
             var t = span.start
             while t <= span.end {
                 list.append(t)
-                times.append(t)
-                spanOf.append(k)
                 t += 0.5
             }
+            firstIndex.append(total)
+            total += list.count
             timesBySpan.append(list)
         }
-        guard !times.isEmpty else { return ([], []) }
+        guard total > 0 else { return ([], []) }
         let passStart = Date()
-        var source = try await RallyFrames(asset: asset, track: track, spans: spans, times: timesBySpan)
+        let composition = try await RallyFrames.makeComposition(asset: asset, track: track)
 
-        typealias FrameResult = (frame: FrameNumbers, rejected: [String: Int], problems: [String: Int], times: StageTimes)
-        var results = [FrameResult?](repeating: nil, count: times.count)
-        var decoding = 0.0
+        var rallies = [RallyReading?](repeating: nil, count: spans.count)
         let workers = numberWorkers
-        try await withThrowingTaskGroup(of: (Int, FrameResult).self) { group in
+        try await withThrowingTaskGroup(of: (Int, RallyReading).self) { group in
             var running = 0, done = 0
-            func collect(_ result: (Int, FrameResult)) {
-                results[result.0] = result.1
+            func collect(_ result: (Int, RallyReading)) {
+                rallies[result.0] = result.1
                 running -= 1
-                done += 1
-                if done % 20 == 0 { progress(Double(done) / Double(times.count)) }
+                done += timesBySpan[result.0].count
+                progress(Double(done) / Double(total))
             }
-            while true {
+            for k in spans.indices {
                 try Task.checkCancellation()
-                guard let next = StageTimes.timed(&decoding, { source.next() }) else { break }
-                guard let image = next.image else {
-                    done += 1
-                    continue
-                }
                 if running >= workers, let finished = try await group.next() { collect(finished) }
-                let i = next.index
+                let span = spans[k], times = timesBySpan[k], first = firstIndex[k]
                 group.addTask {
-                    // Every frame: find the nearby players and how they look. Once a second, also
-                    // read each player's torso up close.
-                    var rejected: [String: Int] = [:], problems: [String: Int] = [:], stages = StageTimes()
-                    let frame = numbers(in: image, closeUps: i % 2 == 0, wantPeople: true,
-                                        rejected: &rejected, problems: &problems, times: &stages)
-                    return (i, (frame, rejected, problems, stages))
+                    let reading = try readRally(asset: asset, track: track, composition: composition, span: span,
+                                                times: times, firstIndex: first, quick: quickReading)
+                    return (k, reading)
                 }
                 running += 1
             }
             while let finished = try await group.next() { collect(finished) }
         }
 
-        var tracker = Tracker()
+        // The rallies in time order, with tracks numbered across the match.
         var reads: [NumberRead] = []
         var people: [PersonSighting] = []
         var rejected: [String: Int] = [:]
-        var problems = source.problems
+        var problems: [String: Int] = [:]
         var stages = StageTimes()
-        var unreadFrames = 0
-        for (i, t) in times.enumerated() {
-            guard let result = results[i] else {
-                unreadFrames += 1
-                continue
-            }
-            rejected.merge(result.rejected, uniquingKeysWith: +)
-            problems.merge(result.problems, uniquingKeysWith: +)
-            stages.add(result.times)
-            // Follow each player through the rally.
-            var seen: Set<Int> = []
-            for found in result.frame.reads where seen.insert(found.number).inserted {
-                reads.append(NumberRead(time: t, number: found.number, x: found.x, y: found.y))
-            }
+        var counts = CloseUpCounts()
+        var unreadFrames = 0, decoding = 0.0, trackOffset = 0
+        for case let rally? in rallies {
+            reads += rally.reads
             let first = people.count
-            for person in result.frame.people {
-                people.append(PersonSighting(time: t, box: person.box, print: person.print, color: person.color,
-                                             number: person.number))
-            }
-            tracker.update(&people, from: first, time: t, span: spanOf[i])
+            people += rally.people
+            for i in first..<people.count { people[i].track += trackOffset }
+            trackOffset += rally.tracks
+            unreadFrames += rally.unread
+            decoding += rally.decoding
+            rejected.merge(rally.rejected, uniquingKeysWith: +)
+            problems.merge(rally.problems, uniquingKeysWith: +)
+            stages.add(rally.stages)
+            counts.add(rally.counts)
         }
         progress(1)
         func s(_ v: Double) -> String { String(format: "%.0fs", v) }
-        Log.info("Number pass: \(times.count) frames, \(unreadFrames) couldn't be read, \(s(Date().timeIntervalSince(passStart))) with \(workers) workers (decoding \(s(decoding)); summed over frames: whole-frame text \(s(stages.text)), finding players \(s(stages.bodies)), appearance \(s(stages.looks)), close-ups \(s(stages.closeUps)))")
+        Log.info("Number pass: \(total) frames, \(unreadFrames) couldn't be read, \(s(Date().timeIntervalSince(passStart))) with \(workers) workers (decoding \(s(decoding)); summed over frames: whole-frame text \(s(stages.text)), finding players \(s(stages.bodies)), appearance \(s(stages.looks)), close-ups \(s(stages.closeUps + stages.fastCloseUps)))")
+        Log.info("Close-ups\(quickReading ? " (quick number reading)" : ""): \(counts.accurate) accurate reads in \(s(stages.closeUps)) found \(counts.accurateReads) numbers (\(counts.accurateNew) not read in the whole frame); \(counts.fast) fast second tries in \(s(stages.fastCloseUps)) found \(counts.fastReads) (\(counts.fastNew) not read in the whole frame); \(counts.skipped) left out, number already clear")
         if !problems.isEmpty {
             let list = problems.sorted { $0.value > $1.value }.prefix(10).map { "\($0.key) ×\($0.value)" }
             Log.error("Number pass problems: \(list.joined(separator: "; "))")
@@ -654,6 +695,137 @@ enum RallyDetector {
         return (kept, people)
     }
 
+    /// Reads one rally, frame by frame in order, following each player through it. Every frame:
+    /// the numbers in the whole lower part, and the nearby players and how they look. Once a
+    /// second, also each player's torso up close (with `quick`, not for players whose number is
+    /// already clear in this rally). `firstIndex` is the rally's first frame over the match.
+    private static func readRally(asset: AVURLAsset, track: AVAssetTrack, composition: AVVideoComposition,
+                                  span: Span, times: [Double], firstIndex: Int, quick: Bool) throws -> RallyReading {
+        var out = RallyReading()
+        var frames = RallyFrames(asset: asset, track: track, composition: composition, spans: [span], times: [times])
+        var tracker = Tracker()
+        var rejected: [String: Int] = [:], problems: [String: Int] = [:]
+        var stages = StageTimes(), counts = CloseUpCounts(), decoding = 0.0
+        /// Numbers read on each track so far in this rally.
+        var votes: [Int: [Int: Int]] = [:]
+        while let next = StageTimes.timed(&decoding, { frames.next() }) {
+            try Task.checkCancellation()
+            guard let image = next.image else {
+                out.unread += 1
+                continue
+            }
+            let t = times[next.index]
+            let frame = look(at: image, rejected: &rejected, problems: &problems, times: &stages)
+            let first = out.people.count
+            var personOf: [Int?] = []
+            for body in frame.bodies {
+                guard let print = body.print else {
+                    personOf.append(nil)
+                    continue
+                }
+                personOf.append(out.people.count)
+                out.people.append(PersonSighting(time: t, box: body.box, print: print, color: body.color))
+            }
+            tracker.update(&out.people, from: first, time: t, span: 0)
+
+            let closeUps = (firstIndex + next.index) % 2 == 0
+            var found = frame.reads
+            for (b, body) in frame.bodies.enumerated() {
+                var reads: [(number: Int, x: Double, y: Double)] = []
+                if closeUps, body.torso.width * Double(image.width) >= 40, body.torso.height * Double(image.height) >= 40 {
+                    if quick, let p = personOf[b], clearNumber(votes[out.people[p].track]) != nil {
+                        counts.skipped += 1
+                    } else {
+                        reads = closeUp(image, frame.handler, torso: body.torso, wholeFrame: frame.reads,
+                                        rejected: &rejected, problems: &problems, times: &stages, counts: &counts)
+                    }
+                    for read in reads where !found.contains(where: { $0.number == read.number }) {
+                        found.append(read)
+                    }
+                }
+                guard let p = personOf[b] else { continue }
+                // This player's number: read on their torso, or read in the whole frame right there.
+                let zone = body.torso.insetBy(dx: -0.01, dy: -0.01)
+                let onThem = Set(reads.map(\.number) + frame.reads.filter { zone.contains(CGPoint(x: $0.x, y: $0.y)) }.map(\.number))
+                if onThem.count == 1, let n = onThem.first {
+                    out.people[p].number = n
+                    votes[out.people[p].track, default: [:]][n, default: 0] += 1
+                }
+            }
+            var seen: Set<Int> = []
+            for read in found where seen.insert(read.number).inserted {
+                out.reads.append(NumberRead(time: t, number: read.number, x: read.x, y: read.y))
+            }
+        }
+        out.tracks = tracker.nextID
+        problems.merge(frames.problems, uniquingKeysWith: +)
+        out.rejected = rejected
+        out.problems = problems
+        out.stages = stages
+        out.counts = counts
+        out.decoding = decoding
+        return out
+    }
+
+    /// Reads one torso up close. Text recognition finds a lone "1" or "11" far more readily when
+    /// it fills the region it's given.
+    private static func closeUp(_ image: CGImage, _ handler: VNImageRequestHandler, torso: CGRect,
+                                wholeFrame: [(number: Int, x: Double, y: Double)],
+                                rejected: inout [String: Int], problems: inout [String: Int],
+                                times: inout StageTimes, counts: inout CloseUpCounts) -> [(number: Int, x: Double, y: Double)] {
+        func new(_ reads: [(number: Int, x: Double, y: Double)]) -> Int {
+            reads.filter { read in !wholeFrame.contains { $0.number == read.number } }.count
+        }
+        let reads = StageTimes.timed(&times.closeUps) {
+            recognize(image, handler, in: torso, minimumTextHeight: 0.012, level: .accurate,
+                      rejected: &rejected, problems: &problems)
+        }
+        counts.accurate += 1
+        counts.accurateReads += reads.count
+        counts.accurateNew += new(reads)
+        guard reads.isEmpty else { return reads }
+        // The fast recognizer works character by character and catches a lone "1" the accurate
+        // one sometimes skips.
+        let fast = StageTimes.timed(&times.fastCloseUps) {
+            recognize(image, handler, in: torso, minimumTextHeight: 0.012, level: .fast,
+                      rejected: &rejected, problems: &problems)
+        }
+        counts.fast += 1
+        counts.fastReads += fast.count
+        counts.fastNew += new(fast)
+        return fast
+    }
+
+    typealias FrameBody = (box: CGRect, torso: CGRect, print: [Float]?, color: [Float])
+
+    /// One frame: numbers read in its whole lower part, and the nearby players (big enough for a
+    /// readable number) with how each one looks (no print when it couldn't be measured).
+    private struct FrameLook {
+        var handler: VNImageRequestHandler
+        var reads: [(number: Int, x: Double, y: Double)]
+        var bodies: [FrameBody]
+    }
+
+    private static func look(at image: CGImage, rejected: inout [String: Int], problems: inout [String: Int],
+                             times: inout StageTimes) -> FrameLook {
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        // The whole lower part of the picture (Vision's origin is bottom-left: the lower 65%).
+        let reads = StageTimes.timed(&times.text) {
+            recognize(image, handler, in: CGRect(x: 0, y: 0, width: 1, height: 0.65),
+                      minimumTextHeight: 0.012, level: .accurate, rejected: &rejected, problems: &problems)
+        }
+        let found = StageTimes.timed(&times.bodies) {
+            playerBodies(handler, minHeight: 0.10, maxMidY: 0.8, problems: &problems)
+        }
+        let bodies = StageTimes.timed(&times.looks) {
+            found.map { body -> FrameBody in
+                let print = featurePrint(handler, region: body.box) ?? featurePrint(of: image, region: body.box)
+                return (body.box, body.torso, print, print == nil ? [] : jerseyColor(image, torso: body.torso))
+            }
+        }
+        return FrameLook(handler: handler, reads: reads, bodies: bodies)
+    }
+
     /// Drops numbers that are nearly always read at the same spot: a sign, scoreboard or banner,
     /// not a player (players move around).
     static func dropStationary(_ reads: [NumberRead]) -> [NumberRead] {
@@ -667,60 +839,6 @@ enum RallyDetector {
         }
         if !stationary.isEmpty { Log.info("Ignoring numbers that never move (signs?): \(stationary.sorted())") }
         return reads.filter { !stationary.contains($0.number) }
-    }
-
-    /// One- or two-digit numbers in the lower part of the picture (where the near team is), with
-    /// where each was read. Short text that isn't a number is counted in `rejected` for the log.
-    typealias FrameNumbers = (reads: [(number: Int, x: Double, y: Double)],
-                              people: [(box: CGRect, print: [Float], color: [Float], number: Int?)])
-
-    static func numbers(in image: CGImage, closeUps: Bool = false, wantPeople: Bool = false,
-                        rejected: inout [String: Int], problems: inout [String: Int],
-                        times: inout StageTimes) -> FrameNumbers {
-        let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        // The whole lower part of the picture (Vision's origin is bottom-left: the lower 65%).
-        var found = StageTimes.timed(&times.text) {
-            recognize(image, handler, in: CGRect(x: 0, y: 0, width: 1, height: 0.65),
-                      minimumTextHeight: 0.012, level: .accurate, rejected: &rejected, problems: &problems)
-        }
-        guard closeUps || wantPeople else { return (found, []) }
-
-        // The nearby players (big enough for a readable number).
-        let bodies = StageTimes.timed(&times.bodies) {
-            playerBodies(handler, minHeight: 0.10, maxMidY: 0.8, problems: &problems)
-        }
-        var people: [(box: CGRect, print: [Float], color: [Float], number: Int?)] = []
-        let fullFrame = found
-        for body in bodies {
-            var reads: [(number: Int, x: Double, y: Double)] = []
-            // Close-ups: read each player's torso on its own. Text recognition finds a lone "1"
-            // or "11" far more readily when it fills the region it's given.
-            if closeUps, body.torso.width * Double(image.width) >= 40, body.torso.height * Double(image.height) >= 40 {
-                StageTimes.timed(&times.closeUps) {
-                    reads = recognize(image, handler, in: body.torso, minimumTextHeight: 0.012, level: .accurate,
-                                      rejected: &rejected, problems: &problems)
-                    if reads.isEmpty {
-                        // The fast recognizer works character by character and catches a lone "1"
-                        // the accurate one sometimes skips.
-                        reads = recognize(image, handler, in: body.torso, minimumTextHeight: 0.012, level: .fast,
-                                          rejected: &rejected, problems: &problems)
-                    }
-                }
-                for read in reads where !found.contains(where: { $0.number == read.number }) {
-                    found.append(read)
-                }
-            }
-            guard wantPeople else { continue }
-            // This player's number: read on their torso, or read in the whole frame right there.
-            let zone = body.torso.insetBy(dx: -0.01, dy: -0.01)
-            let onThem = Set(reads.map(\.number) + fullFrame.filter { zone.contains(CGPoint(x: $0.x, y: $0.y)) }.map(\.number))
-            StageTimes.timed(&times.looks) {
-                if let print = featurePrint(handler, region: body.box) ?? featurePrint(of: image, region: body.box) {
-                    people.append((body.box, print, jerseyColor(image, torso: body.torso), onThem.count == 1 ? onThem.first : nil))
-                }
-            }
-        }
-        return (found, people)
     }
 
     /// Players in the frame (unit coordinates, bottom-left origin): the whole body and the torso
@@ -813,7 +931,7 @@ enum RallyDetector {
         private struct Active { var id: Int; var box: CGRect; var print: [Float]; var time: Double }
         private var active: [Active] = []
         private var span = -1
-        private var nextID = 0
+        private(set) var nextID = 0
 
         /// Assigns `people[from...]` (one frame's players at `time`) to tracks.
         mutating func update(_ people: inout [PersonSighting], from first: Int, time: Double, span: Int) {
