@@ -20,6 +20,7 @@ struct TeachPlayerScreen: View {
     /// A box being dragged by hand (view coordinates), for a player Cocut didn't box.
     @State private var drawing: CGRect?
     @State private var mode: Mode = .whoIsThis
+    @State private var showingIdentified = false
 
     init(finder: RallyFinder, url: URL, time: Double, onClose: @escaping () -> Void) {
         self.finder = finder
@@ -31,32 +32,47 @@ struct TeachPlayerScreen: View {
     var body: some View {
         @Bindable var finder = finder
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    Picker("Mode", selection: $mode) {
-                        Text("Who's This?").tag(Mode.whoIsThis)
-                        Text("Pick from a Frame").tag(Mode.pick)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-
-                    if mode == .whoIsThis {
-                        WhoIsThisPane(finder: finder, url: url)
-                    } else {
-                        pickPane
-                    }
-
-                    identifiedList
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Mode", selection: $mode) {
+                    Text("Who's This?").tag(Mode.whoIsThis)
+                    Text("Pick from a Frame").tag(Mode.pick)
                 }
-                .padding()
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                if mode == .whoIsThis {
+                    // A fixed page: the picture and close-ups resize, the answers are always in view.
+                    WhoIsThisPane(finder: finder, url: url, onClose: onClose)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            pickPane
+                            identifiedList
+                        }
+                    }
+                }
             }
+            .padding()
             .navigationTitle("Identify Players")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #else
-            .frame(minWidth: 1080, minHeight: 640)
+            .frame(minWidth: 1200, idealWidth: 1440, maxWidth: .infinity,
+                   minHeight: 760, idealHeight: 900, maxHeight: .infinity)
             #endif
             .toolbar {
+                if mode == .whoIsThis, !finder.taught.isEmpty || !finder.memory.examples.isEmpty {
+                    ToolbarItem(placement: .automatic) {
+                        Button("Identified (\(finder.taught.keys.count))") { showingIdentified = true }
+                            .popover(isPresented: $showingIdentified) {
+                                ScrollView {
+                                    VStack(alignment: .leading, spacing: 10) { identifiedList }
+                                        .padding()
+                                }
+                                .frame(minWidth: 420, minHeight: 300)
+                            }
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) { Button("Done", action: onClose) }
             }
             .task(id: time) { if mode == .pick { await load() } }
@@ -276,6 +292,7 @@ struct TeachPlayerScreen: View {
 private struct WhoIsThisPane: View {
     let finder: RallyFinder
     let url: URL
+    let onClose: () -> Void
 
     /// A close-up of one stretch of the current person.
     struct CloseUp: Identifiable {
@@ -303,6 +320,9 @@ private struct WhoIsThisPane: View {
     @State private var regrouping = false
     @State private var otherNumber = ""
     @State private var answeredCount = 0
+    /// "Most players are sorted out": offered once per visit.
+    @State private var showingDone = false
+    @State private var offeredDone = false
 
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -315,96 +335,152 @@ private struct WhoIsThisPane: View {
         finder.reviewQueue.filter { !$0.tracks.contains(where: answered.contains) }
     }
 
+    /// Mostly done: the questions left would barely change any rally's list.
+    private var isMostlyDone: Bool {
+        finder.unknownRallyShare < 0.1 || finder.suggestedQuestions == 0
+    }
+
     var body: some View {
         let queue = self.queue
         // How much of the player time during rallies is sorted out, and how many questions are
         // worth answering (the people covering most of what's left; the rest are glimpses).
         let share = 1 - finder.unknownRallyShare
         let worth = finder.suggestedQuestions
-        let mostlyDone = finder.unknownRallyShare < 0.1 || worth == 0
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
+        let mostlyDone = isMostlyDone
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text("Who's this?").font(.title2.weight(.semibold))
-                Spacer()
-                if finder.isMatching { ProgressView().controlSize(.small) }
-                Text(mostlyDone ? "Mostly done" : "About \(worth) more worth answering")
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            ProgressView(value: share)
-                .tint(mostlyDone ? .green : .accentColor)
-            Text("\(Int((share * 100).rounded()))% of the players seen during rallies are sorted out. People seen only between rallies, or never clearly, aren't asked about.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if mostlyDone && current != nil {
-                Text("That's enough to list players on most rallies. What's left is brief glimpses: keep going only if a rally is missing someone.")
+                ProgressView(value: share)
+                    .tint(mostlyDone ? .green : .accentColor)
+                    .frame(maxWidth: 260)
+                Text("\(Int((share * 100).rounded()))% sorted out")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .help("Of the players seen during rallies. People seen only between rallies, or never clearly, aren't asked about.")
+                Spacer()
+                if finder.isMatching { ProgressView().controlSize(.small) }
+                Text(mostlyDone ? "Mostly done: the rest are brief glimpses" : "About \(worth) more worth answering")
+                    .font(.callout)
+                    .foregroundStyle(mostlyDone ? Color.green : Color.secondary)
+                    .monospacedDigit()
             }
             if let current {
-                let layout = wide ? AnyLayout(HStackLayout(alignment: .top, spacing: 16))
-                                  : AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-                layout {
+                if wide {
+                    HStack(alignment: .top, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            mainPicture
+                                .hoverZoom(peek == nil)
+                                .aspectRatio(16 / 9, contentMode: .fit)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            Text(prompt(for: current))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        // Close-ups scroll if there are many; the answers stay put below them.
+                        VStack(alignment: .leading, spacing: 10) {
+                            ScrollView {
+                                closeUpArea(for: current)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            Divider()
+                            answerButtons(for: current)
+                        }
+                        .frame(width: 500)
+                        .frame(maxHeight: .infinity)
+                    }
+                    .frame(maxHeight: .infinity)
+                } else {
                     VStack(alignment: .leading, spacing: 8) {
                         mainPicture
                             .hoverZoom(peek == nil)
                             .aspectRatio(16 / 9, contentMode: .fit)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                        Text(prompt(for: current))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    VStack(alignment: .leading, spacing: 12) {
-                        if closeUps.count >= 2 {
-                            confirmGrid(for: current)
-                        } else if let first = views.first {
-                            // The player up close where they're biggest, then at other moments.
-                            HStack(alignment: .top, spacing: 6) {
-                                Image(decorative: first, scale: 1)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(height: 220)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                                    .peekable(first, peek: $peek)
-                                VStack(spacing: 6) {
-                                    ForEach(views.indices.dropFirst(), id: \.self) { i in
-                                        Image(decorative: views[i], scale: 1)
-                                            .resizable()
-                                            .scaledToFit()
-                                            .frame(height: 70)
-                                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                                            .peekable(views[i], peek: $peek)
-                                    }
-                                }
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(prompt(for: current))
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                closeUpArea(for: current)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
+                        Divider()
                         answerButtons(for: current)
                     }
-                    .frame(width: wide ? 440 : nil)
+                    .frame(maxHeight: .infinity)
                 }
             } else if regrouping || (finder.isMatching && queue.isEmpty) {
                 VStack(spacing: 8) {
                     ProgressView()
                     Text("Sorting out who's who with your answer…").foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, minHeight: 200)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if queue.isEmpty {
                 Text("Nothing left to ask about. Use Pick from a Frame for anyone still missing.")
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 200)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 200)
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { if current == nil, !regrouping { current = queue.first } }
         .onChange(of: queue.first?.id) { _, _ in if current == nil, !regrouping { current = self.queue.first } }
         .onChange(of: finder.groupingRevision) { _, _ in
-            guard regrouping else { return }
-            regrouping = false
-            current = self.queue.first
+            if regrouping {
+                regrouping = false
+                current = self.queue.first
+            }
+            checkMostlyDone()
         }
         .task(id: current?.id) { await load() }
+        .alert("Most players are sorted out", isPresented: $showingDone) {
+            Button("Done") { onClose() }
+            Button("Keep Going", role: .cancel) {}
+        } message: {
+            Text("Cocut can now list players on almost every rally. The questions left are brief glimpses that rarely change a rally's list.")
+        }
+    }
+
+    /// Offers to stop once answers have made most of the rally time known (once per visit).
+    private func checkMostlyDone() {
+        guard answeredCount > 0, !offeredDone, !finder.isMatching, !regrouping, isMostlyDone else { return }
+        offeredDone = true
+        showingDone = true
+    }
+
+    /// Close-ups to confirm (several stretches), or other moments of the one stretch.
+    @ViewBuilder private func closeUpArea(for person: PlayerGrouping.Person) -> some View {
+        if closeUps.count >= 2 {
+            confirmGrid(for: person)
+        } else if let first = views.first {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Followed as one stretch, so these are the same box at different moments. If it shows different people, choose Skip.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 6) {
+                    Image(decorative: first, scale: 1)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 260)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .peekable(first, peek: $peek)
+                    VStack(spacing: 6) {
+                        ForEach(views.indices.dropFirst(), id: \.self) { i in
+                            Image(decorative: views[i], scale: 1)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(height: 82)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                                .peekable(views[i], peek: $peek)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// "Same player?" One close-up per stretch, ticked; untick the ones that aren't them.
@@ -423,7 +499,7 @@ private struct WhoIsThisPane: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             #endif
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 6)], alignment: .leading, spacing: 6) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 6)], alignment: .leading, spacing: 6) {
                 ForEach(closeUps) { closeUp in
                     let out = rejected.contains(closeUp.track)
                     Button {
@@ -433,7 +509,7 @@ private struct WhoIsThisPane: View {
                             .resizable()
                             .scaledToFit()
                             .frame(maxWidth: .infinity)
-                            .frame(height: 170)
+                            .frame(height: 200)
                             .background(Color.black)
                             .opacity(out ? 0.35 : 1)
                             .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -560,6 +636,7 @@ private struct WhoIsThisPane: View {
         if rejected.isEmpty {
             finder.identify(current, as: number)
             advance(skipping: false)
+            checkMostlyDone()
         } else {
             // A mix of people: only the ticked ones are this player. Ask again once Cocut has
             // grouped the rest with that to go on.
@@ -596,10 +673,15 @@ private struct WhoIsThisPane: View {
         // Several stretches: the biggest view of each of the longest ones (the main one first).
         var perStretch: [RallyDetector.PersonSighting] = [main]
         let byTrack = Dictionary(grouping: frames.filter { $0.track != main.track }, by: \.track)
-        // Stretches never seen clearly are left out: a sliver can't be told apart.
-        for (_, stretch) in byTrack.sorted(by: { $0.value.count > $1.value.count }) where perStretch.count < Self.confirmLimit {
-            if let best = stretch.max(by: { quality($0) < quality($1) }), RallyDetector.isClear(best.box) { perStretch.append(best) }
-        }
+        // Every stretch gets a close-up so it can be unticked: its clearest view, and stretches
+        // seen clearly first (a sliver is hard to judge).
+        let others = byTrack.values.compactMap { stretch in stretch.max(by: { quality($0) < quality($1) }) }
+            .sorted { a, b in
+                let ca = RallyDetector.isClear(a.box), cb = RallyDetector.isClear(b.box)
+                if ca != cb { return ca }
+                return (byTrack[a.track]?.count ?? 0) > (byTrack[b.track]?.count ?? 0)
+            }
+        perStretch.append(contentsOf: others.prefix(Self.confirmLimit - 1))
         // One stretch: other clear moments of it, spread over time.
         var moments: [RallyDetector.PersonSighting] = []
         let clearFrames = frames.filter { RallyDetector.isClear($0.box) }

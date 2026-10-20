@@ -47,6 +47,17 @@ enum MatchStore {
         /// Which rallies players are really in, marked in Check Accuracy. About the video, so
         /// they're kept when the match is analyzed again.
         var truth: [TruthMark]?
+        /// Where the user is in the next-steps guide for this match.
+        var guide: Guide?
+    }
+
+    /// The next-steps guide for one match: steps passed over, and whether it's hidden.
+    struct Guide: Codable, Equatable {
+        var hidden = false
+        /// Steps the user passed over ("Skip", "Looks Fine", "Later", "Got It"), by raw value.
+        var passed: Set<Int> = []
+        /// Kept rallies were added to Clips or exported.
+        var used = false
     }
 
     /// One saved match, for the Recent Matches list.

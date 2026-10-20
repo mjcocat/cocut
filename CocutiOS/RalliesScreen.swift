@@ -31,7 +31,13 @@ struct RalliesScreen: View {
                 case .analyzing(let fraction):
                     analyzingView(fraction)
                 case .review:
-                    RallyReview()
+                    VStack(spacing: 0) {
+                        NextStepsBar(finder: finder, onRoster: { editingRoster = true }, onIdentify: {
+                            finder.pause()
+                            teaching = true
+                        })
+                        RallyReview()
+                    }
                 case .working(let message, let fraction):
                     VStack(spacing: 14) {
                         if let fraction {
@@ -79,6 +85,9 @@ struct RalliesScreen: View {
                                 teaching = true
                             }
                             .disabled(!finder.canTeach)
+                            if finder.guide.hidden {
+                                Button("Show Tips", systemImage: "lightbulb") { finder.showGuide() }
+                            }
                             Button("Check Accuracy…", systemImage: "checkmark.seal") {
                                 finder.pause()
                                 checkingAccuracy = true
