@@ -56,6 +56,26 @@ struct ExportOptions: Codable, Equatable {
     var spotlightColor: String? = nil
     /// A bar along the bottom of the intro card that fills while it's on screen.
     var introProgressBar = true
+    /// Widescreen, or phone-shaped for social apps.
+    var shape: ReelShape = .widescreen
+    /// Phone shapes: follow the spotlighted player through each clip.
+    var followSpotlight = true
+    /// Phone shapes: clips without a spotlight (or not followed) are centered, or shown whole.
+    var unspotlitFraming: PhoneFraming = .centered
+
+    /// The size to draw at: phone shapes are 1080 wide; previews are two-thirds size.
+    func renderSize(preview: Bool = false) -> CGSize {
+        let size = shape.isPhone ? shape.phoneSize : (preview ? ReelResolution.hd720.size : resolution.size)
+        guard preview, shape.isPhone else { return size }
+        return CGSize(width: size.width * 2 / 3, height: (size.height * 2 / 3).rounded())
+    }
+
+    /// Cards and spotlight stills are drawn widescreen; in a phone reel they're shown whole.
+    func cardSize(for renderSize: CGSize) -> CGSize {
+        guard shape.isPhone else { return renderSize }
+        let width = renderSize.width * 16 / 9
+        return CGSize(width: (width / 2).rounded() * 2, height: renderSize.width)
+    }
 
     static let transitionSeconds = 0.6
     /// How long a spotlight holds the first frame.
@@ -79,6 +99,9 @@ struct ExportOptions: Codable, Equatable {
         spotlightShape = (try? c.decodeIfPresent(SpotlightShape.self, forKey: .spotlightShape)) ?? d.spotlightShape
         spotlightColor = try? c.decodeIfPresent(String.self, forKey: .spotlightColor)
         introProgressBar = (try? c.decodeIfPresent(Bool.self, forKey: .introProgressBar)) ?? d.introProgressBar
+        shape = (try? c.decodeIfPresent(ReelShape.self, forKey: .shape)) ?? d.shape
+        followSpotlight = (try? c.decodeIfPresent(Bool.self, forKey: .followSpotlight)) ?? d.followSpotlight
+        unspotlitFraming = (try? c.decodeIfPresent(PhoneFraming.self, forKey: .unspotlitFraming)) ?? d.unspotlitFraming
     }
 }
 
@@ -117,6 +140,8 @@ struct ReelSegment: Sendable {
     var spotlight: Spotlight? = nil
     /// A spotlight still (rendered like a card), which cuts straight into its clip.
     var isSpotlight = false
+    /// How it fills a phone-shaped frame (phone exports only).
+    var framing: SegmentFraming? = nil
 }
 
 /// Builds the highlight reel: intro card, clips in order (trimmed), end card, with optional
@@ -218,7 +243,7 @@ final class ReelExporter {
                      options: ExportOptions, output: URL) async throws {
         let clipCount = plan.filter { if case .clip = $0 { return true } else { return false } }.count
         guard clipCount > 0 else { throw ExportError.noClips }
-        let renderSize = options.resolution.size
+        let renderSize = options.renderSize()
         let fps = Int32(options.frameRate)
         let work = FileManager.default.temporaryDirectory.appending(path: "CocutExport-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
@@ -265,10 +290,12 @@ final class ReelExporter {
                              options: ExportOptions, renderSize: CGSize, fps: Int32, work: URL,
                              status: (String) -> Void) async throws -> [ReelSegment] {
         var segments: [ReelSegment] = []
+        // Phone reels draw cards and spotlights widescreen and show them whole.
+        let cardSize = options.cardSize(for: renderSize)
         if options.includeIntro {
             status("Drawing the intro card…")
             segments.append(try await cardSegment(kind: .intro, label: "Intro card", profile: profile, headshot: headshot,
-                                                  size: renderSize, fps: fps, seconds: options.cardSeconds, work: work,
+                                                  size: cardSize, fps: fps, seconds: options.cardSeconds, work: work,
                                                   progressBar: options.introProgressBar))
         }
         for entry in plan {
@@ -277,7 +304,7 @@ final class ReelExporter {
             case .section(let section):
                 status("Drawing the “\(section.title)” card…")
                 segments.append(try await cardSegment(kind: .section(section.title), label: section.title,
-                                                      profile: profile, headshot: headshot, size: renderSize, fps: fps,
+                                                      profile: profile, headshot: headshot, size: cardSize, fps: fps,
                                                       seconds: sectionCardSeconds(for: options), work: work))
             case .clip(let clip):
                 let url = library.url(for: clip)
@@ -289,19 +316,27 @@ final class ReelExporter {
                 if options.showSpotlights, let spot = clip.spotlight {
                     status("Drawing the spotlight on “\(clip.title)”…")
                     let ringColor = options.spotlightColor.flatMap { Color(hex: $0) } ?? profile.accentColor
-                    if let still = await spotlightSegment(clip: clip, url: url, spot: spot, accent: Platform.cgColor(ringColor),
-                                                          options: options, size: renderSize, fps: fps, work: work) {
+                    if var still = await spotlightSegment(clip: clip, url: url, spot: spot, accent: Platform.cgColor(ringColor),
+                                                          options: options, size: cardSize, fps: fps, work: work) {
+                        // On a phone, the held frame looks at the athlete.
+                        if options.shape.isPhone { still.framing = .window(.fixed(x: spot.x, y: spot.y)) }
                         segments.append(still)
                     }
                 }
-                segments.append(ReelSegment(url: url, start: clip.trimStartSeconds, duration: duration,
-                                            title: clip.title, isCard: false, crop: clip.cropRect, clipID: clip.id))
+                var segment = ReelSegment(url: url, start: clip.trimStartSeconds, duration: duration,
+                                          title: clip.title, isCard: false, crop: clip.cropRect, clipID: clip.id)
+                if options.shape.isPhone {
+                    segment.framing = await phoneFraming(for: clip, url: url, options: options, renderSize: renderSize,
+                                                         cacheDirectory: library.rootDirectory.appending(path: "Framing", directoryHint: .isDirectory),
+                                                         status: status)
+                }
+                segments.append(segment)
             }
         }
         if profile.showEndCard {
             status("Drawing the end card…")
             segments.append(try await cardSegment(kind: .end, label: "End card", profile: profile, headshot: headshot,
-                                                  size: renderSize, fps: fps, seconds: options.cardSeconds, work: work))
+                                                  size: cardSize, fps: fps, seconds: options.cardSeconds, work: work))
         }
         return segments
     }
@@ -430,6 +465,8 @@ enum ReelComposer {
         let transform: CGAffineTransform
         /// Part of the source picture to show (natural coordinates), when black bars were found.
         let crop: CGRect?
+        /// How the stored frames turn upright (for the phone compositor).
+        let orientation: CGImagePropertyOrientation
         /// Time on the timeline.
         var length: Double { segment.duration }
     }
@@ -490,7 +527,7 @@ enum ReelComposer {
                 transform = aspectFit(natural: natural, preferred: preferred, into: renderSize)
             }
             loaded.append(Loaded(asset: asset, segment: fixed, source: source, video: video, audio: audio, audioRange: audioRange,
-                                 transform: transform, crop: crop))
+                                 transform: transform, crop: crop, orientation: PlayerTracker.orientation(of: preferred)))
         }
         guard !loaded.isEmpty else { throw ExportError.noClips }
 
@@ -548,6 +585,17 @@ enum ReelComposer {
         }
         let total = cursor
 
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = renderSize
+        videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(options.frameRate))
+        let captions = options.showClipNames && !forPlayback
+
+        if options.shape.isPhone {
+            videoComposition.customVideoCompositorClass = PhoneCompositor.self
+            videoComposition.instructions = phoneInstructions(loaded: loaded, starts: starts, overlaps: overlaps,
+                                                              tracks: videoTracks.map(\.trackID), total: composition.duration,
+                                                              postProcessing: captions)
+        } else {
         // Video instructions: a solo stretch for each piece, then a blend into the next.
         var instructions: [AVMutableVideoCompositionInstruction] = []
         func layer(_ i: Int, at start: Double) -> AVMutableVideoCompositionLayerInstruction {
@@ -592,12 +640,10 @@ enum ReelComposer {
             last.timeRange = CMTimeRange(start: last.timeRange.start, end: composition.duration)
         }
 
-        let videoComposition = AVMutableVideoComposition()
-        videoComposition.renderSize = renderSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(options.frameRate))
         videoComposition.instructions = instructions
+        }
 
-        if options.showClipNames, !forPlayback {
+        if captions {
             videoComposition.animationTool = captionTool(loaded: loaded, starts: starts, overlaps: overlaps,
                                                          renderSize: renderSize, accent: accent)
         }
@@ -630,6 +676,41 @@ enum ReelComposer {
 
         Log.info("Composed reel\(forPlayback ? " for preview" : ""): \(n) pieces, \(String(format: "%.1f", total))s at \(Int(renderSize.width))x\(Int(renderSize.height))")
         return Built(composition: composition, videoComposition: videoComposition, audioMix: audioMix, pieces: pieces)
+    }
+
+    /// The phone compositor's instructions: like the widescreen ones, a solo stretch per piece and
+    /// a blend into the next, tiling the timeline exactly.
+    private static func phoneInstructions(loaded: [Loaded], starts: [Double], overlaps: [Double],
+                                          tracks: [CMPersistentTrackID], total: CMTime,
+                                          postProcessing: Bool) -> [PhoneInstruction] {
+        let timescale: CMTimeScale = 600
+        func time(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: timescale) }
+        func layer(_ i: Int) -> PhoneLayer {
+            let item = loaded[i]
+            let framing = item.segment.framing ?? (item.segment.isCard ? .whole : .window(.fixed(x: 0.5, y: 0.5)))
+            return PhoneLayer(trackID: tracks[i % 2], orientation: item.orientation, picture: item.crop,
+                              pathSpace: item.segment.crop, framing: framing, timelineStart: starts[i],
+                              sourceStart: item.source.start.seconds, fadeOut: nil)
+        }
+        var spans: [(from: Double, to: Double, layers: [PhoneLayer])] = []
+        let n = loaded.count
+        for i in 0..<n {
+            let soloStart = starts[i] + (i > 0 ? overlaps[i - 1] : 0)
+            let soloEnd = starts[i] + loaded[i].length - (i < n - 1 ? overlaps[i] : 0)
+            if soloEnd - soloStart > 0.0005 { spans.append((soloStart, soloEnd, [layer(i)])) }
+            if i < n - 1, overlaps[i] > 0 {
+                var outgoing = layer(i)
+                outgoing.fadeOut = (soloEnd, soloEnd + overlaps[i])
+                spans.append((soloEnd, soloEnd + overlaps[i], [layer(i + 1), outgoing]))
+            }
+        }
+        var ranges = spans.map { CMTimeRange(start: time($0.from), end: time($0.to)) }
+        for k in ranges.indices.dropFirst() { ranges[k] = CMTimeRange(start: ranges[k - 1].end, end: ranges[k].end) }
+        if !ranges.isEmpty {
+            ranges[0] = CMTimeRange(start: .zero, end: ranges[0].end)
+            ranges[ranges.count - 1] = CMTimeRange(start: ranges[ranges.count - 1].start, end: total)
+        }
+        return zip(ranges, spans).map { PhoneInstruction(timeRange: $0, layers: $1.layers, postProcessing: postProcessing) }
     }
 
     /// Scales a source to fit the frame (letterboxed), honoring its rotation.
@@ -720,7 +801,7 @@ enum ReelComposer {
     /// Clip-name captions, drawn over the video when exporting.
     private static func captionTool(loaded: [Loaded], starts: [Double], overlaps: [Double],
                                     renderSize: CGSize, accent: CGColor) -> AVVideoCompositionCoreAnimationTool {
-        let scale = renderSize.height / 1080
+        let scale = min(renderSize.width, renderSize.height) / 1080
         let parent = CALayer()
         parent.frame = CGRect(origin: .zero, size: renderSize)
         let video = CALayer()

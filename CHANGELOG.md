@@ -3,6 +3,12 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.37.0
+- New: **export for phones**. In Export, choose **Phone 9:16** (Reels, TikTok, Shorts, Stories) or **Feed 4:5** (Instagram and Facebook feeds).
+- The frame **follows your spotlighted player** through each clip, moving smoothly like a camera operator. Spotlight a clip and Cocut does the rest.
+- Clips without a spotlight are centered, or shown whole on a blurred background, your choice. Change any clip with ··· › Phone Framing, or right-click several.
+- Cards are shown whole on a blurred background, and Preview shows the phone shape before you export.
+
 ## 0.36.1
 - The menu bar icon is now Cocut's logo (its stacked layers and play button) instead of scissors.
 

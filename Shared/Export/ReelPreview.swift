@@ -38,7 +38,8 @@ final class ReelPreview {
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var rateObservation: NSKeyValueObservation?
 
-    static let renderSize = ReelResolution.hd720.size
+    /// Widescreen previews play at 720p; phone shapes at two-thirds of their export size.
+    static func renderSize(for options: ExportOptions) -> CGSize { options.renderSize(preview: true) }
 
     /// The export settings with what doesn't matter for the preview (resolution, frame rate) normalized.
     static func previewOptions(_ options: ExportOptions) -> ExportOptions {
@@ -84,13 +85,13 @@ final class ReelPreview {
                 try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
                 let segments = try await ReelExporter.makeSegments(
                     plan: plan, library: library, profile: profile, headshot: headshot, options: options,
-                    renderSize: Self.renderSize, fps: Int32(options.frameRate), work: work
+                    renderSize: Self.renderSize(for: options), fps: Int32(options.frameRate), work: work
                 ) { [weak self] message in self?.state = .building(message) }
                 try Task.checkCancellation()
                 state = .building("Putting the clips together…")
                 let accent = Platform.cgColor(profile.accentColor)
                 let built = try await ReelComposer.build(segments: segments, options: options,
-                                                         renderSize: Self.renderSize, accent: accent, forPlayback: true)
+                                                         renderSize: Self.renderSize(for: options), accent: accent, forPlayback: true)
                 try Task.checkCancellation()
                 install(built, work: work, signature: signature, resumeAt: resumeAt)
             } catch is CancellationError {

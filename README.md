@@ -55,6 +55,21 @@ It also shows what comes after: rate, spotlight, Player Card, Preview, Export. *
 
 Each **project** has its own clips, sections, tags, roster and Player Card, for example one per season, team or athlete ("Fall 2026 Club", "HS Season"). Use the project menu at the top of the sidebar to switch, create, rename, show in Finder, or delete (to the Trash). A new project can start with a copy of the current Player Card. Your existing library becomes the first project automatically. Projects live in `~/Movies/Cocut/Projects`.
 
+## Export for phones
+
+In **Export › Format**, choose **Phone 9:16** for Reels, TikTok, YouTube Shorts and Stories, or **Feed 4:5** for Instagram and Facebook feeds. Phone exports are 1080 wide (1080×1920 or 1080×1350).
+
+A phone frame keeps only part of a widescreen picture (about a third of the width at 9:16, nearly half at 4:5), so Cocut decides where to look, clip by clip:
+
+- **Clips with a spotlight follow that player.** Cocut finds the athlete inside the spotlight ring on the first frame and follows them with Apple's object tracking. When players cross or the tracker loses them, it finds them again by how they look (the same appearance model Find Rallies uses), and every second it checks it hasn't slid onto a teammate. The frame then moves like a camera operator: it holds still while the player shuffles, follows smoothly when they move, eases in and out, never whips faster than a set speed, and never shows past the edge of the picture. Tracking is saved in the project (`Framing` folder), so later exports and previews are quick.
+- **Clips without a spotlight** are centered, or shown whole on a blurred, darkened copy of themselves (**Other clips** in Format).
+- **Any clip** can be set to Automatic, Centered or Whole Picture with **··· › Phone Framing** under the player, or for several at once by right-clicking them in the list.
+- **Cards** (intro, end, section dividers) and spotlight freeze-frames are shown whole on a blurred background; spotlight freeze-frames look at the athlete.
+
+**Preview** (⌘Y) plays the reel in the chosen shape, so you can check the framing before exporting.
+
+The camera math has its own checks: `scripts/test-camera-planner.sh` (needs a Swift toolchain; runs on Linux too).
+
 ## Season reels from several projects
 
 Keep one project per tournament, and rate the best plays as you go (1–5 in the clip list). For an end-of-season reel, make a new project and choose **Add from Other Projects…** (on Get Started, in the **+** menu under the clip list, or **File › Add Clips from Other Projects…**). It lists the clips of every other project, grouped by project. Filter by rating (it starts at ★★★★ and up when you've rated clips), player or tag, tick the clips you want, and click **Add**. Each clip is copied in with its trim, crop, rating, tags, players, plays and spotlight. With **Put each project in its own section** on, every project becomes a section named after it. Turn on a section's divider card for a title between events.

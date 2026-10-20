@@ -30,6 +30,32 @@ struct ExportView: View {
             status
 
             if !exporter.isRunning {
+                Section {
+                    Picker("Shape", selection: $exporter.options.shape) {
+                        ForEach(ReelShape.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    if exporter.options.shape.isPhone {
+                        Toggle(isOn: $exporter.options.followSpotlight) {
+                            Text("Follow the spotlighted player")
+                            Text("The frame follows your athlete through each clip with a spotlight, like a camera operator.")
+                        }
+                        Picker(selection: $exporter.options.unspotlitFraming) {
+                            Text("Centered").tag(PhoneFraming.centered)
+                            Text("Whole picture, blurred background").tag(PhoneFraming.wholePicture)
+                        } label: {
+                            Text("Other clips")
+                            Text("Clips without a spotlight. Change any clip with ··· › Phone Framing under it.")
+                        }
+                    }
+                } header: {
+                    Text("Format")
+                } footer: {
+                    Text(exporter.options.shape.detail + (exporter.options.shape.isPhone
+                         ? " Exports at 1080 wide. A phone frame keeps \(exporter.options.shape == .vertical ? "about a third" : "nearly half") of a widescreen picture; cards are shown whole."
+                         : ""))
+                }
+
                 Section("Cards") {
                     Toggle("Start with the intro card", isOn: $exporter.options.includeIntro)
                     Toggle(isOn: $exporter.options.introProgressBar) {
@@ -68,6 +94,7 @@ struct ExportView: View {
                     Picker("Resolution", selection: $exporter.options.resolution) {
                         ForEach(ReelResolution.allCases) { Text($0.title).tag($0) }
                     }
+                    .disabled(exporter.options.shape.isPhone)
                     Picker("Frame rate", selection: $exporter.options.frameRate) {
                         Text("30 fps").tag(30)
                         Text("60 fps").tag(60)
@@ -256,7 +283,8 @@ struct ExportView: View {
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.directoryURL = exporter.exportsDirectory
         let name = profile.fullName.isEmpty ? "Highlights" : "\(profile.fullName) Highlights"
-        panel.nameFieldStringValue = "\(name).mp4"
+        let suffix = exporter.options.shape == .vertical ? " (Phone)" : exporter.options.shape == .portrait ? " (Feed)" : ""
+        panel.nameFieldStringValue = "\(name)\(suffix).mp4"
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         exporter.export(plan: plan, library: model.library, profile: profile,

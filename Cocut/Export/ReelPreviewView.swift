@@ -134,7 +134,7 @@ struct ReelPreviewView: View {
                 EmptyView()
             }
         }
-        .aspectRatio(16 / 9, contentMode: .fit)
+        .aspectRatio(model.exporter.options.shape.aspect, contentMode: .fit)
         .mediaFrame()
         .frame(maxWidth: .infinity)
     }

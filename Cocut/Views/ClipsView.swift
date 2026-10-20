@@ -368,6 +368,16 @@ private struct ClipListPane: View {
             }
             Divider()
             TagsMenu(clipIDs: clipIDs, actions: actions)
+            Menu("Phone Framing") {
+                ForEach(PhoneFraming.allCases) { framing in
+                    let all = clips.allSatisfy { ($0.phoneFraming ?? .automatic) == framing }
+                    Button {
+                        library.setPhoneFraming(framing, for: clipIDs)
+                    } label: {
+                        if all { Label(framing.title, systemImage: "checkmark") } else { Text(framing.title) }
+                    }
+                }
+            }
             Menu("Move to Section") {
                 Button("Top of List (No Section)") { library.moveClips(clipIDs, toSection: nil) }
                 if !library.sections.isEmpty { Divider() }
@@ -811,6 +821,15 @@ private struct ClipDetailPane: View {
                             } else {
                                 Button("Crop to the Video") { cropToVideo(clip) }
                             }
+                            Picker("Phone Framing", selection: Binding(
+                                get: { clip.phoneFraming ?? .automatic },
+                                set: { library.setPhoneFraming($0, for: [clip.id]) }
+                            )) {
+                                Text(clip.spotlight == nil ? "Automatic" : "Automatic (follow the player)").tag(PhoneFraming.automatic)
+                                Text("Centered").tag(PhoneFraming.centered)
+                                Text("Whole Picture").tag(PhoneFraming.wholePicture)
+                            }
+                            .pickerStyle(.menu)
                             Button("Rename…") { titleFocused = true }
                             Button("Show in Finder") { library.revealInFinder(clip) }
                             Divider()

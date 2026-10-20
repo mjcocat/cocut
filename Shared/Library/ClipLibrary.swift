@@ -33,6 +33,8 @@ struct Clip: Identifiable, Codable, Hashable {
     var spotlight: Spotlight?
     /// Copied in from another project: which one, and which clip there.
     var origin: ClipOrigin?
+    /// How it fills a phone-shaped export; nil is automatic.
+    var phoneFraming: PhoneFraming?
     var stars: Int { rating ?? 0 }
     var playerList: [Int] { players ?? [] }
     /// Everyone in the clip: listed players plus anyone tagged in a play.
@@ -665,7 +667,7 @@ final class ClipLibrary {
                                 trimStart: old.trimStart, trimEnd: old.trimEnd, isExcluded: nil,
                                 tagIDs: tagIDs.isEmpty ? nil : tagIDs, crop: old.crop, cropChecked: old.cropChecked,
                                 plays: old.plays, players: old.players, rating: old.rating,
-                                spotlight: old.spotlight, origin: request.origin)
+                                spotlight: old.spotlight, origin: request.origin, phoneFraming: old.phoneFraming)
                 newItems.append(.clip(clip))
                 lastID = clip.id
                 added += 1
@@ -843,6 +845,12 @@ final class ClipLibrary {
     }
 
     // MARK: Spotlight
+
+    func setPhoneFraming(_ framing: PhoneFraming, for clipIDs: Set<Clip.ID>) {
+        checkpoint("Phone Framing")
+        for id in clipIDs { updateClip(id) { $0.phoneFraming = framing == .automatic ? nil : framing } }
+        save()
+    }
 
     func setSpotlight(_ spotlight: Spotlight?, for clipID: Clip.ID) {
         checkpoint(spotlight == nil ? "Remove Spotlight" : "Spotlight")
