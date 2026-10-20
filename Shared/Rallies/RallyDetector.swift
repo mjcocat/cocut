@@ -196,7 +196,8 @@ enum RallyDetector {
         private let spans: [Span]
         private let times: [[Double]]
         private var span = -1
-        private var next = 0
+        /// Position in the current rally's times.
+        private var timeIndex = 0
         private var index = 0
         private var retried = false
         private var reader: AVAssetReader?
@@ -225,16 +226,16 @@ enum RallyDetector {
         /// The next frame, in time order; nil when every rally is done.
         mutating func next() -> Frame? {
             while span < spans.count {
-                if span >= 0, next < times[span].count {
-                    let image = frame(at: times[span][next])
+                if span >= 0, timeIndex < times[span].count {
+                    let image = frame(at: times[span][timeIndex])
                     defer {
-                        next += 1
+                        timeIndex += 1
                         index += 1
                     }
                     return Frame(index: index, image: image)
                 }
                 span += 1
-                next = 0
+                timeIndex = 0
                 retried = false
                 if span < spans.count { open(from: spans[span].start) }
             }
