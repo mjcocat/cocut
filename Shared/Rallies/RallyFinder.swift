@@ -988,19 +988,21 @@ final class RallyFinder {
         Log.info("Finding rallies in \(url.lastPathComponent)")
         let area = courtArea
         let project = projectDirectory()
+        // Changing it analyzes a saved match again (answers and edits are kept).
+        let quick = UserDefaults.standard.bool(forKey: RallyDetector.quickReadingKey)
 
         task = Task {
             do {
                 let result: RallyDetector.Result
                 let saved = await Task.detached(priority: .userInitiated) {
-                    project.flatMap { MatchStore.load(source: url, courtArea: area, project: $0) }
+                    project.flatMap { MatchStore.load(source: url, courtArea: area, quickReading: quick, project: $0) }
                 }.value
                 if let saved {
                     result = saved
                     Log.info("Reopened the saved analysis of \(url.lastPathComponent)")
                 } else {
                     result = try await Task.detached(priority: .userInitiated) {
-                        try await RallyDetector.analyze(url: url, courtArea: area) { fraction in
+                        try await RallyDetector.analyze(url: url, courtArea: area, quickReading: quick) { fraction in
                             Task { @MainActor [weak self] in
                                 guard let self, case .analyzing = self.state else { return }
                                 self.state = .analyzing(fraction)
@@ -1009,7 +1011,7 @@ final class RallyFinder {
                     }.value
                     try Task.checkCancellation()
                     if let project {
-                        Task.detached(priority: .utility) { MatchStore.save(result, source: url, courtArea: area, project: project) }
+                        Task.detached(priority: .utility) { MatchStore.save(result, source: url, courtArea: area, quickReading: quick, project: project) }
                     }
                 }
                 analysis = result

@@ -13,6 +13,7 @@ struct CourtAreaScreen: View {
     @State private var area: CGRect = RallyFinder.savedCourtArea ?? CourtAreaScreen.defaultArea
     /// The area when the current drag started.
     @State private var dragStart: CGRect?
+    @AppStorage(RallyDetector.quickReadingKey) private var quickReading = false
 
     static let defaultArea = CGRect(x: 0.12, y: 0.04, width: 0.76, height: 0.24)
     private static let minSide: CGFloat = 0.05
@@ -45,6 +46,9 @@ struct CourtAreaScreen: View {
 
                 HStack {
                     Button("Reset Box") { area = Self.defaultArea }
+                    Spacer()
+                    Toggle("Quick number reading", isOn: $quickReading)
+                        .help("Stops reading a player's number up close once it's clearly read in the rally. Faster; compare in Check Accuracy before relying on it.")
                     Spacer()
                     Button("Skip (Automatic)") { onDone(nil) }
                 }
