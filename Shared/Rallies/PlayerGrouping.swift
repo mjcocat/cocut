@@ -6,7 +6,8 @@ import Foundation
 /// once per person instead of once per stretch.
 ///
 /// - Players Cocut is sure of come first: stretches you identified, and stretches whose number was
-///   read clearly. Each number's stretches make one known player.
+///   read clearly. Each number's stretches make one known player. A few reads spread over a group
+///   of look-alikes only make a guess, not a decision.
 /// - The other stretches are joined into people only when they look like *most* of each other,
 ///   not just like one of them. So a chain of look-alikes (A like B, B like C) never makes A and C
 ///   the same person, which is what used to merge different teammates.
@@ -304,7 +305,10 @@ enum PlayerGrouping {
             if let taught = label[root] {
                 person.number = taught
                 person.source = .taught
-            } else if let read = vouched[root] ?? strongRead(readVotes[root]), !nots[root].contains(read) {
+            } else if let read = vouched[root] {
+                // Only a clear read on one of their stretches names them. A few reads spread over
+                // a group joined by look don't: in one match a 35-stretch group with #11 read
+                // twice was named #11, and a third of its frames were other players.
                 person.number = read
                 person.source = .read
             }
@@ -371,9 +375,14 @@ enum PlayerGrouping {
                 let s = RallyDetector.dot(look, p) - 0.03
                 if s > (bestByNumber[num] ?? -1) { bestByNumber[num] = s }
             }
+            // A number read a few times on them is the first guess to offer in Who's This?.
+            let readGuess = strongRead(readVotes[root])
             let ranked = bestByNumber.sorted { $0.value > $1.value }
-            guard let top = ranked.first else { continue }
-            people[i].guess = top.key
+            guard let top = ranked.first else {
+                people[i].guess = readGuess
+                continue
+            }
+            people[i].guess = readGuess ?? top.key
             let second = ranked.count > 1 ? ranked[1].value : -1
             if top.value >= threshold + strictness && top.value - second >= matchMargin {
                 people[i].number = top.key

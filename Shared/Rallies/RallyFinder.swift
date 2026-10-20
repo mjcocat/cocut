@@ -459,6 +459,7 @@ final class RallyFinder {
     private(set) var baselineListed: [Rally.ID: Set<Int>] = [:]
     @ObservationIgnored private var baselineDecisions: [Int: RallyDetector.TrackDecision] = [:]
     @ObservationIgnored private var frequentNumbers: Set<Int> = []
+    @ObservationIgnored private var loggedBreaks = 0
 
     func startChecking() {
         guard !checking else { return }
@@ -552,16 +553,26 @@ final class RallyFinder {
         return out
     }
 
-    /// Players stay on court for runs of rallies (rotations, substitutions), so a player is listed
-    /// on a rally when they're listed on most of the rallies around it: itself and `radius` either
-    /// side. That drops a stray listing in the middle of a run where they're off court, and fills
-    /// in a miss in the middle of a run where they're on. On #11 in one match (170 rallies marked)
-    /// this took "right" from 70% to 83% and "finds" from 72% to 74%.
-    static func smoothed(_ lists: [Set<Int>], radius: Int = 2) -> [Set<Int>] {
-        let everyone = lists.reduce(into: Set<Int>()) { $0.formUnion($1) }
-        return lists.indices.map { i in
-            let window = lists[max(0, i - radius)...min(lists.count - 1, i + radius)]
-            return everyone.filter { n in window.filter { $0.contains(n) }.count * 2 > window.count }
+    /// Players stay on court for runs of rallies (rotations, substitutions), so each rally's list
+    /// is evened out with the rallies around it, in two steps:
+    /// - Fill: a player listed in one of the `fill` rallies before and one of the `fill` rallies
+    ///   after is listed here too (a miss in the middle of a run where they're on).
+    /// - Prune: a player listed in neither neighboring rally is dropped (a stray listing in a run
+    ///   where they're off).
+    /// On #11 in one match (170 rallies marked) this, with only clear reads naming people, took
+    /// "right" from 82% to 86% and "finds" from 61% to 90%. A plain majority over five rallies
+    /// (v0.23) dropped too many real listings when evidence was sparse.
+    static func smoothed(_ lists: [Set<Int>], fill: Int = 2, prune: Int = 1) -> [Set<Int>] {
+        func around(_ i: Int, _ r: Int, before: Bool) -> Set<Int> {
+            let range = before ? max(0, i - r)..<i : min(lists.count, i + 1)..<min(lists.count, i + 1 + r)
+            return lists[range].reduce(into: Set<Int>()) { $0.formUnion($1) }
+        }
+        let filled = lists.indices.map { i in lists[i].union(around(i, fill, before: true).intersection(around(i, fill, before: false))) }
+        return filled.indices.map { i in
+            let lo = max(0, i - prune), hi = min(filled.count - 1, i + prune)
+            var neighbors = Set<Int>()
+            for j in lo...hi where j != i { neighbors.formUnion(filled[j]) }
+            return filled[i].intersection(neighbors)
         }
     }
 
@@ -859,8 +870,15 @@ final class RallyFinder {
         let edited = rallies.filter { $0.playersEdited && !$0.isManual }
         let manual = rallies.filter(\.isManual)
         let retimed = rallies.filter { $0.timesEdited && !$0.isManual }
-        let spans = RallyDetector.rallies(from: analysis, includeSetup: includeServeSetup)
-        frequentNumbers = RallyDetector.frequentNumbers(spans: spans, reads: analysis.numbers)
+        let detected = RallyDetector.rallies(from: analysis, includeSetup: includeServeSetup)
+        frequentNumbers = RallyDetector.frequentNumbers(spans: detected, reads: analysis.numbers)
+        // Timeouts: the team huddled to one side, not play.
+        let breaks = RallyDetector.breaks(in: detected, people: analysis.people)
+        if !breaks.isEmpty, breaks.count != loggedBreaks {
+            loggedBreaks = breaks.count
+            Log.info("Left out \(breaks.count) timeouts: " + breaks.sorted().map { Clip.format(detected[$0].start) }.joined(separator: ", "))
+        }
+        let spans = detected.indices.filter { !breaks.contains($0) }.map { detected[$0] }
         var fresh = spans.map { Rally(start: $0.start, end: $0.end) }
         // Who's in each rally: numbers read in it, and players followed through it, evened out
         // over the rallies around it (players stay on court for runs of rallies).
