@@ -36,6 +36,7 @@ struct RallyFinderView: View {
                         editingRoster = true
                     } label: {
                         Label("Team Roster", systemImage: "person.3")
+                            .labelStyle(.titleAndIcon)
                     }
                     .help("Your team's jersey numbers: only these are listed on rallies, so opponents and misreads are left out. Changes apply right away.")
 
@@ -44,6 +45,7 @@ struct RallyFinderView: View {
                         openWindow(id: "identify")
                     } label: {
                         Label("Identify Players", systemImage: "person.badge.plus")
+                            .labelStyle(.titleAndIcon)
                     }
                     .help("Answer \"Who's this?\" for the players Cocut isn't sure of, or click any player on a frame")
                     .disabled(isBusy || !finder.canTeach)
@@ -82,6 +84,7 @@ struct RallyFinderView: View {
                     finder.chooseMatch()
                 } label: {
                     Label("Open Match…", systemImage: "film")
+                        .labelStyle(.titleAndIcon)
                 }
                 .help("Choose a full match video to find rallies in")
                 .disabled(isBusy)
@@ -560,7 +563,8 @@ private struct RallyList: View {
                             )
                     }
                 }
-                .listStyle(.sidebar)
+                .listStyle(.inset)
+                .scrollContentBackground(.hidden)
                 .contextMenu(forSelectionType: Rally.ID.self) { ids in
                     if let id = ids.first, let rally = finder.rallies.first(where: { $0.id == id }) {
                         Button("Play") { finder.play(rally) }

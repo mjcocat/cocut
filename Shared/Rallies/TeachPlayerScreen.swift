@@ -347,7 +347,6 @@ private struct WhoIsThisPane: View {
         let mostlyDone = isMostlyDone
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("Who's this?").font(.title2.weight(.semibold))
                 ProgressView(value: share)
                     .tint(mostlyDone ? .green : .accentColor)
                     .frame(maxWidth: 260)
@@ -573,9 +572,9 @@ private struct WhoIsThisPane: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 58), spacing: 8)], alignment: .leading, spacing: 8) {
             ForEach(candidates, id: \.self) { n in
                 if n == d.guess {
-                    Button("#\(n)") { answer(n) }.buttonStyle(.borderedProminent)
+                    numberButton(n).buttonStyle(.borderedProminent)
                 } else {
-                    Button("#\(n)") { answer(n) }.buttonStyle(.bordered)
+                    numberButton(n).buttonStyle(.bordered)
                 }
             }
         }
@@ -589,8 +588,7 @@ private struct WhoIsThisPane: View {
                 .onSubmit { if let n = Int(otherNumber) { answerOther(n) } }
             Button("Use") { if let n = Int(otherNumber) { answerOther(n) } }
                 .disabled(Int(otherNumber) == nil)
-        }
-        HStack(spacing: 8) {
+            Spacer(minLength: 8)
             Button("Not Our Team") { answer(RallyDetector.otherTeam) }
                 .help("An opponent, referee or coach: players who look like this won't be listed")
             Button("Skip") { advance(skipping: true) }
@@ -641,6 +639,17 @@ private struct WhoIsThisPane: View {
             Log.info("Added #\(number) to the roster from Who's This?")
         }
         answer(number)
+    }
+
+    /// A jersey number as an answer button, all the same width so the grid lines up.
+    private func numberButton(_ n: Int) -> some View {
+        Button {
+            answer(n)
+        } label: {
+            Text("#\(n)")
+                .monospacedDigit()
+                .frame(maxWidth: .infinity)
+        }
     }
 
     private func answer(_ number: Int) {

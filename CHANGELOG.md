@@ -3,6 +3,11 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.34.2
+- Find Rallies: Team Roster, Identify Players and Open Match show their names in the toolbar. The rally list no longer picks up color from what's behind the window.
+- Who's This?: number buttons line up evenly, and Other #, Not Our Team and Skip sit on one row.
+- Reel Preview: the video sits at the top with its controls right under it, and the list no longer picks up color from behind.
+
 ## 0.34.1
 - Clips: the selected clip sits at the top with its details right under it, instead of floating in the middle.
 - Export: the spotlight shape and color controls are labeled.

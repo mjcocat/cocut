@@ -29,15 +29,16 @@ struct ReelPreviewView: View {
                                        description: Text("Record or import clips, and the reel plays here just as it will export."))
             } else {
                 HSplitView {
+                    // The picture at the top, its controls right under it.
                     VStack(spacing: 0) {
                         if isStale { staleBanner }
                         stage
-                            .padding(16)
+                            .padding(Design.Space.l)
                         if preview.state == .ready {
                             PreviewTransport()
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 16)
+                                .padding(.horizontal, Design.Space.l)
                         }
+                        Spacer(minLength: Design.Space.l)
                     }
                     .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
 
@@ -88,20 +89,13 @@ struct ReelPreviewView: View {
     // MARK: Pieces
 
     private var staleBanner: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .foregroundStyle(Color.accentColor)
-            Text("The reel has changed since this preview was made.")
-            Spacer()
+        Banner(tone: .info, icon: "arrow.triangle.2.circlepath",
+               title: "The reel has changed since this preview was made.", style: .strip) {
             Button("Update Preview") { rebuild() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .keyboardShortcut("r", modifiers: [.command])
         }
-        .font(.callout)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 9)
-        .background(Color.accentColor.opacity(0.1))
     }
 
     @ViewBuilder
@@ -141,9 +135,8 @@ struct ReelPreviewView: View {
             }
         }
         .aspectRatio(16 / 9, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .mediaFrame()
+        .frame(maxWidth: .infinity)
     }
 
     static func time(_ seconds: Double) -> String {
@@ -277,9 +270,7 @@ private struct PreviewPieceList: View {
     var body: some View {
         let current = preview.currentPieceIndex
         VStack(alignment: .leading, spacing: 0) {
-            Text("IN THIS REEL")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+            SectionLabel("In This Reel")
                 .padding(.horizontal, 14)
                 .padding(.top, 14)
                 .padding(.bottom, 6)
@@ -294,7 +285,8 @@ private struct PreviewPieceList: View {
                                 .fill(Color.accentColor.opacity(current == piece.id ? 0.18 : 0)))
                     }
                 }
-                .listStyle(.sidebar)
+                .listStyle(.inset)
+                .scrollContentBackground(.hidden)
                 .onChange(of: current) { _, index in
                     guard let index, preview.isPlaying else { return }
                     withAnimation { proxy.scrollTo(index, anchor: .center) }
