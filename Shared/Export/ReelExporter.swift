@@ -70,8 +70,9 @@ struct ExportOptions: Codable, Equatable {
         return CGSize(width: size.width * 2 / 3, height: (size.height * 2 / 3).rounded())
     }
 
-    /// Cards and spotlight stills are drawn widescreen; in a phone reel they're shown whole.
-    func cardSize(for renderSize: CGSize) -> CGSize {
+    /// Spotlight stills are drawn widescreen; in a phone reel the frame looks at the athlete.
+    /// (Cards have tall layouts of their own and are drawn at the reel's size.)
+    func stillSize(for renderSize: CGSize) -> CGSize {
         guard shape.isPhone else { return renderSize }
         let width = renderSize.width * 16 / 9
         return CGSize(width: (width / 2).rounded() * 2, height: renderSize.width)
@@ -290,8 +291,10 @@ final class ReelExporter {
                              options: ExportOptions, renderSize: CGSize, fps: Int32, work: URL,
                              status: (String) -> Void) async throws -> [ReelSegment] {
         var segments: [ReelSegment] = []
-        // Phone reels draw cards and spotlights widescreen and show them whole.
-        let cardSize = options.cardSize(for: renderSize)
+        // Cards are drawn at the reel's size (phone reels get the tall layouts); spotlight stills
+        // are drawn widescreen and framed like their clip.
+        let cardSize = renderSize
+        let stillSize = options.stillSize(for: renderSize)
         if options.includeIntro {
             status("Drawing the intro card…")
             segments.append(try await cardSegment(kind: .intro, label: "Intro card", profile: profile, headshot: headshot,
@@ -317,7 +320,7 @@ final class ReelExporter {
                     status("Drawing the spotlight on “\(clip.title)”…")
                     let ringColor = options.spotlightColor.flatMap { Color(hex: $0) } ?? profile.accentColor
                     if var still = await spotlightSegment(clip: clip, url: url, spot: spot, accent: Platform.cgColor(ringColor),
-                                                          options: options, size: cardSize, fps: fps, work: work) {
+                                                          options: options, size: stillSize, fps: fps, work: work) {
                         // On a phone, the held frame looks at the athlete.
                         if options.shape.isPhone { still.framing = .window(.fixed(x: spot.x, y: spot.y)) }
                         segments.append(still)

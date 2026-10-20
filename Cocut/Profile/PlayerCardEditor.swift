@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 struct PlayerCardEditor: View {
     @Environment(AppModel.self) private var model
     @State private var previewKind: CardKind = .intro
+    /// Which reel shape the preview shows; starts on the export's shape.
+    @State private var previewShape: ReelShape?
 
     private var store: ProfileStore { model.profile }
 
@@ -90,20 +92,33 @@ struct PlayerCardEditor: View {
             .labelsHidden()
             .frame(width: 260)
 
+            Picker("Shape", selection: Binding(
+                get: { previewShape ?? model.exporter.options.shape },
+                set: { previewShape = $0 }
+            )) {
+                Text("Widescreen").tag(ReelShape.widescreen)
+                Text("Phone 9:16").tag(ReelShape.vertical)
+                Text("Feed 4:5").tag(ReelShape.portrait)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 300)
+            .help("Phone reels use tall versions of the cards")
+
             Spacer(minLength: 0)
 
             // The card, with its caption right under it.
+            let canvas = PlayerCardView.designCanvas(for: previewShape ?? model.exporter.options.shape)
             GeometryReader { geo in
-                let canvas = PlayerCardView.canvas
                 let scale = min(geo.size.width / canvas.width, geo.size.height / canvas.height)
-                PlayerCardView(profile: store.profile, headshot: store.headshot, kind: previewKind)
+                PlayerCardView(profile: store.profile, headshot: store.headshot, kind: previewKind, canvasSize: canvas)
                     .scaleEffect(scale, anchor: .topLeading)
                     .frame(width: canvas.width * scale, height: canvas.height * scale, alignment: .topLeading)
                     .mediaFrame(radius: Design.Radius.large)
                     .shadow(color: .black.opacity(0.25), radius: 14, y: 5)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .aspectRatio(PlayerCardView.canvas.width / PlayerCardView.canvas.height, contentMode: .fit)
+            .aspectRatio(canvas.width / canvas.height, contentMode: .fit)
             .padding(.horizontal, Design.Space.xl)
 
             Text(previewKind == .intro

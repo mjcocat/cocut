@@ -209,9 +209,12 @@ struct ExportView: View {
 
     private func cardChip(kind: CardKind, label: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            PlayerCardView(profile: profile, headshot: model.profile.headshot, kind: kind)
-                .scaleEffect(128 / PlayerCardView.canvas.width, anchor: .topLeading)
-                .frame(width: 128, height: 72, alignment: .topLeading)
+            // Phone reels show the tall card, at the same height as a widescreen one.
+            let canvas = PlayerCardView.designCanvas(for: exporter.options.shape)
+            let scale = 72 / canvas.height
+            PlayerCardView(profile: profile, headshot: model.profile.headshot, kind: kind, canvasSize: canvas)
+                .scaleEffect(scale, anchor: .topLeading)
+                .frame(width: canvas.width * scale, height: 72, alignment: .topLeading)
                 .mediaFrame(radius: Design.Radius.small)
             Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }

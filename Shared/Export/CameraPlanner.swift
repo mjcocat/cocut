@@ -27,6 +27,14 @@ struct CameraPath: Codable, Sendable, Equatable {
     }
 }
 
+/// Where the phone frame looks at one moment, set by hand in the phone frame editor (clip
+/// seconds; center as picture fractions, top-left origin).
+struct PhoneKey: Codable, Hashable, Sendable {
+    var time: Double
+    var x: Double
+    var y: Double
+}
+
 /// Turns where a player was seen into calm camera movement, like a good camera operator: the
 /// frame holds still while the player moves a little, follows smoothly when they move more,
 /// eases in and out of moves, never whips faster than a set speed, and never shows past the
@@ -95,6 +103,35 @@ enum CameraPlanner {
         let xs = axis({ $0.x }, size: window.width, fallback: fallback.x)
         let ys = axis({ $0.y }, size: window.height, fallback: fallback.y)
         return CameraPath(start: start, step: step, xs: xs, ys: ys)
+    }
+
+    /// The path through keys set by hand: held before the first and after the last, gliding
+    /// from one to the next with an eased start and stop. Keys laid down close together (by
+    /// steering while the clip plays) run straight through, lightly smoothed.
+    static func keyframed(_ keys: [PhoneKey], start: Double, end: Double,
+                          window: (width: Double, height: Double), step: Double = 0.1) -> CameraPath {
+        let sorted = keys.filter { $0.x.isFinite && $0.y.isFinite }.sorted { $0.time < $1.time }
+        let count = max(2, Int(((end - start) / step).rounded(.up)) + 1)
+        let times = (0..<count).map { start + Double($0) * step }
+        func axis(_ value: (PhoneKey) -> Double, size: Double) -> [Double] {
+            let lo = min(0.5, size / 2), hi = max(0.5, 1 - size / 2)
+            guard let first = sorted.first, let last = sorted.last else { return Array(repeating: 0.5, count: count) }
+            let raw = times.map { t -> Double in
+                if t <= first.time { return value(first) }
+                if t >= last.time { return value(last) }
+                guard let i = sorted.lastIndex(where: { $0.time <= t }), i + 1 < sorted.count else { return value(last) }
+                let a = sorted[i], b = sorted[i + 1]
+                let span = b.time - a.time
+                guard span > 0 else { return value(b) }
+                var f = (t - a.time) / span
+                // A deliberate move between two keys eases in and out; steering keys don't.
+                if span > 0.6 { f = f * f * (3 - 2 * f) }
+                return value(a) + (value(b) - value(a)) * f
+            }
+            return gaussian(raw, sigma: 0.12 / step).map { min(hi, max(lo, $0)) }
+        }
+        return CameraPath(start: start, step: step, xs: axis({ $0.x }, size: window.width),
+                          ys: axis({ $0.y }, size: window.height))
     }
 
     /// The value at `time`: held before the first sighting and after the last, straight lines

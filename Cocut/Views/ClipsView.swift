@@ -369,7 +369,7 @@ private struct ClipListPane: View {
             Divider()
             TagsMenu(clipIDs: clipIDs, actions: actions)
             Menu("Phone Framing") {
-                ForEach(PhoneFraming.allCases) { framing in
+                ForEach(PhoneFraming.menuCases) { framing in
                     let all = clips.allSatisfy { ($0.phoneFraming ?? .automatic) == framing }
                     Button {
                         library.setPhoneFraming(framing, for: clipIDs)
@@ -698,6 +698,8 @@ private struct ClipDetailPane: View {
     @State private var cropMessage: String?
     /// Placing the spotlight ring (stays on when moving to the next clip with Save & Next).
     @State private var spotlighting = false
+    /// Framing the clip for phone reels by hand.
+    @State private var phoneFraming = false
     @FocusState private var titleFocused: Bool
 
     private var library: ClipLibrary { model.library }
@@ -729,6 +731,10 @@ private struct ClipDetailPane: View {
                     )
                     .id(clip.id)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if phoneFraming {
+                    PhoneFrameEditor(clip: clip, url: library.url(for: clip), onDone: { phoneFraming = false })
+                        .id(clip.id)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                 PlayerView(
                     url: library.url(for: clip),
@@ -793,7 +799,18 @@ private struct ClipDetailPane: View {
                         .help(clip.spotlight == nil
                               ? "Circle the athlete on the clip's first frame. The reel holds that frame for a moment with a ring around them."
                               : "This clip has a spotlight. Click to move it.")
-                        .disabled(spotlighting)
+                        .disabled(spotlighting || phoneFraming)
+                        .fixedSize()
+
+                        Button {
+                            phoneFraming = true
+                        } label: {
+                            Label("Phone Frame", systemImage: clip.phoneFraming == .custom ? "checkmark.circle.fill" : "iphone")
+                        }
+                        .help(clip.phoneFraming == .custom
+                              ? "You've framed this clip for phone reels by hand. Click to change it."
+                              : "Choose where the frame looks in phone-shaped (9:16 and 4:5) reels: drag it, or steer it while the clip plays")
+                        .disabled(spotlighting || phoneFraming)
                         .fixedSize()
 
                         if clip.isTrimmed {
@@ -828,8 +845,13 @@ private struct ClipDetailPane: View {
                                 Text(clip.spotlight == nil ? "Automatic" : "Automatic (follow the player)").tag(PhoneFraming.automatic)
                                 Text("Centered").tag(PhoneFraming.centered)
                                 Text("Whole Picture").tag(PhoneFraming.wholePicture)
+                                if clip.phoneKeys != nil {
+                                    Text("Custom").tag(PhoneFraming.custom)
+                                }
                             }
                             .pickerStyle(.menu)
+                            Button("Edit Phone Frame…") { phoneFraming = true }
+                                .disabled(spotlighting || phoneFraming)
                             Button("Rename…") { titleFocused = true }
                             Button("Show in Finder") { library.revealInFinder(clip) }
                             Divider()

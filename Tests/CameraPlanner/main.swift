@@ -64,5 +64,20 @@ let ramp = CameraPath(start: 0, step: 1, xs: [0.2, 0.4], ys: [0.5, 0.5])
 check(abs(ramp.center(at: 0.5).x - 0.3) < 1e-9 && ramp.center(at: -1).x == 0.2 && ramp.center(at: 9).x == 0.4, "center(at:) eases between samples and holds at the ends")
 check(CameraPath.fixed(x: 0.3, y: 0.5).center(at: 100).x == 0.3, "a fixed path stays put")
 
+print("Keys set by hand")
+let keys = [PhoneKey(time: 1, x: 0.3, y: 0.5), PhoneKey(time: 3, x: 0.7, y: 0.5)]
+let keyed = CameraPlanner.keyframed(keys, start: 0, end: 4, window: window9x16)
+check(abs(keyed.center(at: 0.3).x - 0.3) < 0.002 && abs(keyed.center(at: 3.8).x - 0.7) < 0.002, "holds before the first key and after the last")
+check(abs(keyed.center(at: 2).x - 0.5) < 0.01, "halfway between two keys is halfway across (\(String(format: "%.3f", keyed.center(at: 2).x)))")
+let early = keyed.center(at: 1.3).x - keyed.center(at: 1.1).x, middle = keyed.center(at: 2.1).x - keyed.center(at: 1.9).x
+check(middle > early * 2, "moves ease in and out (start \(String(format: "%.4f", early)), middle \(String(format: "%.4f", middle)))")
+let pastEdge = CameraPlanner.keyframed([PhoneKey(time: 0, x: 0.02, y: 0.5)], start: 0, end: 2, window: window9x16)
+check(abs(pastEdge.xs[0] - window9x16.width / 2) < 1e-9, "a key past the edge keeps the frame inside the picture")
+let steer = CameraPlanner.keyframed(stride(from: 0.0, through: 3, by: 0.25).map { PhoneKey(time: $0, x: 0.3 + 0.1 * $0, y: 0.5) },
+                                    start: 0, end: 3, window: window9x16)
+let steerSteps = zip(steer.xs, steer.xs.dropFirst()).map { $1 - $0 }
+check(steerSteps.allSatisfy { $0 > -1e-9 } && (steerSteps.max() ?? 1) < 0.02, "steering keys make one smooth move, no stop-start")
+check(CameraPlanner.keyframed([], start: 0, end: 1, window: window9x16).xs.allSatisfy { $0 == 0.5 }, "no keys: centered")
+
 print(failures == 0 ? "\nAll passed" : "\n\(failures) failed")
 exit(failures == 0 ? 0 : 1)

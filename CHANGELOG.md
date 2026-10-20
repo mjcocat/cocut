@@ -3,6 +3,11 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.38.0
+- New: **Phone Frame** editor (the button next to Spotlight on any clip). See the whole picture with the phone frame on it and the phone-shaped result beside it, live. Drag the frame, or click where it should look, to set a key; the export glides from key to key. Drag while the clip plays to steer it like a camera.
+- Starting from Follow Player keeps what tracking found, so you only fix the moments it got wrong. Switch between 9:16 and 4:5 to check both.
+- Title cards have **tall layouts** for phone reels: intro, section and end cards fill a 9:16 or 4:5 screen instead of sitting small on a blurred background, and keep clear of the app buttons at the top and bottom. Preview them in Player Card with the new Widescreen / Phone / Feed switch.
+
 ## 0.37.0
 - New: **export for phones**. In Export, choose **Phone 9:16** (Reels, TikTok, Shorts, Stories) or **Feed 4:5** (Instagram and Facebook feeds).
 - The frame **follows your spotlighted player** through each clip, moving smoothly like a camera operator. Spotlight a clip and Cocut does the rest.

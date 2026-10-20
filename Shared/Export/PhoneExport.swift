@@ -52,6 +52,8 @@ enum PhoneFraming: String, Codable, CaseIterable, Identifiable {
     case centered
     /// The whole picture, on a blurred fill.
     case wholePicture
+    /// Where it was dragged to in the phone frame editor (the clip's `phoneKeys`).
+    case custom
     var id: String { rawValue }
 
     var title: String {
@@ -59,8 +61,12 @@ enum PhoneFraming: String, Codable, CaseIterable, Identifiable {
         case .automatic: return "Automatic"
         case .centered: return "Centered"
         case .wholePicture: return "Whole Picture"
+        case .custom: return "Custom"
         }
     }
+
+    /// The choices that can be picked from a menu (Custom comes from the editor).
+    static let menuCases: [PhoneFraming] = [.automatic, .centered, .wholePicture]
 }
 
 /// How one piece of the reel fills a phone frame.
@@ -84,21 +90,46 @@ extension ReelExporter {
             return .window(.fixed(x: 0.5, y: 0.5))
         case .wholePicture:
             return .whole
+        case .custom:
+            guard let keys = clip.phoneKeys, !keys.isEmpty else { return .window(.fixed(x: 0.5, y: 0.5)) }
+            let picture = await pictureSize(url: url, crop: clip.unitCrop) ?? CGSize(width: 16, height: 9)
+            let window = CameraPlanner.window(picture: (Double(picture.width), Double(picture.height)),
+                                              output: (Double(renderSize.width), Double(renderSize.height)))
+            return .window(CameraPlanner.keyframed(keys, start: clip.trimStartSeconds, end: clip.trimEndSeconds,
+                                                   window: window))
         case .automatic:
             guard options.followSpotlight, let spot = clip.spotlight else {
                 return options.unspotlitFraming == .wholePicture ? .whole : .window(.fixed(x: 0.5, y: 0.5))
             }
             status("Following the player in “\(clip.title)”…")
-            guard let tracked = await trackedPlayer(clip: clip, url: url, spot: spot, cacheDirectory: cacheDirectory) else {
-                return .window(.fixed(x: spot.x, y: spot.y))
-            }
-            let window = CameraPlanner.window(picture: (Double(tracked.width), Double(tracked.height)),
-                                              output: (Double(renderSize.width), Double(renderSize.height)))
-            let path = CameraPlanner.plan(sightings: tracked.sightings, start: clip.trimStartSeconds,
-                                          end: clip.trimEndSeconds, window: window, fallback: (spot.x, spot.y))
-            Log.info("Phone framing: followed the player in \(clip.fileName) (\(tracked.sightings.count) sightings)")
-            return .window(path)
+            return .window(await followPath(clip: clip, url: url, spot: spot, renderSize: renderSize,
+                                            cacheDirectory: cacheDirectory))
         }
+    }
+
+    /// The frame following the spotlighted player (tracked once, then remembered in the project);
+    /// a still frame on the spotlight if tracking fails.
+    static func followPath(clip: Clip, url: URL, spot: Spotlight, renderSize: CGSize,
+                           cacheDirectory: URL) async -> CameraPath {
+        guard let tracked = await trackedPlayer(clip: clip, url: url, spot: spot, cacheDirectory: cacheDirectory) else {
+            return .fixed(x: spot.x, y: spot.y)
+        }
+        let window = CameraPlanner.window(picture: (Double(tracked.width), Double(tracked.height)),
+                                          output: (Double(renderSize.width), Double(renderSize.height)))
+        Log.info("Phone framing: followed the player in \(clip.fileName) (\(tracked.sightings.count) sightings)")
+        return CameraPlanner.plan(sightings: tracked.sightings, start: clip.trimStartSeconds,
+                                  end: clip.trimEndSeconds, window: window, fallback: (spot.x, spot.y))
+    }
+
+    /// The upright picture's size in pixels (after the clip's crop).
+    static func pictureSize(url: URL, crop: CGRect?) async -> CGSize? {
+        let asset = AVURLAsset(url: url)
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let natural = try? await track.load(.naturalSize),
+              let preferred = try? await track.load(.preferredTransform) else { return nil }
+        let upright = CGRect(origin: .zero, size: natural).applying(preferred).size
+        let c = crop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        return CGSize(width: abs(upright.width) * c.width, height: abs(upright.height) * c.height)
     }
 
     /// Where the spotlighted player is through the clip, from the project's cache or tracked now.
