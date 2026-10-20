@@ -1,38 +1,52 @@
 import AppKit
 import SwiftUI
 
-/// The three ways film gets into Cocut.
+/// The ways film gets into Cocut.
 enum FilmSource: String, CaseIterable, Identifiable {
-    case fullMatch, clips, online
+    case fullMatch, youtube, clips, online
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .fullMatch: return "A full match video"
-        case .clips: return "Clips you already have"
-        case .online: return "Film on YouTube or Hudl"
+        case .youtube: return "A video on YouTube"
+        case .clips: return "Clips on your Mac"
+        case .online: return "Record from your screen"
         }
     }
 
     var detail: String {
         switch self {
-        case .fullMatch: return "From your camera or phone, or a Hudl download. Cocut finds the rallies and cuts out the dead time between them."
-        case .clips: return "Short videos already on your Mac, like Hudl clips or phone videos. Import them, or drop them on the list."
-        case .online: return "Play the film in your browser. Cocut records a clip each time you press play and saves it when you pause."
+        case .fullMatch: return "From your camera or phone. Cocut finds the rallies and cuts out the dead time between them."
+        case .youtube: return "Download the whole video in full quality, then find its rallies or keep it as a clip."
+        case .clips: return "Hudl downloads, phone videos and other short clips. Or drop them on this window."
+        case .online: return "Play film in your browser, like Hudl. Cocut records a clip each time you press play."
         }
     }
 
     var icon: String {
         switch self {
         case .fullMatch: return "figure.volleyball"
-        case .clips: return "square.and.arrow.down.on.square"
+        case .youtube: return "play.rectangle.fill"
+        case .clips: return "square.and.arrow.down.on.square.fill"
         case .online: return "record.circle"
+        }
+    }
+
+    /// Each way's own color, for its icon tile. Red stays for recording.
+    var tint: Color {
+        switch self {
+        case .fullMatch: return .accentColor
+        case .youtube: return .purple
+        case .clips: return .teal
+        case .online: return Design.record
         }
     }
 
     var action: String {
         switch self {
         case .fullMatch: return "Find Rallies…"
+        case .youtube: return "Import from YouTube…"
         case .clips: return "Import Videos…"
         case .online: return "Record Region"
         }
@@ -57,6 +71,8 @@ extension View {
             openWindow(id: "rallies")
             // Let the window appear before the file picker opens over it.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { model.rallies.chooseMatch() }
+        case .youtube:
+            openWindow(id: "youtube")
         case .clips:
             Task { await model.importVideosWithPanel() }
         case .online:
@@ -65,44 +81,61 @@ extension View {
     }
 }
 
-/// One big choice card.
+/// One way to get film in, as a large tile: the whole tile is the button.
 struct FilmSourceCard: View {
     let source: FilmSource
     var selected = false
+    /// Shows what clicking does ("Find Rallies →"); off where the tile only picks an option.
     var showsAction = true
     let onAction: () -> Void
 
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Image(systemName: source.icon)
-                .font(.system(size: 30, weight: .regular))
-                .foregroundStyle(source == .online ? Design.record : Color.accentColor)
-                .accessibilityHidden(true)
-                .frame(height: 36)
-            Text(source.title)
-                .font(.headline)
-            Text(source.detail)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            if showsAction {
-                Button(source.action, action: onAction)
-                    .buttonStyle(.borderedProminent)
-                    .tint(source == .online ? Design.record : .accentColor)
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        Button(action: onAction) {
+            VStack(alignment: .leading, spacing: Design.Space.m) {
+                Image(systemName: source.icon)
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 60, height: 60)
+                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(source.tint.gradient))
+                    .shadow(color: source.tint.opacity(0.35), radius: hovering ? 10 : 6, y: 3)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Design.Space.xs) {
+                    Text(source.title)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(source.detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                if showsAction {
+                    HStack(spacing: Design.Space.xs) {
+                        Text(source.action.replacingOccurrences(of: "…", with: ""))
+                        Image(systemName: "arrow.right")
+                            .offset(x: hovering ? 3 : 0)
+                    }
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(source.tint)
+                }
             }
+            .padding(Design.Space.xl)
+            .frame(maxWidth: .infinity, minHeight: 236, alignment: .topLeading)
+            .background(shape.fill(selected ? source.tint.opacity(0.12)
+                                   : hovering ? Color.primary.opacity(0.075) : Design.panelFill))
+            .overlay(shape.strokeBorder(selected ? source.tint : hovering ? source.tint.opacity(0.45) : Design.hairline,
+                                        lineWidth: selected ? 2 : 1))
+            .contentShape(shape)
         }
-        .padding(Design.Space.l + 2)
-        .frame(maxWidth: .infinity, minHeight: 200, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: Design.Radius.large, style: .continuous)
-                .fill(selected ? Color.accentColor.opacity(0.08) : Design.panelFill)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Design.Radius.large, style: .continuous)
-                .strokeBorder(selected ? Color.accentColor : Design.hairline, lineWidth: selected ? 2 : 1)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: Design.Radius.large, style: .continuous))
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.5)
+        .onHover { hovering = $0 && isEnabled }
+        .motion(.snappy(duration: 0.18), value: hovering)
+        .accessibilityHint(source.action.replacingOccurrences(of: "…", with: ""))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
@@ -150,35 +183,34 @@ struct GetStartedView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: Design.Space.xl) {
+                HStack(spacing: Design.Space.l) {
                     Image("Logo")
                         .resizable()
                         .interpolation(.high)
                         .frame(width: 64, height: 64)
                         .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Let's get some film in")
-                            .font(.title.weight(.semibold))
+                            .font(.largeTitle.weight(.bold))
                         Text("Pick whatever matches the video you have. You can mix them later.")
+                            .font(.title3)
                             .foregroundStyle(.secondary)
                     }
                 }
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 14) { cards }
-                    VStack(spacing: 14) { cards }
+                // Two by two: big targets, easy to compare.
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: Design.Space.l),
+                                    GridItem(.flexible(), spacing: Design.Space.l)],
+                          spacing: Design.Space.l) {
+                    ForEach(FilmSource.allCases) { source in
+                        FilmSourceCard(source: source) {
+                            startFilm(source, model: model, openWindow: openWindow)
+                        }
+                        .disabled(source == .online && model.isBusy)
+                    }
                 }
-
-                HStack(spacing: Design.Space.s) {
-                    Image(systemName: "play.rectangle.fill")
-                        .foregroundStyle(Design.record)
-                        .accessibilityHidden(true)
-                    Text("The whole video is on YouTube?")
-                    Button("Import from YouTube…") { openWindow(id: "youtube") }
-                        .buttonStyle(.link)
-                }
-                .font(.callout)
 
                 if !model.canRecordLastRegion {
                     Text("Recording works from any app, even with the video in fullscreen: ⌥⌘N picks a region, ⌥⌘F records the full screen. Press the same keys to finish.")
@@ -190,8 +222,8 @@ struct GetStartedView: View {
                 Divider()
                 NextStepsPath()
             }
-            .padding(32)
-            .frame(maxWidth: 900, alignment: .leading)
+            .padding(Design.Space.xxl)
+            .frame(maxWidth: 940, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -199,17 +231,6 @@ struct GetStartedView: View {
             guard !videos.isEmpty else { return false }
             Task { await model.importVideos(videos) }
             return true
-        }
-    }
-
-    @ViewBuilder
-    private var cards: some View {
-        ForEach(FilmSource.allCases) { source in
-            FilmSourceCard(source: source) {
-                startFilm(source, model: model, openWindow: openWindow)
-            }
-            .frame(minWidth: 220)
-            .disabled(source == .online && model.isBusy)
         }
     }
 }
@@ -261,7 +282,7 @@ struct NewProjectWizard: View {
             }
         }
         .padding(24)
-        .frame(width: step == 1 ? 480 : 760)
+        .frame(width: step == 1 ? 480 : 640)
         .animation(.snappy, value: step)
         .onAppear {
             // Same athlete as the current project? Offer to start from their card.
@@ -331,14 +352,15 @@ struct NewProjectWizard: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Where's your film? Pick one to start with. You can use the others any time.")
                 .foregroundStyle(.secondary)
-            HStack(alignment: .top, spacing: 12) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                 ForEach(FilmSource.allCases) { option in
-                    FilmSourceCard(source: option, selected: source == option, showsAction: false) {}
-                        .onTapGesture { source = source == option ? nil : option }
+                    FilmSourceCard(source: option, selected: source == option, showsAction: false) {
+                        source = source == option ? nil : option
+                    }
                 }
             }
             Text(source == nil ? "Not sure yet? Just create the project; the Clips screen shows these choices too."
-                               : "Create opens \(source == .fullMatch ? "Find Rallies" : source == .clips ? "the file picker" : "region selection") right away.")
+                               : "Create opens \(source == .fullMatch ? "Find Rallies" : source == .youtube ? "Import from YouTube" : source == .clips ? "the file picker" : "region selection") right away.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

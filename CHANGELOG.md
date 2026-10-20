@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.35.2
+- A new Get Started screen: four big tiles to pick from (a full match, a video on YouTube, clips on your Mac, or recording your screen). Click anywhere on a tile.
+
 ## 0.35.1
 - Import from YouTube checks what it got: if a video offered in 1080p comes through at less, it tells you and offers to try again instead of quietly using a lower quality.
 
