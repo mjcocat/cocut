@@ -555,7 +555,9 @@ private struct ClipRow: View {
                 .font(.system(.callout, design: .rounded).weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
-                .frame(width: 22, alignment: .trailing)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 30, alignment: .trailing)
 
             Color.black
                 .frame(width: 112, height: 63)
@@ -722,8 +724,12 @@ private struct ClipDetailPane: View {
                 )
                 // Rebuild the player when the clip or its trim changes.
                 .id("\(clip.id)-\(clip.trimStart ?? -1)-\(clip.trimEnd ?? -1)-\(String(describing: clip.crop))")
-                .background(Color.black)
+                // The clip as a framed 16:9 picture on the page, not a pane-sized black void.
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .mediaFrame()
+                .padding(Design.Space.l)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .underPageBackgroundColor))
                 }
 
                 Divider()

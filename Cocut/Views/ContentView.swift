@@ -74,6 +74,7 @@ struct ContentView: View {
                     Task { await model.importVideosWithPanel() }
                 } label: {
                     Label("Import", systemImage: "square.and.arrow.down")
+                        .labelStyle(.titleAndIcon)
                 }
                 .help("Add video files, such as Hudl downloads or phone videos (⌘I)")
                 .disabled(model.isBusy)
@@ -82,6 +83,7 @@ struct ContentView: View {
                     openWindow(id: "rallies")
                 } label: {
                     Label("Find Rallies", systemImage: "figure.volleyball")
+                        .labelStyle(.titleAndIcon)
                 }
                 .help("Find the rallies in a full match video and skip the dead time (⇧⌘M)")
 
@@ -94,21 +96,29 @@ struct ContentView: View {
                 .disabled(model.library.includedClips.isEmpty)
             }
 
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Button("Region…   ⇧⌘R") { Task { await model.recordNewRegion() } }
-                    Button("Full Screen   ⇧⌘F") { Task { await model.recordFullScreen() } }
-                    Divider()
-                    Button("Same Region Again   ⇧⌘L") { Task { await model.recordLastRegion() } }
-                        .disabled(!model.canRecordLastRegion)
+            // Record is a plain button (the toolbar keeps a button's red, not a menu's), with the
+            // other ways to record in the menu beside it.
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    Task { await model.recordNewRegion() }
                 } label: {
                     Label("Record", systemImage: "record.circle")
                         .labelStyle(.titleAndIcon)
                 }
-                .menuStyle(.button)
                 .buttonStyle(.borderedProminent)
                 .tint(Design.record)
-                .help("Record part of the screen, the full screen, or the last region again")
+                .help("Drag over the video on screen, then press play to record (⇧⌘R)")
+                .disabled(model.isBusy)
+
+                Menu {
+                    Button("Record Full Screen   ⇧⌘F") { Task { await model.recordFullScreen() } }
+                    Button("Record Same Region Again   ⇧⌘L") { Task { await model.recordLastRegion() } }
+                        .disabled(!model.canRecordLastRegion)
+                } label: {
+                    Label("More Ways to Record", systemImage: "chevron.down")
+                }
+                .menuIndicator(.hidden)
+                .help("Record the full screen, or the last region again")
                 .disabled(model.isBusy)
             }
         }
