@@ -89,6 +89,9 @@ struct SessionHUDView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Throw away the clip being recorded")
+                    .accessibilityLabel("Discard this clip")
+                    // Kept apart from Done, so finishing never lands on it.
+                    .padding(.trailing, 6)
                 }
 
                 Button {
@@ -114,10 +117,10 @@ struct SessionHUDView: View {
     }
 
     private var statusDot: some View {
-        Circle()
-            .fill(model.isRecording ? (model.isPausedInClip ? Color.orange : Color.red) : Color.secondary.opacity(0.6))
-            .frame(width: 10, height: 10)
-            .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: model.isRecording ? 0 : 1))
+        RecordingDot(recording: model.isRecording && !model.isPausedInClip,
+                     color: model.isRecording ? (model.isPausedInClip ? Color.orange : Design.record) : Color.secondary.opacity(0.6),
+                     outlined: !model.isRecording)
+            .accessibilityLabel(model.isRecording ? (model.isPausedInClip ? "Paused, saving" : "Recording") : "Waiting")
     }
 
     private var title: String {
@@ -184,5 +187,26 @@ struct KeyHints: View {
             }
             Text(label)
         }
+    }
+}
+
+/// The status light: pulses while a clip records (steady with Reduce Motion), still otherwise.
+private struct RecordingDot: View {
+    let recording: Bool
+    let color: Color
+    let outlined: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 10, height: 10)
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: outlined ? 1 : 0))
+            .opacity(recording && pulse ? 0.35 : 1)
+            .animation(recording && !reduceMotion ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
+                       value: pulse)
+            .onAppear { pulse = recording && !reduceMotion }
+            .onChange(of: recording) { _, on in pulse = on && !reduceMotion }
     }
 }

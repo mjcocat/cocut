@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.34.4
+- While recording, the red light on the floating control pulses, so you can tell at a glance it's recording. The discard button sits apart from Done.
+
 ## 0.34.3
 - Check Accuracy: the "is in it" and "Not in it" buttons are bigger and colored, and the rally list shows just two things to scan, Listed and your mark, with a warning where Cocut is wrong.
 - Setup Guide: finished steps fold down to one line.
