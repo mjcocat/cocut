@@ -18,6 +18,8 @@ struct CheckAccuracyScreen: View {
     @State private var currentID: Rally.ID?
     @State private var playing = false
     @State private var copied = false
+    /// Magnify the video around the pointer (or on pinch).
+    @State private var magnify = false
     @State private var condensedBefore = true
 
     #if os(iOS)
@@ -33,8 +35,9 @@ struct CheckAccuracyScreen: View {
                 if wide {
                     HStack(alignment: .top, spacing: 16) {
                         ScrollView { checkPane.padding(.vertical) }
-                            .frame(minWidth: 420, maxWidth: 560)
+                            .frame(minWidth: 560, maxWidth: .infinity)
                         rallyList
+                            .frame(width: 400)
                     }
                     .padding(.horizontal)
                 } else {
@@ -48,7 +51,7 @@ struct CheckAccuracyScreen: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #else
-            .frame(minWidth: 1040, minHeight: 680)
+            .frame(minWidth: 1180, minHeight: 760)
             #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done", action: onClose) }
@@ -92,8 +95,38 @@ struct CheckAccuracyScreen: View {
                     VideoPlayer(player: player)
                 }
             }
+            .hoverZoom(magnify, scale: 3)
             .aspectRatio(16 / 9, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            HStack(spacing: 10) {
+                Button {
+                    if finder.isPlaying {
+                        finder.pause()
+                        playing = false
+                    } else if let rally = currentRally {
+                        if finder.currentTime >= rally.end - 0.1 || finder.currentTime < rally.start {
+                            play(rally)
+                        } else {
+                            playing = true
+                            finder.player?.play()
+                        }
+                    }
+                } label: {
+                    Label(finder.isPlaying ? "Pause" : "Play", systemImage: finder.isPlaying ? "pause.fill" : "play.fill")
+                }
+                .keyboardShortcut(.space, modifiers: [])
+                .disabled(currentRally == nil)
+                Toggle(isOn: $magnify) {
+                    Label("Magnify", systemImage: "plus.magnifyingglass")
+                }
+                .toggleStyle(.button)
+                .keyboardShortcut("z", modifiers: [])
+                Text(magnifyHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
 
             markBar
             scoreCard
@@ -152,7 +185,7 @@ struct CheckAccuracyScreen: View {
                         .keyboardShortcut("n", modifiers: [])
                 }
                 #if os(macOS)
-                Text("Keys: I is in it, O not in it, N next. Marking plays the next unmarked rally.")
+                Text("Keys: I is in it, O not in it, N next, Space play/pause, Z magnify. Marking plays the next unmarked rally.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 #endif
@@ -194,15 +227,16 @@ struct CheckAccuracyScreen: View {
                     Text("\(now.marked) rallies marked: #\(number) is in \(now.present), not in \(now.marked - now.present)")
                         .font(.headline)
                     scoreRow("Now", now)
+                    scoreRow("Before evening out", finder.accuracy(of: number, .unsmoothed))
                     if finder.hasBaseline {
-                        scoreRow("v0.21", finder.accuracy(of: number, baseline: true))
+                        scoreRow("v0.21", finder.accuracy(of: number, .baseline))
                     } else {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
                             Text("Working out v0.21's score to compare…").font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    Text("Right: when Cocut lists #\(number) on a rally, how often they're really in it. Finds: of the rallies #\(number) is in, how many Cocut lists them on. Scores use your Who's This? answers so far.")
+                    Text("Right: when Cocut lists #\(number) on a rally, how often they're really in it. Finds: of the rallies #\(number) is in, how many Cocut lists them on. Evening out: a player is listed when they're listed on most of the five rallies around, since players stay on court for runs of rallies. Scores use your Who's This? answers so far.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack {
@@ -226,7 +260,8 @@ struct CheckAccuracyScreen: View {
 
     private func scoreRow(_ title: String, _ a: PlayerAccuracy) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 14) {
-            Text(title).font(.subheadline.weight(.semibold)).frame(width: 48, alignment: .leading)
+            Text(title).font(.subheadline.weight(.semibold)).frame(width: 84, alignment: .leading)
+                .lineLimit(2)
             stat("Right", a.precision)
             stat("Finds", a.recall)
             Text("\(a.right) right · \(a.wrong) wrong · \(a.missed) missed")
@@ -320,6 +355,14 @@ struct CheckAccuracyScreen: View {
     }
 
     // MARK: Helpers
+
+    private var magnifyHint: String {
+        #if os(macOS)
+        magnify ? "Point at the video to look closer (Z turns it off)" : "Z magnifies the video under the pointer"
+        #else
+        magnify ? "Pinch the video to look closer" : "Turn on to pinch the video"
+        #endif
+    }
 
     private var currentRally: Rally? { finder.rallies.first { $0.id == currentID } }
 
