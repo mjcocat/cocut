@@ -96,8 +96,8 @@ struct PlayerCardEditor: View {
                 PlayerCardView(profile: store.profile, headshot: store.headshot, kind: previewKind)
                     .scaleEffect(scale, anchor: .topLeading)
                     .frame(width: canvas.width * scale, height: canvas.height * scale, alignment: .topLeading)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .shadow(color: .black.opacity(0.3), radius: 16, y: 6)
+                    .mediaFrame(radius: Design.Radius.large)
+                    .shadow(color: .black.opacity(0.25), radius: 14, y: 5)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .padding(.horizontal, 24)
@@ -133,11 +133,11 @@ struct PlayerCardEditor: View {
                                 PlayerCardView(profile: profile(option), headshot: store.headshot, kind: .intro)
                                     .scaleEffect(120 / PlayerCardView.canvas.width, anchor: .topLeading)
                                     .frame(width: 120, height: 67.5, alignment: .topLeading)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                    .clipShape(RoundedRectangle(cornerRadius: Design.Radius.small, style: .continuous))
                                     .overlay(
-                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                            .strokeBorder(isOn ? Color.accentColor : Color.primary.opacity(0.15),
-                                                          lineWidth: isOn ? 3 : 1)
+                                        RoundedRectangle(cornerRadius: Design.Radius.small, style: .continuous)
+                                            .strokeBorder(isOn ? Color.accentColor : Design.hairline,
+                                                          lineWidth: isOn ? 2.5 : 1)
                                     )
                                 Text(option[keyPath: title])
                                     .font(.caption)
@@ -146,6 +146,8 @@ struct PlayerCardEditor: View {
                         }
                         .buttonStyle(.plain)
                         .help(option[keyPath: title])
+                        .accessibilityLabel("\(label): \(option[keyPath: title])")
+                        .accessibilityAddTraits(isOn ? [.isSelected] : [])
                     }
                 }
                 .padding(.vertical, 3)
@@ -171,8 +173,8 @@ struct PlayerCardEditor: View {
                 }
             }
             .frame(width: 96, height: 120)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.separator))
+            .mediaFrame()
+            .accessibilityLabel(store.headshot == nil ? "No headshot. Drop a photo here." : "Headshot")
             .dropDestination(for: URL.self) { urls, _ in
                 guard let url = urls.first else { return false }
                 store.setHeadshot(from: url)
@@ -266,15 +268,12 @@ struct PlayerCardEditor: View {
     // MARK: Helpers
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title.uppercased())
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Design.Space.s + 2) {
+            SectionLabel(title)
             content()
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .panel(padding: Design.Space.l - 2, radius: Design.Radius.large)
     }
 
     private func row<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {

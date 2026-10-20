@@ -35,6 +35,8 @@ struct ContentView: View {
                         .tag(SidebarItem.export)
                 }
             }
+            ReelSummary(onExport: { selection = .export })
+                .padding(Design.Space.s + 2)
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 214, max: 280)
         } detail: {
@@ -65,25 +67,17 @@ struct ContentView: View {
                 }
             }
 
-            ToolbarItemGroup(placement: .navigation) {
-                Button {
-                    model.library.undo()
-                } label: {
-                    Label("Undo", systemImage: "arrow.uturn.backward")
-                }
-                .help(model.library.undoName.map { "Undo \($0) (⌘Z)" } ?? "Nothing to undo")
-                .disabled(!model.library.canUndo)
-
-                Button {
-                    model.library.redo()
-                } label: {
-                    Label("Redo", systemImage: "arrow.uturn.forward")
-                }
-                .help(model.library.redoName.map { "Redo \($0) (⇧⌘Z)" } ?? "Nothing to redo")
-                .disabled(!model.library.canRedo)
-            }
-
+            // The ways film gets in, then watching the result. Undo and Redo live in the Edit menu
+            // (⌘Z, ⇧⌘Z), like every Mac app.
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    Task { await model.importVideosWithPanel() }
+                } label: {
+                    Label("Import", systemImage: "square.and.arrow.down")
+                }
+                .help("Add video files, such as Hudl downloads or phone videos (⌘I)")
+                .disabled(model.isBusy)
+
                 Button {
                     openWindow(id: "rallies")
                 } label: {
@@ -113,7 +107,7 @@ struct ContentView: View {
                 }
                 .menuStyle(.button)
                 .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .tint(Design.record)
                 .help("Record part of the screen, the full screen, or the last region again")
                 .disabled(model.isBusy)
             }
@@ -158,5 +152,46 @@ struct ContentView: View {
             selection = section
             model.requestedSection = nil
         }
+    }
+}
+
+/// The foot of the sidebar: the reel at a glance (clips in it, about how long it runs), with
+/// Preview and Export a click away from any screen.
+private struct ReelSummary: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
+    let onExport: () -> Void
+
+    var body: some View {
+        let clips = model.library.includedClips
+        VStack(alignment: .leading, spacing: Design.Space.xs + 2) {
+            SectionLabel("Your Reel")
+            if clips.isEmpty {
+                Text("No clips yet")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                let seconds = model.exporter.estimatedDuration(plan: model.library.reelPlan, profile: model.profile.profile)
+                Text("\(clips.count) \(clips.count == 1 ? "clip" : "clips") · \(Clip.format(seconds))")
+                    .font(.callout.weight(.medium))
+                    .monospacedDigit()
+            }
+            HStack(spacing: Design.Space.s) {
+                Button {
+                    openWindow(id: "preview")
+                } label: {
+                    Label("Preview", systemImage: "play.fill")
+                }
+                .help("Play the whole reel as it will export (⌘Y)")
+                Button("Export…", action: onExport)
+                    .help("Choose cards, transitions and size, then export (⌘E)")
+            }
+            .controlSize(.small)
+            .disabled(clips.isEmpty)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: Design.Space.m - 2, radius: Design.Radius.medium)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Your reel")
     }
 }

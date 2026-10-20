@@ -512,7 +512,11 @@ struct StarRating: View {
                 }
                 .buttonStyle(.plain)
                 .help(n == rating ? "Clear the rating" : "\(n) star\(n == 1 ? "" : "s")")
+                .accessibilityLabel("\(n) star\(n == 1 ? "" : "s")")
+                .accessibilityAddTraits(n <= rating ? [.isSelected] : [])
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Rating")
     }
 }

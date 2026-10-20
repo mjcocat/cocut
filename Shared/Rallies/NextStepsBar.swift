@@ -31,7 +31,7 @@ struct NextStepsBar: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(Color.accentColor.opacity(0.08))
-            .animation(.default, value: step)
+            .motion(.default, value: step)
         }
     }
 

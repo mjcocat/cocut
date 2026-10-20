@@ -49,7 +49,7 @@ struct ClipsView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.snappy, value: model.phase)
+        .motion(value: model.phase)
         .onAppear {
             if selection.isEmpty, let first = library.clips.first?.id { selection = [first] }
         }
@@ -437,19 +437,11 @@ private struct ClipListPane: View {
                     .help("Add new clips at the end of the list instead")
                 }
             } else {
-                Text(!filter.isActive ? "Drag to reorder · drop videos to import" : "Reordering is off while filtering")
+                Text(!filter.isActive ? "Drag to reorder · drop videos here to import" : "Reordering is off while filtering")
                     .lineLimit(1)
             }
 
             Spacer(minLength: 4)
-
-            Button {
-                Task { await model.importVideosWithPanel() }
-            } label: {
-                Label("Import", systemImage: "square.and.arrow.down")
-            }
-            .buttonStyle(.borderless)
-            .help("Add video files, such as Hudl downloads (⌘I)")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -515,13 +507,7 @@ private struct SectionRow: View {
                     .help("New clips are added to this section")
             }
             if section.showCard {
-                Label("Card", systemImage: "rectangle.on.rectangle")
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                Pill(text: "Card", icon: "rectangle.on.rectangle", tint: .accentColor)
                     .help("A divider card introduces this section in the reel")
             }
         }
@@ -580,11 +566,7 @@ private struct ClipRow: View {
                             .aspectRatio(contentMode: .fit)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
-                )
+                .mediaFrame(radius: Design.Radius.small)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(clip.title)
@@ -632,12 +614,7 @@ private struct ClipRow: View {
             Spacer(minLength: 0)
 
             if !clip.isIncluded {
-                Text("Left out")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().strokeBorder(Color.secondary.opacity(0.5), lineWidth: 1))
+                Pill(text: "Left out")
                     .help("Not included when you export the reel")
             }
 
@@ -650,6 +627,7 @@ private struct ClipRow: View {
             }
             .buttonStyle(.borderless)
             .help(deleteCount > 1 ? "Move the \(deleteCount) selected clips to the Trash (⌫)" : "Move this clip to the Trash (⌫)")
+            .accessibilityLabel(deleteCount > 1 ? "Move \(deleteCount) clips to Trash" : "Move to Trash")
             .opacity(hovering ? 1 : 0)
             .allowsHitTesting(hovering)
         }
@@ -750,41 +728,36 @@ private struct ClipDetailPane: View {
 
                 Divider()
 
-                VStack(alignment: .leading, spacing: 12) {
-                    // Name and details on their own row, so they don't squeeze into a column.
-                    VStack(alignment: .leading, spacing: 3) {
-                        TextField("Clip name", text: $titleDraft)
-                            .textFieldStyle(.plain)
-                            .font(.title3.weight(.semibold))
-                            .focused($titleFocused)
-                            .onSubmit { commitTitle(clip) }
-                            .onChange(of: titleFocused) { _, focused in
-                                if !focused { commitTitle(clip) }
-                            }
-                        Text(details(clip))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    HStack(alignment: .center, spacing: 12) {
-                        StarRating(rating: clip.stars, size: 15) { library.setRating($0, for: [clip.id]) }
-                            .help("Rate this play (or press 1–5 in the list). Order by Rating puts the best first.")
-
+                VStack(alignment: .leading, spacing: Design.Space.m) {
+                    // What it is, and whether it's in the reel.
+                    HStack(alignment: .firstTextBaseline, spacing: Design.Space.m) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            TextField("Clip name", text: $titleDraft)
+                                .textFieldStyle(.plain)
+                                .font(.title3.weight(.semibold))
+                                .focused($titleFocused)
+                                .onSubmit { commitTitle(clip) }
+                                .onChange(of: titleFocused) { _, focused in
+                                    if !focused { commitTitle(clip) }
+                                }
+                            Text(details(clip))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer(minLength: Design.Space.s)
                         Toggle("In Reel", isOn: Binding(
                             get: { clip.isIncluded },
                             set: { library.setIncluded([clip.id], $0) }
                         ))
-                        .toggleStyle(.checkbox)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
                         .help("Include this clip when exporting the highlight reel")
+                    }
 
-                        if clip.isTrimmed {
-                            Button("Reset Trim") {
-                                library.setTrim(clip, start: nil, end: nil)
-                            }
-                            .help("Use the whole clip again")
-                        }
+                    // Editing the clip. Less common actions are in the menu.
+                    HStack(spacing: Design.Space.s) {
                         Button {
                             trimRequest += 1
                         } label: {
@@ -795,20 +768,26 @@ private struct ClipDetailPane: View {
                         Button {
                             spotlighting = true
                         } label: {
-                            Label(clip.spotlight == nil ? "Spotlight" : "Spotlight ✓", systemImage: "scope")
+                            Label("Spotlight", systemImage: clip.spotlight == nil ? "scope" : "checkmark.circle.fill")
                         }
-                        .help("Circle the athlete on the clip's first frame. The reel holds that frame for a moment with a ring around them.")
+                        .help(clip.spotlight == nil
+                              ? "Circle the athlete on the clip's first frame. The reel holds that frame for a moment with a ring around them."
+                              : "This clip has a spotlight. Click to move it.")
                         .disabled(spotlighting)
                         .fixedSize()
 
-                        Button(role: .destructive) {
-                            deleting = [clip]
-                        } label: {
-                            Image(systemName: "trash")
+                        if clip.isTrimmed {
+                            Button("Reset Trim") {
+                                library.setTrim(clip, start: nil, end: nil)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Use the whole clip again")
                         }
-                        .help("Move this clip to the Trash (⌫)")
 
-                        Spacer(minLength: 0)
+                        Spacer(minLength: Design.Space.s)
+
+                        StarRating(rating: clip.stars, size: 15) { library.setRating($0, for: [clip.id]) }
+                            .help("Rate this play (or press 1–5 in the list). Best Rated First puts the best first.")
 
                         Menu {
                             Menu("Move to Section") {
@@ -832,6 +811,8 @@ private struct ClipDetailPane: View {
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
                         .fixedSize()
+                        .help("Section, crop, rename, Show in Finder, Move to Trash")
+                        .accessibilityLabel("More actions")
                     }
 
                     tagBar(clip)
@@ -857,8 +838,8 @@ private struct ClipDetailPane: View {
                         .font(.callout)
                     }
                 }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
+                .padding(.horizontal, Design.Space.l + 2)
+                .padding(.vertical, Design.Space.m + 2)
             }
             .onAppear { titleDraft = clip.title }
             .onChange(of: clip.id) { _, _ in titleDraft = clip.title }
@@ -940,82 +921,70 @@ private struct SectionDetailPane: View {
     var body: some View {
         let clips = library.clips(in: section.id)
         let included = clips.filter(\.isIncluded).count
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("SECTION")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    TextField("Section name", text: $titleDraft)
-                        .textFieldStyle(.plain)
-                        .font(.largeTitle.weight(.bold))
-                        .focused($titleFocused)
-                        .onSubmit { commit() }
-                        .onChange(of: titleFocused) { _, focused in if !focused { commit() } }
-                    Text("\(clips.count) clip\(clips.count == 1 ? "" : "s") · \(included) in the reel · drag clips under this heading in the list to add them")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
+        Form {
+            Section {
+                TextField("Section name", text: $titleDraft)
+                    .textFieldStyle(.plain)
+                    .font(.title.weight(.bold))
+                    .focused($titleFocused)
+                    .onSubmit { commit() }
+                    .onChange(of: titleFocused) { _, focused in if !focused { commit() } }
+                    .labelsHidden()
+                    .accessibilityLabel("Section name")
+                Text("\(clips.count) clip\(clips.count == 1 ? "" : "s") · \(included) in the reel. Drag clips under this heading in the list to add them.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle(isOn: Binding(
-                        get: { section.showCard },
-                        set: { library.setSectionCard(section.id, $0) }
-                    )) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Show a divider card before this section")
-                            Text("A short title card in the exported reel, in the Player Card's colors.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+            Section {
+                Toggle(isOn: Binding(
+                    get: { section.showCard },
+                    set: { library.setSectionCard(section.id, $0) }
+                )) {
+                    Text("Divider card before this section")
+                    Text("A short title card in the reel, in the Player Card's colors.")
+                }
+                PlayerCardView(profile: model.profile.profile, headshot: model.profile.headshot,
+                               kind: .section(titleDraft.isEmpty ? section.title : titleDraft))
+                    .scaleEffect(440 / PlayerCardView.canvas.width, anchor: .topLeading)
+                    .frame(width: 440, height: 247.5, alignment: .topLeading)
+                    .mediaFrame()
+                    .opacity(section.showCard ? 1 : 0.35)
+                    .overlay {
+                        if !section.showCard {
+                            Pill(text: "Card off")
                         }
                     }
-                    .toggleStyle(.switch)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Design.Space.xs)
+                    .accessibilityLabel("Divider card preview")
+            } header: {
+                Text("In the Reel")
+            }
 
-                    PlayerCardView(profile: model.profile.profile, headshot: model.profile.headshot,
-                                   kind: .section(titleDraft.isEmpty ? section.title : titleDraft))
-                        .scaleEffect(480 / PlayerCardView.canvas.width, anchor: .topLeading)
-                        .frame(width: 480, height: 270, alignment: .topLeading)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .opacity(section.showCard ? 1 : 0.35)
-                        .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
-                        .overlay {
-                            if !section.showCard {
-                                Text("Card off")
-                                    .font(.headline)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .glassEffect(.regular, in: Capsule())
-                            }
-                        }
+            Section {
+                Toggle(isOn: Binding(
+                    get: { library.newClipsSectionID == section.id },
+                    set: { library.newClipsSectionID = $0 ? section.id : nil }
+                )) {
+                    Text("Add new recordings and imports here")
+                    Text("Handy while you work through one kind of play at a time.")
                 }
-                .padding(16)
-                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.04)))
+            } header: {
+                Text("While You Work")
+            }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle(isOn: Binding(
-                        get: { library.newClipsSectionID == section.id },
-                        set: { library.newClipsSectionID = $0 ? section.id : nil }
-                    )) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Add new recordings and imports here")
-                            Text("Handy while you work through one kind of play at a time.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .toggleStyle(.switch)
-                }
-                .padding(16)
-                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.04)))
-
+            Section {
                 HStack {
                     Spacer()
                     Button("Delete Section", role: .destructive) { library.deleteSection(section.id) }
                         .help("Removes the heading only; its clips stay in the list")
                 }
+            } footer: {
+                Text("Deleting a section keeps its clips.")
             }
-            .padding(24)
         }
+        .formStyle(.grouped)
         .onAppear { titleDraft = section.title }
         .onChange(of: section.id) { _, _ in titleDraft = section.title }
     }
@@ -1088,7 +1057,6 @@ private struct MultiSelectionPane: View {
             } label: {
                 Label("Move \(clips.count) Clips to Trash…", systemImage: "trash")
             }
-            .controlSize(.large)
             Button("Deselect All", action: clearSelection)
                 .buttonStyle(.borderless)
         }
@@ -1200,36 +1168,13 @@ struct PermissionBanner: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: 26))
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Screen Recording permission needed")
-                    .font(.headline)
-                Text("Turn on Cocut in System Settings › Privacy & Security › Screen & System Audio Recording, then click Reopen. macOS only applies the change after Cocut restarts.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 12)
-            VStack(spacing: 6) {
-                Button("Open Settings") { model.requestPermission() }
-                    .controlSize(.large)
-                Button("Reopen Cocut") { model.relaunch() }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-            }
+        Banner(tone: .warning, icon: "lock.shield.fill",
+               title: "Screen Recording permission needed",
+               message: "Turn on Cocut in System Settings › Privacy & Security › Screen & System Audio Recording, then reopen Cocut. macOS only applies the change after Cocut restarts.") {
+            Button("Open Settings") { model.requestPermission() }
+            Button("Reopen Cocut") { model.relaunch() }
+                .buttonStyle(.borderedProminent)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.orange.opacity(0.1))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.orange.opacity(0.25), lineWidth: 1)
-        )
     }
 }
 
