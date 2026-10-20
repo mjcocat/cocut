@@ -838,12 +838,51 @@ final class RallyFinder {
                                      rallies: rallies, includeServeSetup: includeServeSetup,
                                      analysisVersion: MatchStore.analysisVersion,
                                      answersVersion: MatchStore.answersVersion,
-                                     notTracks: notTracks, truth: truth, guide: guide)
+                                     notTracks: notTracks, truth: truth, guide: guide,
+                                     trackAnchors: anchors(for: Set(taughtTracks.keys).union(skippedTracks).union(notTracks.keys)))
         saveTask = Task {
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
             MatchStore.saveState(state, source: source, project: project)
         }
+    }
+
+    /// A few frames (first, middle, last) of each of `tracks`, to find them again after the match
+    /// is analyzed again.
+    private func anchors(for tracks: Set<Int>) -> [Int: [MatchStore.TrackAnchor]] {
+        guard let people = analysis?.people, !tracks.isEmpty else { return [:] }
+        var frames: [Int: [RallyDetector.PersonSighting]] = [:]
+        for p in people where tracks.contains(p.track) { frames[p.track, default: []].append(p) }
+        return frames.mapValues { list in
+            Set([0, list.count / 2, list.count - 1]).sorted().map {
+                MatchStore.TrackAnchor(time: list[$0].time, box: list[$0].box)
+            }
+        }
+    }
+
+    /// Where the tracks of `anchors` are in this analysis: saved track → track here, for those
+    /// found. A track is found when most of its frames have a player at nearly the same moment
+    /// and spot.
+    private func relocate(_ anchors: [Int: [MatchStore.TrackAnchor]]) -> [Int: Int] {
+        guard let people = analysis?.people.sorted(by: { $0.time < $1.time }) else { return [:] }
+        var out: [Int: Int] = [:]
+        for (old, frames) in anchors {
+            var votes: [Int: Int] = [:]
+            for frame in frames {
+                var best: (track: Int, overlap: Double)?
+                var i = Self.firstIndex(people, atOrAfter: frame.time - 0.3)
+                while i < people.count, people[i].time <= frame.time + 0.3 {
+                    let overlap = RallyDetector.overlap(people[i].box, frame.box)
+                    if overlap >= 0.5, overlap > (best?.overlap ?? 0) { best = (people[i].track, overlap) }
+                    i += 1
+                }
+                if let best { votes[best.track, default: 0] += 1 }
+            }
+            if let top = votes.max(by: { $0.value < $1.value }), top.value * 2 > frames.count {
+                out[old] = top.key
+            }
+        }
+        return out
     }
 
     /// Matches saved in this project, newest first.
@@ -905,9 +944,24 @@ final class RallyFinder {
                 guide = saved.guide ?? MatchStore.Guide()
                 if saved.analysisVersion == MatchStore.analysisVersion, saved.answersVersion == MatchStore.answersVersion {
                     frameExamples = saved.frameExamples
-                    taughtTracks = saved.taughtTracks
-                    skippedTracks = saved.skippedTracks
-                    notTracks = saved.notTracks ?? [:]
+                    if let anchors = saved.trackAnchors {
+                        // Put the answers back on the same players, wherever their tracks are now.
+                        let moved = relocate(anchors)
+                        taughtTracks = Dictionary(saved.taughtTracks.compactMap { entry in moved[entry.key].map { ($0, entry.value) } },
+                                                  uniquingKeysWith: { first, _ in first })
+                        skippedTracks = Set(saved.skippedTracks.compactMap { moved[$0] })
+                        notTracks = Dictionary((saved.notTracks ?? [:]).compactMap { entry in moved[entry.key].map { ($0, entry.value) } },
+                                               uniquingKeysWith: { $0.union($1) })
+                        let shifted = moved.filter { $0.key != $0.value }.count
+                        let lost = anchors.count - moved.count
+                        if shifted > 0 || lost > 0 {
+                            Log.info("Answers put back on the same players after the match was analyzed again: \(shifted) moved to a renumbered stretch, \(lost) not found (dropped)")
+                        }
+                    } else {
+                        taughtTracks = saved.taughtTracks
+                        skippedTracks = saved.skippedTracks
+                        notTracks = saved.notTracks ?? [:]
+                    }
                 } else if saved.analysisVersion != MatchStore.analysisVersion {
                     if !saved.taughtTracks.isEmpty {
                         Log.info("This match was analyzed again, so its earlier Who's This? answers were cleared")
