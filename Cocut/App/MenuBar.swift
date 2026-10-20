@@ -23,7 +23,9 @@ struct MenuBarLabel: View {
         case .starting, .stopping:
             Image(systemName: "ellipsis.circle")
         default:
-            Image(systemName: "scissors")
+            // The app's layered logo as a one-color template, tinted by the menu bar like system icons.
+            Image("MenuBarIcon")
+                .accessibilityLabel("Cocut")
         }
     }
 }
