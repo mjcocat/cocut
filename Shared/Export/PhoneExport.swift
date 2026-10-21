@@ -176,7 +176,8 @@ extension ReelExporter {
 struct TrackedPlayer: Codable {
     /// 2: follows by size, heading and jersey number instead of Vision's object tracker.
     /// 3: pose-based people, head anchoring, head clicks.
-    static let version = 3
+    /// 4: the whole clip at once (PlayerChain).
+    static let version = 4
     /// What it was tracked for (trim, spotlight, crop); a change means tracking again.
     var key: String
     /// Size of the spotlight's picture, in pixels.

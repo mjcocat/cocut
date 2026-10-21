@@ -3,6 +3,12 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.40.0
+- Phone reels follow your player far better. Cocut now looks through the **whole clip** before deciding who your player is, instead of guessing frame by frame. Moments where it's clear who's who are joined up, and teammates are ruled out by the numbers on their backs. A teammate crossing in front, or your player hidden for a moment, no longer pulls the frame away. In tests on real match clips, the player stayed in the phone frame far more often.
+- One spotlight per clip is all it needs. Click Head is still there for a clip it gets wrong.
+- Fill in the jersey number on the Player Card: it's how Cocut tells your player from teammates in the same uniform.
+- The first phone export after updating looks through each clip again, and takes a little longer.
+
 ## 0.39.0
 - New in the **Phone Frame** editor: **Click Head**. Turn it on and click your player's head. Following starts over on them from that moment. Click at the start of a clip, and wherever the frame wanders off them; each click shows as a yellow ring on the timeline. Works on clips without a spotlight too.
 - Phone reels hold on to your player much better. 0.38.1 lost track of them after about a second in most clips. Now Cocut finds players the way Find Rallies does (which tells apart players standing together at the net), follows their head (which stays in view when someone stands in front), and bridges short gaps.
