@@ -71,34 +71,53 @@ struct ContentView: View {
             // in the menu bar, Find Rallies in the Window menu (⇧⌘M) and Preview in Export (⌘Y).
             ToolbarItemGroup(placement: .primaryAction) {
                 Menu {
-                    ForEach(FilmSource.allCases) { source in
+                    Menu {
                         Button {
-                            startFilm(source, model: model, openWindow: openWindow)
+                            startFilm(.fullMatch, model: model, openWindow: openWindow)
                         } label: {
-                            Label(source.title + "…", systemImage: source.icon)
+                            Label("From Your Mac…", systemImage: "internaldrive")
                         }
-                        .disabled(source != .youtube && source != .fullMatch && model.isBusy)
-                        if source == .fullMatch {
-                            Button {
-                                openWindow(id: "rallies")
-                            } label: {
-                                Label("Matches You've Analyzed…   ⇧⌘M", systemImage: "clock.arrow.circlepath")
-                            }
+                        Button {
+                            startFilm(.youtube, model: model, openWindow: openWindow)
+                        } label: {
+                            Label("From YouTube…", systemImage: FilmSource.youtube.icon)
                         }
-                    }
-                    Divider()
-                    Button {
-                        Task { await model.recordFullScreen() }
+                        Divider()
+                        Button {
+                            openWindow(id: "rallies")
+                        } label: {
+                            Label("Matches You've Analyzed…   ⇧⌘M", systemImage: "clock.arrow.circlepath")
+                        }
                     } label: {
-                        Label("Record Full Screen   ⇧⌘F", systemImage: "rectangle.dashed.badge.record")
+                        Label("Full Match", systemImage: FilmSource.fullMatch.icon)
+                    }
+                    Button {
+                        startFilm(.clips, model: model, openWindow: openWindow)
+                    } label: {
+                        Label("Clips on Your Mac…", systemImage: FilmSource.clips.icon)
                     }
                     .disabled(model.isBusy)
-                    Button {
-                        Task { await model.recordLastRegion() }
+                    Menu {
+                        Button {
+                            Task { await model.recordNewRegion() }
+                        } label: {
+                            Label("Drag Over a Region   ⇧⌘R", systemImage: "rectangle.dashed")
+                        }
+                        Button {
+                            Task { await model.recordFullScreen() }
+                        } label: {
+                            Label("Full Screen   ⇧⌘F", systemImage: "rectangle.dashed.badge.record")
+                        }
+                        Button {
+                            Task { await model.recordLastRegion() }
+                        } label: {
+                            Label("Same Region Again   ⇧⌘L", systemImage: "arrow.clockwise.circle")
+                        }
+                        .disabled(!model.canRecordLastRegion)
                     } label: {
-                        Label("Record Same Region Again   ⇧⌘L", systemImage: "arrow.clockwise.circle")
+                        Label("Record Your Screen", systemImage: FilmSource.online.icon)
                     }
-                    .disabled(model.isBusy || !model.canRecordLastRegion)
+                    .disabled(model.isBusy)
                     Divider()
                     Button {
                         model.showingAddFromProjects = true
@@ -106,9 +125,10 @@ struct ContentView: View {
                         Label("From Other Projects…", systemImage: "square.stack.3d.up")
                     }
                 } label: {
-                    Label("Add", systemImage: "plus")
-                        .labelStyle(.titleAndIcon)
+                    Label("Add Videos", systemImage: "plus")
                 }
+                .labelStyle(.titleAndIcon)
+                .fixedSize()
                 .help("Add film: a full match, a YouTube video, clips on your Mac, a screen recording, or clips from other projects")
             }
         }

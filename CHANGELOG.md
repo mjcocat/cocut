@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.43.2
+- The toolbar button says **Add Videos**, and its menu is grouped: **Full Match** (from your Mac, from YouTube, or a match you've analyzed), **Clips on Your Mac**, **Record Your Screen** (a region, full screen, or the same region again), and **From Other Projects**.
+
 ## 0.43.1
 - A quieter toolbar: just **Add**. Find Rallies is "A full match video…" (or "Matches You've Analyzed…" to go back to one) in that menu, recording is in the menu bar, and Preview is in Export. The keyboard shortcuts still work (⇧⌘M, ⇧⌘R, ⌘Y).
 
