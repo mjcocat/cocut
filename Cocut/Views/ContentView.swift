@@ -67,17 +67,42 @@ struct ContentView: View {
                 }
             }
 
-            // The ways film gets in, then watching the result. Undo and Redo live in the Edit menu
-            // (⌘Z, ⇧⌘Z), like every Mac app.
+            // Every way film gets in, in one menu (the same four as Get Started), then the Find
+            // Rallies workspace and watching the result. Undo and Redo live in the Edit menu.
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    Task { await model.importVideosWithPanel() }
+                Menu {
+                    ForEach(FilmSource.allCases) { source in
+                        Button {
+                            startFilm(source, model: model, openWindow: openWindow)
+                        } label: {
+                            Label(source.title + "…", systemImage: source.icon)
+                        }
+                        .disabled(source != .youtube && source != .fullMatch && model.isBusy)
+                    }
+                    Divider()
+                    Button {
+                        Task { await model.recordFullScreen() }
+                    } label: {
+                        Label("Record Full Screen   ⇧⌘F", systemImage: "rectangle.dashed.badge.record")
+                    }
+                    .disabled(model.isBusy)
+                    Button {
+                        Task { await model.recordLastRegion() }
+                    } label: {
+                        Label("Record Same Region Again   ⇧⌘L", systemImage: "arrow.clockwise.circle")
+                    }
+                    .disabled(model.isBusy || !model.canRecordLastRegion)
+                    Divider()
+                    Button {
+                        model.showingAddFromProjects = true
+                    } label: {
+                        Label("From Other Projects…", systemImage: "square.stack.3d.up")
+                    }
                 } label: {
-                    Label("Import", systemImage: "square.and.arrow.down")
+                    Label("Add", systemImage: "plus")
                         .labelStyle(.titleAndIcon)
                 }
-                .help("Add video files, such as Hudl downloads or phone videos (⌘I)")
-                .disabled(model.isBusy)
+                .help("Add film: a full match, a YouTube video, clips on your Mac, a screen recording, or clips from other projects")
 
                 Button {
                     openWindow(id: "rallies")
@@ -96,8 +121,7 @@ struct ContentView: View {
                 .disabled(model.library.includedClips.isEmpty)
             }
 
-            // Record is a plain button (the toolbar keeps a button's red, not a menu's), with the
-            // other ways to record in the menu beside it.
+            // Recording is what you do most while watching film online: one click, in red.
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     Task { await model.recordNewRegion() }
@@ -107,18 +131,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Design.record)
-                .help("Drag over the video on screen, then press play to record (⇧⌘R)")
-                .disabled(model.isBusy)
-
-                Menu {
-                    Button("Record Full Screen   ⇧⌘F") { Task { await model.recordFullScreen() } }
-                    Button("Record Same Region Again   ⇧⌘L") { Task { await model.recordLastRegion() } }
-                        .disabled(!model.canRecordLastRegion)
-                } label: {
-                    Label("More Ways to Record", systemImage: "chevron.down")
-                }
-                .menuIndicator(.hidden)
-                .help("Record the full screen, or the last region again")
+                .help("Drag over the video on screen, then press play to record (⇧⌘R). Add › has more ways to record.")
                 .disabled(model.isBusy)
             }
         }

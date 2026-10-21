@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.43.0
+- One **Add** button in the toolbar for every way to bring film in, the same as Get Started: a full match, a YouTube video, clips on your Mac, recording your screen (full screen or the same region again), and clips from other projects. It replaces Import and the arrow next to Record.
+
 ## 0.42.1
 - Cocut Lab, for Claude Code doing the marking: pictures come as contact sheets (four moments each), and runs of right guesses are accepted with one command (`cocut-lab accept`). About a quarter of the pictures, so it's faster and uses much less of your Claude plan.
 
