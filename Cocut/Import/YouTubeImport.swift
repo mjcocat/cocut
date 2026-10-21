@@ -83,6 +83,21 @@ final class YouTubeImporter {
 
             // H.264 video up to 1080p: what AVFoundation plays on every Mac. Never AV1 or VP9, which
             // older Macs can't play; the combined file (360p at most) only when nothing else exists.
+            if let ffmpeg = Self.ffmpeg {
+                // With ffmpeg (e.g. from Homebrew), yt-dlp puts picture and sound together itself:
+                // more reliable than AVFoundation with some of YouTube's files.
+                state = .downloading("Downloading…", 0)
+                let file = try await download(tool, link, format: "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[vcodec^=avc1]",
+                                              extra: ["--merge-output-format", "mp4", "--ffmpeg-location", ffmpeg.path(percentEncoded: false)],
+                                              to: work, name: "video", label: "Downloading…", range: 0...0.95)
+                try Task.checkCancellation()
+                try FileManager.default.createDirectory(at: Self.downloadsFolder, withIntermediateDirectories: true)
+                let output = Self.uniqueURL(for: title)
+                try FileManager.default.moveItem(at: file, to: output)
+                Log.info("YouTube import: joined by yt-dlp with ffmpeg (\(ffmpeg.path(percentEncoded: false)))")
+                await finish(output, offered: offered)
+                return
+            }
             state = .downloading("Downloading the video…", 0)
             let video = try await download(tool, link, format: "bv*[vcodec^=avc1][height<=1080]/b[vcodec^=avc1]",
                                            to: work, name: "video", label: "Downloading the video…", range: 0...0.85)
@@ -103,14 +118,7 @@ final class YouTubeImporter {
             try FileManager.default.createDirectory(at: Self.downloadsFolder, withIntermediateDirectories: true)
             let output = Self.uniqueURL(for: title)
             try await Self.merge(video: video, audio: audio, to: output)
-            let got = await Self.height(of: output)
-            Log.info("YouTube import saved \(output.lastPathComponent) at \(got.map { "\($0)p" } ?? "unknown height")")
-            // Expect 1080p, or the video's best when it's posted lower.
-            if let got, let offered, got < min(offered, 1080) {
-                state = .lower(output, got: got, expected: min(offered, 1080))
-            } else {
-                state = .finished(output)
-            }
+            await finish(output, offered: offered)
         } catch {
             // Cancelling stops yt-dlp, which then reports a failure: that's not one to show.
             if error is CancellationError || Task.isCancelled {
@@ -122,12 +130,30 @@ final class YouTubeImporter {
         }
     }
 
+    /// Done: checks it got the quality it expected (1080p, or the video's best when it's posted lower).
+    private func finish(_ output: URL, offered: Int?) async {
+        let got = await Self.height(of: output)
+        Log.info("YouTube import saved \(output.lastPathComponent) at \(got.map { "\($0)p" } ?? "unknown height")")
+        if let got, let offered, got < min(offered, 1080) {
+            state = .lower(output, got: got, expected: min(offered, 1080))
+        } else {
+            state = .finished(output)
+        }
+    }
+
+    /// ffmpeg, if it's installed (Homebrew puts it in one of these).
+    static var ffmpeg: URL? {
+        ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+            .map { URL(fileURLWithPath: $0) }
+    }
+
     /// One yt-dlp download into `folder`, reporting its progress as part of `range`.
-    private func download(_ tool: URL, _ link: String, format: String, to folder: URL, name: String,
+    private func download(_ tool: URL, _ link: String, format: String, extra: [String] = [], to folder: URL, name: String,
                           label: String, range: ClosedRange<Double>) async throws -> URL {
         let template = folder.appending(path: "\(name).%(ext)s").path(percentEncoded: false)
-        let result = try await runner.run(tool, ["--no-playlist", "--newline", "--no-part", "-f", format,
-                                                 "-o", template, link]) { [weak self] line in
+        let result = try await runner.run(tool, ["--no-playlist", "--newline", "--no-part", "-f", format]
+                                                 + extra + ["-o", template, link]) { [weak self] line in
             guard let percent = Self.percent(in: line) else { return }
             Task { @MainActor in
                 guard let self, case .downloading = self.state else { return }
@@ -167,6 +193,19 @@ final class YouTubeImporter {
 
     /// The video's own picture and the separate sound as one .mp4, without re-encoding.
     nonisolated static func merge(video: URL, audio: URL?, to output: URL) async throws {
+        do {
+            try await join(video: video, audio: audio, to: output)
+        } catch let error as ImportError {
+            throw error
+        } catch {
+            // AVFoundation can't read some of YouTube's files at all (e.g. OSStatus -12780).
+            Log.error("YouTube import: couldn't open the download: \(describe(error))")
+            throw ImportError.download("macOS couldn't read the file YouTube sent. Install ffmpeg (in Terminal: brew install ffmpeg) "
+                                       + "and try again: Cocut then has the downloader put the video together itself.")
+        }
+    }
+
+    private nonisolated static func join(video: URL, audio: URL?, to output: URL) async throws {
         let composition = AVMutableComposition()
         let videoAsset = AVURLAsset(url: video)
         guard let videoTrack = try await videoAsset.loadTracks(withMediaType: .video).first else {

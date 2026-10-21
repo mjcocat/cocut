@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.41.1
+- Import from YouTube works with videos macOS can't open as YouTube sends them: with ffmpeg installed (in Terminal: brew install ffmpeg), the downloader puts the video and sound together itself. Without it, Cocut says so instead of a vague error.
+
 ## 0.41.0
 - New: **Cocut Lab**, a separate app for tuning how phone reels follow your player on your own clips. Mark where your player is (mostly by pressing Return), and it searches for the settings that keep them in the frame, checked on matches it didn't tune on. It also runs from Terminal and Claude Code. Setup: docs/cocut-lab.md in the Cocut repository.
 - Import from YouTube: when putting the video and sound together fails, Cocut now tries again another way (and as a last resort keeps the video as downloaded) instead of stopping, and the log says exactly what went wrong.
