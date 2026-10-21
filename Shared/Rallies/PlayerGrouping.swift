@@ -45,6 +45,8 @@ enum PlayerGrouping {
         var groupTracks: Set<Int>
         /// The learned "same person" similarity.
         var threshold: Float
+        /// What the film alone suggested, before answers tightened it.
+        var filmThreshold: Float = 0
         /// Frames of single players in all.
         var totalFrames: Int
         /// Players known from an answer or a clear read, which the rest are matched to.
@@ -70,6 +72,8 @@ enum PlayerGrouping {
     static let matchTop = 3
     /// A known player's stretches compared when matching (their longest).
     static let referenceSize = 60
+    /// The most answers can raise the "same person" threshold above what the film alone suggests.
+    static let maxAnswerTightening: Float = 0.04
 
     /// - Parameters:
     ///   - taughtTracks: stretches the user identified.
@@ -201,7 +205,28 @@ enum PlayerGrouping {
             }
             same.append(RallyDetector.dot(mean(sorted[..<half]), mean(sorted[half...])))
         }
-        let threshold = bestSplit(same: same, different: different)
+        let learned = bestSplit(same: same, different: different)
+
+        // 4b. Learn from answers too. A stretch you unticked as "not #N", next to the stretches you
+        //     confirmed as #N, is someone who looked like #N closely enough to be grouped with
+        //     them, yet isn't. When answers show a lot of those, "the same person" must be
+        //     stricter than most of them (up to a limit, so people still group). Without this, a
+        //     group you mostly unticked came straight back as a new question.
+        var confusable: [Float] = []
+        let answeredByNumber = Dictionary(grouping: (0..<n).filter { taughtTracks[stretches[$0].track] != nil },
+                                          by: { taughtTracks[stretches[$0].track]! })
+        for i in 0..<n {
+            guard let notNumbers = notTracks[stretches[i].track] else { continue }
+            for number in notNumbers {
+                for j in (answeredByNumber[number] ?? []).prefix(40) { confusable.append(sim(i, j)) }
+            }
+        }
+        var threshold = learned
+        if confusable.count >= 6 {
+            let sorted = confusable.sorted()
+            let upper = sorted[Int(Double(sorted.count - 1) * 0.75)]
+            threshold = min(learned + maxAnswerTightening, max(learned, upper + 0.005))
+        }
 
         // 5. People. Each starts as one stretch; `root` is the stretch that stands for the person.
         var parent = Array(0..<n)
@@ -455,7 +480,7 @@ enum PlayerGrouping {
         }
         let total = people.reduce(0) { $0 + $1.frames }
         return Result(people: people.sorted { $0.frames > $1.frames }, decisions: decisions, groupTracks: groupTracks,
-                      threshold: threshold, totalFrames: total,
+                      threshold: threshold, filmThreshold: learned, totalFrames: total,
                       anchors: references.filter { $0.number >= 0 }.count, matched: matched,
                       liberosByColor: Set(liberoColors.keys))
     }

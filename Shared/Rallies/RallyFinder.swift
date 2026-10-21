@@ -533,6 +533,8 @@ final class RallyFinder {
             let counts = identifiedCounts
             let seconds = String(format: "%.1f", Date().timeIntervalSince(start))
             let threshold = String(format: "%.3f", result.threshold)
+                + (result.threshold > result.filmThreshold + 0.0005
+                   ? String(format: " (film %.3f, tightened by your answers)", result.filmThreshold) : "")
             let stretches = result.decisions.count - result.groupTracks.count
             let percent = Int((identifiedShare * 100).rounded())
             let biggest = result.people.first.map { "\($0.tracks.count) stretches / \($0.frames) frames" } ?? "none"

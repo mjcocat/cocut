@@ -55,10 +55,14 @@ Open **Terminal** (Applications › Utilities) and run these one at a time.
 
 ## Marking clips (you, in the Cocut Lab window)
 
-1. Open **Cocut Lab**. Click **Add Clips** › your project › **Clips with a Spotlight**.
-2. Click **Find People**. It looks through each clip once, a few seconds per clip.
-3. Pick a clip. You see one moment every half second, with everyone Cocut found outlined and its
+1. Open **Cocut Lab**. Click **Add Clips** › your project › **Clips with a Spotlight**. Cocut Lab
+   then finds the people in each clip by itself (a few seconds per clip; the toolbar shows it).
+2. Pick a clip. You see one moment every half second, with everyone Cocut found outlined and its
    current guess in **yellow**.
+3. Press **Space** to play: it steps through the moments, accepting the yellow guess at each. When
+   the yellow box is on the wrong player, press **Space** (it takes back the one it just accepted)
+   and click your player's head. Press **Space** again to carry on.
+   Or one moment at a time:
    - Yellow box is your player: press **Return**.
    - It isn't: **click your player's head**.
    - Can't see them (hidden, or out of the picture): press **H**.
@@ -66,7 +70,7 @@ Open **Terminal** (Applications › Utilities) and run these one at a time.
    - **←** and **→** move back and forward; **Delete** clears a mark.
 4. Set **Following #** at the bottom of the clip list to your player's number, if it's not filled in.
 
-A 15-second clip is about 30 moments. Most of them are a press of Return, so it's quick. Clips
+A 15-second clip is about 30 moments; with Space it plays through in about 20 seconds. Clips
 from **different matches** are worth the most: the Lab checks its tuning on each match in turn.
 
 ## Tuning (Claude Code)

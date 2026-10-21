@@ -320,6 +320,9 @@ private struct WhoIsThisPane: View {
     @State private var regrouping = false
     @State private var otherNumber = ""
     @State private var answeredCount = 0
+    /// The lowest "more worth answering" shown so far. Each answer regroups everyone, which can
+    /// split a mixed group into several; showing that as the count going up felt like no progress.
+    @State private var lowestWorth: Int?
     /// "Most players are sorted out": offered once per visit.
     @State private var showingDone = false
     @State private var offeredDone = false
@@ -360,10 +363,12 @@ private struct WhoIsThisPane: View {
                     .help("Of the players seen during rallies that Cocut couldn't place when you started. The people seen most come first, so the first answers count the most.")
                 Spacer()
                 if finder.isMatching { ProgressView().controlSize(.small) }
-                Text(mostlyDone ? "Mostly done: the rest are brief glimpses" : "About \(worth) more worth answering")
+                Text(mostlyDone ? "Mostly done: the rest are brief glimpses" : "About \(min(worth, lowestWorth ?? worth)) more worth answering")
                     .font(.callout)
                     .foregroundStyle(mostlyDone ? Color.green : Color.secondary)
                     .monospacedDigit()
+                    .help("An estimate. Answers can show that one group was really several people; those come up as new questions.")
+                    .onChange(of: worth, initial: true) { _, new in lowestWorth = min(new, lowestWorth ?? new) }
             }
             if let current {
                 if wide {

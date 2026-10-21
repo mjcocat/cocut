@@ -48,9 +48,17 @@ final class LabModel {
     var image: CGImage?
     var busy: String?
     var report: String?
-    /// The current settings' guess per clip (by frame time), worked out when needed.
+    /// Playing through the checkpoints, accepting the guess at each (Space).
+    var playing = false
+    /// The current settings' guess per clip (by frame time), worked out when a clip opens.
     private var guesses: [UUID: [Double: PlayerChain.Person]] = [:]
+    /// What Find People saw, per clip (read once from the lab folder).
+    private var detectionCache: [UUID: ClipDetections] = [:]
     private var imageTask: Task<Void, Never>?
+    private var playTask: Task<Void, Never>?
+    /// The last checkpoint play accepted, and when: Space pressed just after takes it back (you
+    /// press it a moment after seeing the guess was wrong).
+    private var lastAccepted: (clip: UUID, index: Int, at: Date)?
 
     var clip: LabClip? { selection.flatMap { id in store.clips.first { $0.id == id } } }
     var checkpoints: [Double] { clip.map(LabStore.checkpoints) ?? [] }
@@ -60,12 +68,28 @@ final class LabModel {
     func reload() {
         store = LabStore(folder: store.folder)
         guesses = [:]
+        detectionCache = [:]
+    }
+
+    func detections(_ id: UUID) -> ClipDetections? {
+        if let d = detectionCache[id] { return d }
+        let d = store.detections(id)
+        if let d { detectionCache[id] = d }
+        return d
+    }
+
+    /// Works out the current settings' guess for `clip` (after its people are found, or when a
+    /// first head mark points the player out).
+    func refreshGuess(_ clip: LabClip) {
+        guesses[clip.id] = LabPictures.guess(store: store, clip: clip) ?? [:]
     }
 
     // MARK: Moving around
 
     func select(_ id: UUID?) {
+        stopPlaying()
         selection = id
+        if let id, guesses[id] == nil, let clip { refreshGuess(clip) }
         if let id, position[id] == nil {
             // Start at the first checkpoint not marked yet.
             let marked = Set(store.marks(id).map { ($0.time * 100).rounded() })
@@ -97,13 +121,12 @@ final class LabModel {
 
     /// People found in the frame nearest the current checkpoint.
     var people: [PlayerChain.Person] {
-        guard let id = selection, let time, let d = store.detections(id) else { return [] }
+        guard let id = selection, let time, let d = detections(id) else { return [] }
         return d.frames.min { abs($0.time - time) < abs($1.time - time) }?.people ?? []
     }
 
     var guess: PlayerChain.Person? {
-        guard let clip, let time, let d = store.detections(clip.id) else { return nil }
-        if guesses[clip.id] == nil { guesses[clip.id] = LabPictures.guess(store: store, clip: clip) ?? [:] }
+        guard let clip, let time, let d = detections(clip.id) else { return nil }
         guard let frame = d.frames.min(by: { abs($0.time - time) < abs($1.time - time) }) else { return nil }
         return guesses[clip.id]?[frame.time]
     }
@@ -112,11 +135,50 @@ final class LabModel {
         guard let clip, let time else { return }
         store.setMark(mark, at: time, for: clip.id)
         // A first head mark on a clip with no spotlight is what points the player out.
-        if clip.spotlight == nil { guesses[clip.id] = nil }
+        if clip.spotlight == nil { refreshGuess(clip) }
         move(1)
     }
 
+    // MARK: Playing through
+
+    /// Steps through the checkpoints, accepting the yellow guess at each, until the end of the
+    /// clip or Space. Pausing goes back to the last checkpoint it accepted and takes that back,
+    /// since you press Space a moment after seeing the guess was wrong.
+    func togglePlay() {
+        if playing { stopPlaying(takeBack: true); return }
+        guard let clip, guess != nil || mark != nil else { return }
+        playing = true
+        playTask = Task {
+            while playing, !Task.isCancelled, selection == clip.id {
+                try? await Task.sleep(for: .milliseconds(700))
+                guard playing, !Task.isCancelled, selection == clip.id, let time else { break }
+                if mark == nil, let g = guess {
+                    store.setMark(.head(time, g.head.x, g.head.y), at: time, for: clip.id)
+                    lastAccepted = (clip.id, index, Date())
+                }
+                guard index < checkpoints.count - 1 else { break }
+                move(1)
+            }
+            playing = false
+        }
+    }
+
+    func stopPlaying(takeBack: Bool = false) {
+        guard playing else { return }
+        playing = false
+        playTask?.cancel()
+        guard takeBack, let clip, let last = lastAccepted, last.clip == clip.id,
+              Date().timeIntervalSince(last.at) < 0.6, checkpoints.indices.contains(last.index) else { return }
+        // Accepted just before Space: take it back and go back to it.
+        store.setMark(nil, at: checkpoints[last.index], for: clip.id)
+        position[clip.id] = last.index
+        lastAccepted = nil
+        loadImage()
+    }
+
     func markHead(x: Double, y: Double) {
+        // A click is on the moment showing, so nothing to take back.
+        stopPlaying()
         guard let time else { return }
         setMark(.head(time, x, y))
     }
@@ -134,6 +196,7 @@ final class LabModel {
         Task {
             _ = await LabCLI.execute(["--lab", store.folder.path(percentEncoded: false), "import-project", name] + (all ? ["--all"] : []))
             reload()
+            findPeople()
         }
     }
 
@@ -145,6 +208,7 @@ final class LabModel {
         Task {
             _ = await LabCLI.execute(["--lab", store.folder.path(percentEncoded: false), "add"] + panel.urls.map { $0.path(percentEncoded: false) })
             reload()
+            findPeople()
         }
     }
 
@@ -178,21 +242,34 @@ final class LabModel {
 
     // MARK: Finding people and tuning
 
+    /// Finds the people in every clip that hasn't been looked at yet (runs by itself after clips
+    /// are added, and when the Lab opens). The guess appears on each clip as it's done.
     func findPeople() {
+        guard !findingPeople else { return }
         let todo = store.clips.filter { !store.hasDetections($0.id) }
-        guard !todo.isEmpty else { busy = nil; return }
+        guard !todo.isEmpty else { return }
+        findingPeople = true
         Task {
             for (n, clip) in todo.enumerated() {
                 busy = "Finding people in \(clip.title) (\(n + 1) of \(todo.count))…"
-                if let found = try? await PlayerTracker.detect(url: clip.videoURL, start: clip.start, end: clip.end,
-                                                               unitCrop: clip.unitCrop) {
-                    store.saveDetections(found, for: clip.id)
+                do {
+                    if let found = try await PlayerTracker.detect(url: clip.videoURL, start: clip.start, end: clip.end,
+                                                                  unitCrop: clip.unitCrop) {
+                        store.saveDetections(found, for: clip.id)
+                        detectionCache[clip.id] = found
+                        refreshGuess(clip)
+                    }
+                } catch {
+                    Log.error("Cocut Lab: couldn't find people in \(clip.title): \(error.localizedDescription)")
                 }
             }
             busy = nil
-            guesses = [:]
+            findingPeople = false
+            // Clips added meanwhile.
+            if store.clips.contains(where: { !store.hasDetections($0.id) }) { findPeople() }
         }
     }
+    private var findingPeople = false
 
     func tune() {
         let cases = LabTuner.cases(store)
@@ -272,6 +349,7 @@ struct LabView: View {
             }
         }
         .toolbar { LabToolbar() }
+        .task { model.findPeople() }
         .confirmationDialog(
             model.removing.count == 1 ? "Remove this clip from the lab?" : "Remove \(model.removing.count) clips from the lab?",
             isPresented: Binding(get: { !model.removing.isEmpty }, set: { if !$0 { model.removing = [] } })
@@ -403,6 +481,7 @@ struct LabelPane: View {
         .focusEffectDisabled()
         .onAppear { focused = true }
         .onKeyPress(.return) { model.acceptGuess(); return .handled }
+        .onKeyPress(.space) { model.togglePlay(); return .handled }
         .onKeyPress(.leftArrow) { model.move(-1); return .handled }
         .onKeyPress(.rightArrow) { model.move(1); return .handled }
         .onKeyPress(.delete) { model.setMark(nil); return .handled }
@@ -425,7 +504,8 @@ struct LabelPane: View {
                         .foregroundStyle(.orange)
                 }
                 if !model.store.hasDetections(clip.id) {
-                    Text("Find People first to see the guess").foregroundStyle(.secondary)
+                    Text(model.busy != nil ? "Finding people… the guess appears when it's done" : "Click Find People to see the guess")
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -494,7 +574,16 @@ struct LabelPane: View {
             Button { model.move(-1) } label: { Label("Back", systemImage: "chevron.left") }
                 .help("Previous checkpoint (←)")
             Spacer()
-            Text("Click their head")
+            Button {
+                model.togglePlay()
+            } label: {
+                Label(model.playing ? "Stop" : "Play", systemImage: model.playing ? "pause.fill" : "play.fill")
+            }
+            .disabled(!model.playing && model.guess == nil)
+            .help(model.playing
+                  ? "Stop, and take back the guess it just accepted (Space). Then click their head."
+                  : "Step through, accepting the yellow guess at each moment. Press Space when it's wrong (Space)")
+            Text(model.playing ? "Space when it's wrong" : "Click their head")
                 .foregroundStyle(.secondary)
             Button("Guess Is Right") { model.acceptGuess() }
                 .keyboardShortcut(.defaultAction)

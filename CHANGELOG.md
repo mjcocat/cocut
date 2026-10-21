@@ -3,6 +3,11 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.42.0
+- Who's This? learns from your answers: when you untick most of a group, Cocut takes it that players who look that alike can be different people and keeps them apart. Fewer mixed groups, and fewer questions that look like repeats. The "more worth answering" estimate no longer climbs as you answer.
+- Cocut Lab: finds the people in clips by itself as soon as they're added (and when it opens), so the yellow guess is there right away.
+- Cocut Lab: press **Space** to play through a clip, accepting the yellow guess at each moment. Press Space again when it's wrong (it takes back the one it just accepted), click your player's head, and carry on.
+
 ## 0.41.2
 - Cocut Lab: select several clips (⌘-click, Shift-click, ⌘A) and remove them at once with Delete, the trash button, or right-click. It asks first only when clips have marks.
 - Cocut Lab has its own icon.
