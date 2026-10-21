@@ -95,5 +95,6 @@ cocut-lab projects          your Cocut projects
 cocut-lab import-project "Future"
 cocut-lab detect            find people in new clips
 cocut-lab tune              search for better settings (report in ~/Documents/Cocut Lab/reports)
+cocut-lab rallies           how well Find Rallies finds rallies, scored against your corrections
 cocut-lab help              everything else
 ```

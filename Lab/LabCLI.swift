@@ -10,7 +10,7 @@ import Foundation
 @MainActor
 enum LabCLI {
     static let commands: Set<String> = ["help", "--help", "-h", "status", "projects", "import-project", "add", "remove",
-                                        "detect", "frames", "mark", "accept", "score", "tune", "settings", "--lab"]
+                                        "detect", "frames", "mark", "accept", "score", "tune", "settings", "rallies", "--lab"]
 
     static let usage = """
     Cocut Lab: tune how Cocut's phone reels follow a player, on real clips.
@@ -46,6 +46,9 @@ enum LabCLI {
                                       Search for better settings, checking them on clips held out
                                       from the search. Writes reports/ (Markdown and JSON).
       settings                        The built-in settings, as Swift and JSON.
+      rallies                         How well Find Rallies finds rallies: scored against the rallies
+                                      you settled on (added, removed, retimed) in your Cocut projects.
+                                      Writes reports/rallies-<date>.md.
 
     Clips are named by title or the start of their id (see status).
     """
@@ -89,6 +92,9 @@ enum LabCLI {
             case "frames": try await frames(rest, store: store)
             case "mark": try mark(rest, store: store)
             case "accept": try accept(rest, store: store)
+            case "rallies":
+                let text = try rallyReport(store: store)
+                print(text)
             case "score": try score(rest, store: store)
             case "tune": try tune(rest, store: store)
             case "settings":
@@ -375,6 +381,46 @@ enum LabCLI {
         print("")
         print(markdown)
         print("Saved reports/tune-\(stamp).md and reports/latest-settings.json")
+    }
+
+    // MARK: Rallies
+
+    /// Scores Find Rallies on every match (in every Cocut project) where the rallies were changed
+    /// by hand, and saves the report in the lab's reports folder.
+    static func rallyReport(store: LabStore) throws -> String {
+        var results: [RallyScore.Result] = []
+        var skipped: [String] = []
+        for (project, folder) in try cocutProjects() {
+            let matches = folder.appending(path: "Matches", directoryHint: .isDirectory)
+            let dirs = (try? FileManager.default.contentsOfDirectory(at: matches, includingPropertiesForKeys: nil)) ?? []
+            for dir in dirs {
+                guard let data = try? Data(contentsOf: dir.appending(path: "analysis.json")) else { continue }
+                guard let saved = try? JSONDecoder().decode(MatchStore.Saved.self, from: data) else {
+                    skipped.append("\(dir.lastPathComponent) (analysis from an older version)")
+                    continue
+                }
+                let name = "\(saved.sourceName) [\(project.name)]"
+                guard let stateData = try? Data(contentsOf: dir.appending(path: "state.json")),
+                      let state = try? JSONDecoder().decode(MatchStore.State.self, from: stateData) else {
+                    skipped.append("\(name) (no changes saved)")
+                    continue
+                }
+                let changed = state.rallies.contains { $0.isManual || $0.timesEdited || !$0.isIncluded }
+                guard changed else {
+                    skipped.append("\(name) (rallies not changed by hand)")
+                    continue
+                }
+                let spans = RallyDetector.rallies(from: saved.result, includeSetup: state.includeServeSetup)
+                let breaks = RallyDetector.breaks(in: spans, people: saved.result.people)
+                let found = spans.indices.filter { !breaks.contains($0) }.map { RallyScore.Segment(start: spans[$0].start, end: spans[$0].end) }
+                let real = state.rallies.filter(\.isIncluded).map { RallyScore.Segment(start: $0.start, end: $0.end) }
+                results.append(RallyScore.score(name: name, found: found, real: real))
+            }
+        }
+        let text = RallyScore.markdown(results, skipped: skipped)
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        try? text.write(to: store.folder.appending(path: "reports/rallies-\(stamp).md"), atomically: true, encoding: .utf8)
+        return text
     }
 
     // MARK: Pictures

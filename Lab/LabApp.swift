@@ -401,6 +401,12 @@ struct LabToolbar: ToolbarContent {
             .help("Search for better settings, checked on clips held out from the search")
             .disabled(model.busy != nil)
             Button {
+                model.report = (try? LabCLI.rallyReport(store: model.store)) ?? "Couldn't read Cocut's projects."
+            } label: {
+                Label("Check Rallies", systemImage: "chart.bar.xaxis")
+            }
+            .help("How well Find Rallies finds rallies, scored against the rallies you settled on in your matches")
+            Button {
                 model.askRemove(model.selected)
             } label: {
                 Label("Remove", systemImage: "trash")
