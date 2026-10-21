@@ -2,23 +2,24 @@ import AVFoundation
 import CoreML
 import Vision
 
-/// Follows the spotlighted player through a clip, for phone exports: finds them on the first
-/// frame from the spotlight ring, follows them with Vision's object tracker, and when the
-/// tracker loses them (players cross, someone runs in front) finds them again by how they look,
-/// with the same re-identification model Find Rallies uses. A check every second catches the
-/// tracker quietly sliding onto a teammate.
+/// Follows the spotlighted player through a clip, for phone exports. Every frame (15 a second)
+/// it finds the people in the picture with Vision, and `PlayerFollower` picks out the player:
+/// by where they were heading and how big they look (a teammate passing between the camera and
+/// the net looks far bigger), and when it's close, by the number on their back and how they look,
+/// with the same re-identification model Find Rallies uses. Their number is checked every half
+/// second; if it's wrong twice running, the follow goes back to the last time it was right and
+/// looks for them again.
 enum PlayerTracker {
     /// How often frames are looked at.
-    static let interval = 0.1
-    /// Below this, the tracker is guessing.
-    static let minConfidence: Float = 0.35
-    /// Appearance agreement needed to say "that's them again".
-    static let sameLook: Float = 0.55
+    static let interval = 1.0 / 15
+    /// How often the number on the followed player's back is checked.
+    static let numberCheck = 0.5
 
     /// Where the player is through `start...end` (clip seconds), in the picture the spotlight was
     /// placed on: the upright frame, cropped to `unitCrop` (fractions of it) when the clip has one.
+    /// `number` is the jersey number they're expected to wear (from the player card), if known.
     static func follow(url: URL, start: Double, end: Double, unitCrop: CGRect?,
-                       spot: Spotlight) async throws -> [CameraPlanner.Sighting] {
+                       spot: Spotlight, number: Int?) async throws -> [CameraPlanner.Sighting] {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { return [] }
         let natural = try await track.load(.naturalSize)
@@ -42,13 +43,11 @@ enum PlayerTracker {
         guard reader.startReading() else { return [] }
         defer { reader.cancelReading() }
 
-        let sequence = VNSequenceRequestHandler()
-        var current: VNDetectedObjectObservation?
+        var follower: PlayerFollower?
         var look: [Float]?
-        var seeded = false
         var sightings: [CameraPlanner.Sighting] = []
-        var lastFrame = -Double.infinity, lastCheck = -Double.infinity, lastSearch = -Double.infinity
-        var lastCenter = picture.toVision(x: spot.x, y: spot.y)
+        var lastFrame = -Double.infinity, lastNumberCheck = -Double.infinity, lastSearch = -Double.infinity
+        var stats = (frames: 0, found: 0, rewinds: 0, reads: 0)
 
         while let sample = output.copyNextSampleBuffer() {
             try Task.checkCancellation()
@@ -56,59 +55,105 @@ enum PlayerTracker {
             let time = CMSampleBufferGetPresentationTimeStamp(sample).seconds
             guard time - lastFrame >= interval - 0.005 else { continue }
             lastFrame = time
+            stats.frames += 1
 
-            if current == nil {
-                if !seeded {
-                    seeded = true
-                    // First frame: the person inside the ring, or a box the ring's size.
-                    let seed = seedBox(buffer: buffer, orientation: orientation, spot: spot, picture: picture,
-                                       aspect: width / height)
-                    current = VNDetectedObjectObservation(boundingBox: seed)
-                    look = appearance(buffer: buffer, orientation: orientation, box: seed)
-                } else if time - lastSearch >= 0.3 {
-                    // Lost: look for them again.
-                    lastSearch = time
-                    if let found = reacquire(buffer: buffer, orientation: orientation, look: look, near: lastCenter) {
-                        current = VNDetectedObjectObservation(boundingBox: found)
+            let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation)
+            let people = detectPeople(handler)
+                .filter { crop.contains(CGPoint(x: $0.midX, y: 1 - $0.midY)) }
+
+            guard var current = follower else {
+                // First frame: the person inside the ring, or a box the ring's size.
+                let seed = seedBox(people: people, spot: spot, picture: picture, aspect: width / height)
+                follower = PlayerFollower(seed: box(seed), time: time, aspect: width / height,
+                                          number: number)
+                look = appearance(handler, box: seed)
+                sightings.append(sighting(seed, time: time, picture: picture))
+                continue
+            }
+
+            let boxes = people.map(box)
+            let gated = current.gate(boxes, at: time)
+            // When it's close (or they've been lost a while), read numbers and compare looks.
+            var numbers: [Int: Int] = [:]
+            var looks: [Int: Float] = [:]
+            let lost = current.lostFor(at: time)
+            if current.isAmbiguous(gated) || (lost > 0.3 && !gated.isEmpty && time - lastSearch >= 0.3) {
+                lastSearch = time
+                for g in gated.prefix(3) {
+                    if current.number != nil, let n = readNumber(handler, box: people[g.index]) {
+                        numbers[g.index] = n
+                        stats.reads += 1
+                    }
+                    if let look, let now = appearance(handler, box: people[g.index]) { looks[g.index] = dot(now, look) }
+                }
+            }
+            guard let chosen = current.choose(gated, numbers: numbers, looks: looks) else {
+                follower = current
+                continue
+            }
+            current.update(boxes[chosen], at: time)
+            stats.found += 1
+            sightings.append(sighting(people[chosen], time: time, picture: picture))
+
+            // Every half second: is it still them? Read the number on their back.
+            if time - lastNumberCheck >= numberCheck {
+                lastNumberCheck = time
+                let read = numbers[chosen] ?? readNumber(handler, box: people[chosen])
+                if let read {
+                    stats.reads += 1
+                    if current.read(read, at: time) {
+                        // Slid onto a teammate: drop what was followed since their number was
+                        // last seen, and look for them again from there.
+                        let since = current.lastConfirmed ?? time
+                        sightings.removeAll { $0.time > since }
+                        current.rewind()
+                        stats.rewinds += 1
                     }
                 }
-                if let box = current?.boundingBox {
-                    lastCenter = CGPoint(x: box.midX, y: box.midY)
-                    let p = picture.fromVision(lastCenter)
-                    sightings.append(.init(time: time, x: p.x, y: p.y))
-                }
-                continue
             }
-
-            let request = VNTrackObjectRequest(detectedObjectObservation: current!)
-            request.trackingLevel = .accurate
-            do {
-                try sequence.perform([request], on: buffer, orientation: orientation)
-            } catch {
-                current = nil
-                continue
-            }
-            guard let result = request.results?.first as? VNDetectedObjectObservation,
-                  result.confidence >= minConfidence else {
-                current = nil
-                continue
-            }
-            // Once a second: is it still them? Trackers can slide onto a teammate who crosses.
-            if time - lastCheck >= 1, let look {
-                lastCheck = time
-                if let now = appearance(buffer: buffer, orientation: orientation, box: result.boundingBox),
-                   dot(now, look) < sameLook - 0.15 {
-                    current = nil
-                    continue
-                }
-            }
-            current = result
-            lastCenter = CGPoint(x: result.boundingBox.midX, y: result.boundingBox.midY)
-            let p = picture.fromVision(lastCenter)
-            sightings.append(.init(time: time, x: p.x, y: p.y))
+            follower = current
         }
-        // Keep only sightings inside the picture (the tracker can wander off the crop).
+        Log.info("Followed the player: found in \(stats.found) of \(stats.frames) frames, \(stats.reads) number reads"
+                 + (follower?.number.map { ", #\($0)\(follower?.numberConfirmed == true ? " confirmed" : " not seen")" } ?? "")
+                 + (stats.rewinds > 0 ? ", caught \(stats.rewinds) slip\(stats.rewinds == 1 ? "" : "s") onto a teammate" : ""))
+        // Keep only sightings inside the picture.
         return sightings.filter { (-0.1...1.1).contains($0.x) && (-0.1...1.1).contains($0.y) }
+    }
+
+    private static func box(_ r: CGRect) -> PlayerFollower.Box {
+        PlayerFollower.Box(x: Double(r.minX), y: Double(r.minY), width: Double(r.width), height: Double(r.height))
+    }
+
+    private static func sighting(_ r: CGRect, time: Double, picture: PictureSpace) -> CameraPlanner.Sighting {
+        let p = picture.fromVision(CGPoint(x: r.midX, y: r.midY))
+        return .init(time: time, x: p.x, y: p.y)
+    }
+
+    private static func detectPeople(_ handler: VNImageRequestHandler) -> [CGRect] {
+        let request = VNDetectHumanRectanglesRequest()
+        request.upperBodyOnly = false
+        try? handler.perform([request])
+        return (request.results ?? []).map(\.boundingBox)
+    }
+
+    /// The jersey number on someone, read from the top part of their box (where the number is,
+    /// front or back), if it can be read.
+    private static func readNumber(_ handler: VNImageRequestHandler, box: CGRect) -> Int? {
+        let region = CGRect(x: box.minX - box.width * 0.1, y: box.minY + box.height * 0.4,
+                            width: box.width * 1.2, height: box.height * 0.55)
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard region.width > 0.005, region.height > 0.005 else { return nil }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.regionOfInterest = region
+        try? handler.perform([request])
+        for observation in request.results ?? [] {
+            for candidate in observation.topCandidates(3) where candidate.confidence >= 0.3 {
+                if let n = RallyDetector.jerseyNumber(from: candidate.string) { return n }
+            }
+        }
+        return nil
     }
 
     // MARK: Pieces
@@ -128,14 +173,8 @@ enum PlayerTracker {
     }
 
     /// The person under the spotlight on the first frame, or a box the ring's size around it.
-    private static func seedBox(buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, spot: Spotlight,
-                                picture: PictureSpace, aspect: CGFloat) -> CGRect {
+    private static func seedBox(people: [CGRect], spot: Spotlight, picture: PictureSpace, aspect: CGFloat) -> CGRect {
         let center = picture.toVision(x: spot.x, y: spot.y)
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation)
-        let request = VNDetectHumanRectanglesRequest()
-        request.upperBodyOnly = false
-        try? handler.perform([request])
-        let people = (request.results ?? []).map(\.boundingBox)
         func distance(_ r: CGRect) -> CGFloat { hypot(r.midX - center.x, (r.midY - center.y) / aspect) }
         if let inside = people.filter({ $0.insetBy(dx: -0.01, dy: -0.01).contains(center) }).min(by: { distance($0) < distance($1) }) {
             return inside
@@ -150,34 +189,8 @@ enum PlayerTracker {
         return ring.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
     }
 
-    /// The best match for `look` among the people in the frame, close enough to where they were.
-    private static func reacquire(buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
-                                  look: [Float]?, near: CGPoint) -> CGRect? {
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation)
-        let request = VNDetectHumanRectanglesRequest()
-        request.upperBodyOnly = false
-        try? handler.perform([request])
-        let people = (request.results ?? []).map(\.boundingBox)
-            .filter { hypot($0.midX - near.x, $0.midY - near.y) < 0.35 }
-        guard !people.isEmpty else { return nil }
-        guard let look, let model = ReIDModel.shared else {
-            // No appearance model: the nearest person, only when they're quite close.
-            let nearest = people.min { hypot($0.midX - near.x, $0.midY - near.y) < hypot($1.midX - near.x, $1.midY - near.y) }
-            return nearest.flatMap { hypot($0.midX - near.x, $0.midY - near.y) < 0.12 ? $0 : nil }
-        }
-        var best: (box: CGRect, score: Float)?
-        for box in people {
-            guard let print = ReIDModel.embedding(handler, region: box, model: model) else { continue }
-            let similarity = dot(print, look)
-            let score = similarity - Float(hypot(box.midX - near.x, box.midY - near.y))
-            if similarity >= sameLook, score > (best?.score ?? -.infinity) { best = (box, score) }
-        }
-        return best?.box
-    }
-
-    private static func appearance(buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, box: CGRect) -> [Float]? {
+    private static func appearance(_ handler: VNImageRequestHandler, box: CGRect) -> [Float]? {
         guard let model = ReIDModel.shared else { return nil }
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation)
         return ReIDModel.embedding(handler, region: box, model: model)
     }
 

@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.38.1
+- Phone reels stay on your player. The frame used to slide onto a teammate who walked between the camera and your player (they look much bigger up close). Now Cocut follows by size, direction and the **number on their back** (from the Player Card), and if it ever catches itself on the wrong number it goes back and finds your player again.
+- Clips are followed again the first time you export after updating, so it takes a little longer once.
+
 ## 0.38.0
 - New: **Phone Frame** editor (the button next to Spotlight on any clip). See the whole picture with the phone frame on it and the phone-shaped result beside it, live. Drag the frame, or click where it should look, to set a key; the export glides from key to key. Drag while the clip plays to steer it like a camera.
 - Starting from Follow Player keeps what tracking found, so you only fix the moments it got wrong. Switch between 9:16 and 4:5 to check both.

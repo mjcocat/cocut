@@ -330,6 +330,7 @@ final class ReelExporter {
                                           title: clip.title, isCard: false, crop: clip.cropRect, clipID: clip.id)
                 if options.shape.isPhone {
                     segment.framing = await phoneFraming(for: clip, url: url, options: options, renderSize: renderSize,
+                                                         number: Int(profile.featuredNumber.trimmingCharacters(in: .whitespaces)),
                                                          cacheDirectory: library.rootDirectory.appending(path: "Framing", directoryHint: .isDirectory),
                                                          status: status)
                 }

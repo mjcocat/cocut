@@ -215,6 +215,7 @@ struct PhoneFrameEditor: View {
         following = true
         let path = await ReelExporter.followPath(
             clip: clip, url: url, spot: spot, renderSize: shape.phoneSize,
+            number: Int(model.profile.profile.featuredNumber.trimmingCharacters(in: .whitespaces)),
             cacheDirectory: library.rootDirectory.appending(path: "Framing", directoryHint: .isDirectory))
         // A newer run (the shape changed) takes over.
         guard !Task.isCancelled else { return }

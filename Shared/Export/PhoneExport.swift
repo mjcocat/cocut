@@ -82,7 +82,9 @@ enum SegmentFraming: Sendable {
 extension ReelExporter {
     /// How `clip` fills a phone frame: following the spotlighted player (tracked once, then
     /// remembered in the project), a centered frame, or the whole picture.
-    static func phoneFraming(for clip: Clip, url: URL, options: ExportOptions, renderSize: CGSize,
+    /// `number` is the athlete's jersey number (from the player card), which helps keep the frame
+    /// on them.
+    static func phoneFraming(for clip: Clip, url: URL, options: ExportOptions, renderSize: CGSize, number: Int?,
                              cacheDirectory: URL, status: (String) -> Void) async -> SegmentFraming {
         let choice = clip.phoneFraming ?? .automatic
         switch choice {
@@ -102,16 +104,17 @@ extension ReelExporter {
                 return options.unspotlitFraming == .wholePicture ? .whole : .window(.fixed(x: 0.5, y: 0.5))
             }
             status("Following the player in “\(clip.title)”…")
-            return .window(await followPath(clip: clip, url: url, spot: spot, renderSize: renderSize,
+            return .window(await followPath(clip: clip, url: url, spot: spot, renderSize: renderSize, number: number,
                                             cacheDirectory: cacheDirectory))
         }
     }
 
     /// The frame following the spotlighted player (tracked once, then remembered in the project);
     /// a still frame on the spotlight if tracking fails.
-    static func followPath(clip: Clip, url: URL, spot: Spotlight, renderSize: CGSize,
+    static func followPath(clip: Clip, url: URL, spot: Spotlight, renderSize: CGSize, number: Int?,
                            cacheDirectory: URL) async -> CameraPath {
-        guard let tracked = await trackedPlayer(clip: clip, url: url, spot: spot, cacheDirectory: cacheDirectory) else {
+        guard let tracked = await trackedPlayer(clip: clip, url: url, spot: spot, number: number,
+                                                cacheDirectory: cacheDirectory) else {
             return .fixed(x: spot.x, y: spot.y)
         }
         let window = CameraPlanner.window(picture: (Double(tracked.width), Double(tracked.height)),
@@ -133,12 +136,12 @@ extension ReelExporter {
     }
 
     /// Where the spotlighted player is through the clip, from the project's cache or tracked now.
-    private static func trackedPlayer(clip: Clip, url: URL, spot: Spotlight,
+    private static func trackedPlayer(clip: Clip, url: URL, spot: Spotlight, number: Int?,
                                       cacheDirectory: URL) async -> TrackedPlayer? {
         let crop = clip.unitCrop
         let key = [clip.trimStartSeconds, clip.trimEndSeconds, spot.x, spot.y, spot.radius,
                    Double(crop?.minX ?? 0), Double(crop?.minY ?? 0), Double(crop?.width ?? 1), Double(crop?.height ?? 1)]
-            .map { String(format: "%.4f", $0) }.joined(separator: "_")
+            .map { String(format: "%.4f", $0) }.joined(separator: "_") + "_\(number ?? -1)"
         let file = cacheDirectory.appending(path: "\(clip.id.uuidString)-\(TrackedPlayer.version).json")
         if let data = try? Data(contentsOf: file), let cached = try? JSONDecoder().decode(TrackedPlayer.self, from: data),
            cached.key == key {
@@ -152,7 +155,7 @@ extension ReelExporter {
             let upright = CGRect(origin: .zero, size: natural).applying(preferred).size
             let cropFraction = crop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
             let sightings = try await PlayerTracker.follow(url: url, start: clip.trimStartSeconds, end: clip.trimEndSeconds,
-                                                           unitCrop: crop, spot: spot)
+                                                           unitCrop: crop, spot: spot, number: number)
             let tracked = TrackedPlayer(key: key, width: abs(upright.width) * cropFraction.width,
                                         height: abs(upright.height) * cropFraction.height, sightings: sightings)
             try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
@@ -167,7 +170,8 @@ extension ReelExporter {
 
 /// A clip's tracked player, saved so later exports and previews don't track again.
 struct TrackedPlayer: Codable {
-    static let version = 1
+    /// 2: follows by size, heading and jersey number instead of Vision's object tracker.
+    static let version = 2
     /// What it was tracked for (trim, spotlight, crop); a change means tracking again.
     var key: String
     /// Size of the spotlight's picture, in pixels.
