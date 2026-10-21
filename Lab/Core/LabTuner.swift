@@ -36,9 +36,9 @@ enum LabTuner {
 
     /// The cases from a lab: clips with detections, at least a few marks, and a way to point the
     /// player out (a spotlight, or a first head mark).
-    static func cases(_ store: LabStore) -> [Case] {
+    static func cases(_ store: LabStore, detections load: ((UUID) -> ClipDetections?)? = nil) -> [Case] {
         store.clips.compactMap { clip in
-            guard let detections = store.detections(clip.id) else { return nil }
+            guard let detections = load?(clip.id) ?? store.detections(clip.id) else { return nil }
             let marks = store.marks(clip.id)
             var anchors: [PlayerChain.Anchor] = []
             var scored = marks.filter { $0.kind == .head }

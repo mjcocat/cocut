@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.44.1
+- Cocut Lab opens with its logo and a progress bar (what it's loading, and how far along) instead of looking frozen. Once open it stays quick: the score under the clip list is worked out in the background instead of every time the window redraws.
+
 ## 0.44.0
 - Cocut Lab: **Check Rallies** scores how well Find Rallies finds rallies, against the rallies you settled on in your matches (the ones where you added, removed, unticked or retimed a rally). It reports how many real rallies it found, how many it found that weren't real, short rallies, and how far off the start and end times are, per match. Also `cocut-lab rallies`.
 

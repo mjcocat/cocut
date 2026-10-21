@@ -48,6 +48,13 @@ final class LabModel {
     var image: CGImage?
     var busy: String?
     var report: String?
+    /// Loading at startup: how far (0...1) and what, for the splash. Nil when ready.
+    var loading: (fraction: Double, message: String)? = (0, "Opening the lab…")
+    /// "Player in the phone frame: …" over every marked clip, worked out in the background.
+    var overall: String?
+    /// Marks per clip, for the list.
+    private(set) var markCounts: [UUID: Int] = [:]
+    private var overallTask: Task<Void, Never>?
     /// Playing through the checkpoints, accepting the guess at each (Space).
     var playing = false
     /// The current settings' guess per clip (by frame time), worked out when a clip opens.
@@ -69,6 +76,58 @@ final class LabModel {
         store = LabStore(folder: store.folder)
         guesses = [:]
         detectionCache = [:]
+        countMarks()
+        refreshOverall()
+    }
+
+    /// Startup: reads each clip's saved people (the slow part) off the main thread, with progress
+    /// for the splash, then works out the score.
+    func start() async {
+        let clips = store.clips
+        let store = self.store
+        for (n, clip) in clips.enumerated() {
+            loading = (Double(n) / Double(max(1, clips.count)), "Loading \(clip.title) (\(n + 1) of \(clips.count))…")
+            let found = await Task.detached(priority: .userInitiated) { store.detections(clip.id) }.value
+            if let found { detectionCache[clip.id] = found }
+        }
+        countMarks()
+        loading = (1, "Scoring the current settings…")
+        await computeOverall()
+        loading = nil
+        findPeople()
+    }
+
+    private func countMarks() {
+        markCounts = Dictionary(uniqueKeysWithValues: store.clips.map { ($0.id, store.marks($0.id).count) })
+    }
+
+    /// Recomputes the score line in the background (after a moment, so marking stays quick).
+    func refreshOverall() {
+        overallTask?.cancel()
+        overallTask = Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            await computeOverall()
+        }
+    }
+
+    private func computeOverall() async {
+        let cache = detectionCache
+        let store = self.store
+        let text = await Task.detached(priority: .utility) { () -> String? in
+            let cases = LabTuner.cases(store) { cache[$0] }
+            guard !cases.isEmpty else { return nil }
+            let scores = cases.map { LabTuner.score($0, settings: PlayerChain.Settings()) }
+            let f = scores.map(\.framed).reduce(0, +), c = scores.map(\.checked).reduce(0, +)
+            return String(format: "Player in the phone frame: %d of %d marks (%.0f%%)", f, c, 100 * Double(f) / Double(max(1, c)))
+        }.value
+        if !Task.isCancelled { overall = text }
+    }
+
+    /// A mark changed on `clip`: the list's count and the score.
+    private func marksChanged(_ id: UUID) {
+        markCounts[id] = store.marks(id).count
+        refreshOverall()
     }
 
     func detections(_ id: UUID) -> ClipDetections? {
@@ -134,6 +193,7 @@ final class LabModel {
     func setMark(_ mark: LabMark?) {
         guard let clip, let time else { return }
         store.setMark(mark, at: time, for: clip.id)
+        marksChanged(clip.id)
         // A first head mark on a clip with no spotlight is what points the player out.
         if clip.spotlight == nil { refreshGuess(clip) }
         move(1)
@@ -154,6 +214,7 @@ final class LabModel {
                 guard playing, !Task.isCancelled, selection == clip.id, let time else { break }
                 if mark == nil, let g = guess {
                     store.setMark(.head(time, g.head.x, g.head.y), at: time, for: clip.id)
+                    marksChanged(clip.id)
                     lastAccepted = (clip.id, index, Date())
                 }
                 guard index < checkpoints.count - 1 else { break }
@@ -171,6 +232,7 @@ final class LabModel {
               Date().timeIntervalSince(last.at) < 0.6, checkpoints.indices.contains(last.index) else { return }
         // Accepted just before Space: take it back and go back to it.
         store.setMark(nil, at: checkpoints[last.index], for: clip.id)
+        marksChanged(clip.id)
         position[clip.id] = last.index
         lastAccepted = nil
         loadImage()
@@ -231,6 +293,8 @@ final class LabModel {
     func remove(_ ids: Set<UUID>) {
         for id in ids { store.remove(id) }
         store.save()
+        for id in ids { detectionCache[id] = nil; markCounts[id] = nil }
+        refreshOverall()
         selected.subtract(ids)
         removing = []
         if let s = selection, ids.contains(s) { select(nil) }
@@ -258,6 +322,7 @@ final class LabModel {
                         store.saveDetections(found, for: clip.id)
                         detectionCache[clip.id] = found
                         refreshGuess(clip)
+                        refreshOverall()
                     }
                 } catch {
                     Log.error("Cocut Lab: couldn't find people in \(clip.title): \(error.localizedDescription)")
@@ -296,13 +361,6 @@ final class LabModel {
     }
 
     /// Player in the phone frame with the current settings, over every marked clip.
-    var overall: String? {
-        let cases = LabTuner.cases(store)
-        guard !cases.isEmpty else { return nil }
-        let scores = cases.map { LabTuner.score($0, settings: PlayerChain.Settings()) }
-        let f = scores.map(\.framed).reduce(0, +), c = scores.map(\.checked).reduce(0, +)
-        return String(format: "Player in the phone frame: %d of %d marks (%.0f%%)", f, c, 100 * Double(f) / Double(max(1, c)))
-    }
 }
 
 // MARK: - Window
@@ -349,7 +407,10 @@ struct LabView: View {
             }
         }
         .toolbar { LabToolbar() }
-        .task { model.findPeople() }
+        .task { await model.start() }
+        .overlay {
+            if let loading = model.loading { LabSplash(fraction: loading.fraction, message: loading.message) }
+        }
         .confirmationDialog(
             model.removing.count == 1 ? "Remove this clip from the lab?" : "Remove \(model.removing.count) clips from the lab?",
             isPresented: Binding(get: { !model.removing.isEmpty }, set: { if !$0 { model.removing = [] } })
@@ -428,7 +489,7 @@ struct ClipList: View {
     var body: some View {
         List(selection: Binding(get: { model.selected }, set: { model.listSelect($0) })) {
             ForEach(model.store.clips) { clip in
-                let marked = model.store.marks(clip.id).count
+                let marked = model.markCounts[clip.id] ?? 0
                 let total = LabStore.checkpoints(clip).count
                 VStack(alignment: .leading, spacing: 2) {
                     Text(clip.title).lineLimit(1)
@@ -633,5 +694,45 @@ struct ReportSheet: View {
         }
         .padding(20)
         .frame(width: 760, height: 560)
+    }
+}
+
+/// Shown while the lab loads: the logo, how far along it is, and what it's doing.
+struct LabSplash: View {
+    let fraction: Double
+    let message: String
+
+    private var version: String {
+        "Version " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
+    }
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.02, green: 0.03, blue: 0.07).ignoresSafeArea()
+            VStack(spacing: 22) {
+                Image("Logo")
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 300, height: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
+                VStack(spacing: 8) {
+                    ProgressView(value: fraction)
+                        .frame(width: 280)
+                        .tint(.cyan)
+                    HStack {
+                        Text(message).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Text("\(Int((fraction * 100).rounded()))%").monospacedDigit()
+                    }
+                    .frame(width: 280)
+                    .font(.callout)
+                    .foregroundStyle(.white.opacity(0.75))
+                }
+                Text(version)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+        }
+        .transition(.opacity)
     }
 }
