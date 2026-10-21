@@ -83,6 +83,7 @@ final class LabModel {
     /// Startup: reads each clip's saved people (the slow part) off the main thread, with progress
     /// for the splash, then works out the score.
     func start() async {
+        let opened = Date()
         let clips = store.clips
         let store = self.store
         for (n, clip) in clips.enumerated() {
@@ -93,7 +94,11 @@ final class LabModel {
         countMarks()
         loading = (1, "Scoring the current settings…")
         await computeOverall()
-        loading = nil
+        // Like Cocut's splash: the logo stays up at least a moment, then fades.
+        loading = (1, "Ready")
+        let shown = Date().timeIntervalSince(opened)
+        if shown < 1.5 { try? await Task.sleep(for: .seconds(1.5 - shown)) }
+        withAnimation(.easeIn(duration: 0.35)) { loading = nil }
         findPeople()
     }
 

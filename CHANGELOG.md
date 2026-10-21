@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.44.2
+- Cocut Lab's splash stays up for a moment (at least a second and a half) and fades out, like Cocut's.
+
 ## 0.44.1
 - Cocut Lab opens with its logo and a progress bar (what it's loading, and how far along) instead of looking frozen. Once open it stays quick: the score under the clip list is worked out in the background instead of every time the window redraws.
 
