@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.42.1
+- Cocut Lab, for Claude Code doing the marking: pictures come as contact sheets (four moments each), and runs of right guesses are accepted with one command (`cocut-lab accept`). About a quarter of the pictures, so it's faster and uses much less of your Claude plan.
+
 ## 0.42.0
 - Who's This? learns from your answers: when you untick most of a group, Cocut takes it that players who look that alike can be different people and keeps them apart. Fewer mixed groups, and fewer questions that look like repeats. The "more worth answering" estimate no longer climbs as you answer.
 - Cocut Lab: finds the people in clips by itself as soon as they're added (and when it opens), so the yellow guess is there right away.

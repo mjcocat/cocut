@@ -28,21 +28,31 @@ Everything goes through the `cocut-lab` command (Cocut Lab's command line). If i
    - Then `cocut-lab detect` (finds people in new clips; a few seconds per clip).
 
 3. **Marks** are the ground truth. The person may mark clips in the Cocut Lab window. If they ask
-   you to mark clips:
-   - `cocut-lab frames <clip>` writes one picture per checkpoint into the lab's `frames/` folder.
-     Everyone Vision found is boxed and numbered; the current guess is yellow; existing marks are
-     green.
-   - Look at each picture (Read the PNG). Find the player: their jersey number (the lab's number,
-     see status) and where they were at the previous checkpoint. Then:
+   you to mark clips, do it clip by clip:
+   - `cocut-lab frames <clip>` writes contact sheets of the checkpoints not marked yet, four
+     moments to a sheet, into the lab's `frames/<clip id>/` folder (it prints the path). Each
+     moment is captioned with its time. Everyone Vision found is boxed and numbered; the current
+     guess is yellow; marks already made are green.
+   - Look at each sheet (Read the PNG). Find the player: the jersey number the lab follows (see
+     `status`), and where they were in the moments before and after. Moments run left to right,
+     then down.
+   - When the yellow box is the player through a run of moments, accept them all at once:
+     `cocut-lab accept <clip> --from <first time> --to <last time>`. This is most moments.
+   - Otherwise, per moment:
      `cocut-lab mark <clip> <time> box <n>` when they're in box n,
      `cocut-lab mark <clip> <time> head <x> <y>` when they have no box (x, y: 0...1 across and up
-     from the bottom-left of the picture),
+     from the bottom-left of the frame),
      `cocut-lab mark <clip> <time> hidden` when they can't be seen,
      `cocut-lab mark <clip> <time> unsure` when you can't tell who it is.
-   - Be strict: a wrong mark teaches the tuning the wrong thing. Use `unsure` whenever the number
-     isn't visible and you can't follow them from neighboring checkpoints. Never change marks the
+   - Mark the corrections first, then `accept` the runs around them (accept skips moments already
+     marked).
+   - Be strict: a wrong mark teaches the tuning the wrong thing. Use `unsure` whenever you can't
+     read the number and can't follow them from the neighboring moments. Never change marks the
      person made unless they ask.
-   - Pictures cost usage. Mark a few clips at a time and say how many checkpoints you marked.
+   - Then `cocut-lab frames <clip> --all` shows every moment with its mark: spot-check a sheet or
+     two of the clip.
+   - Pictures cost usage. Do a few clips, say how many moments you marked and how many were
+     corrections, and ask before going on with many more.
 
 4. **Tune**: `cocut-lab tune` (add `--tries 1200` for a longer search). It prints and saves a
    report in the lab's `reports/` folder: the score now and tuned, per clip, and **held out**:

@@ -10,7 +10,7 @@ import Foundation
 @MainActor
 enum LabCLI {
     static let commands: Set<String> = ["help", "--help", "-h", "status", "projects", "import-project", "add", "remove",
-                                        "detect", "frames", "mark", "score", "tune", "settings", "--lab"]
+                                        "detect", "frames", "mark", "accept", "score", "tune", "settings", "--lab"]
 
     static let usage = """
     Cocut Lab: tune how Cocut's phone reels follow a player, on real clips.
@@ -29,12 +29,18 @@ enum LabCLI {
                                       Add video files.
       remove <clip>... | --all        Remove clips from the lab (the videos stay).
       detect [--all] [<clip>...]      Find the people in clips (once per clip; --all redoes them).
-      frames <clip> [--out <folder>] [--times t1,t2,...]
-                                      Write a picture per checkpoint with everyone found numbered,
-                                      the current guess in yellow and any mark in green.
-      mark <clip> <time> head <x> <y> | box <n> | hidden | unsure | clear
+      frames <clip> [--all] [--per N] [--single] [--out <folder>] [--times t1,t2,...]
+                                      Write contact sheets of the checkpoints not marked yet (--all:
+                                      every one), N to a sheet (default 4; --single: one per
+                                      picture), with everyone found numbered, the current guess in
+                                      yellow and any mark in green.
+      mark <clip> <time> head <x> <y> | box <n> | guess | hidden | unsure | clear
                                       Mark where the player is at a checkpoint. x, y: 0...1 across
-                                      and up from the bottom-left; box n: person n in that frame.
+                                      and up from the bottom-left; box n: person n in that frame;
+                                      guess: the yellow box.
+      accept <clip> [--from S] [--to S] [--times t1,t2,...]
+                                      Mark the yellow guess at every unmarked checkpoint in the range
+                                      (seconds of the clip's video, as in the pictures).
       score [--settings <file.json>]  Score settings (default: the ones built into this version).
       tune [--tries N] [--seed S] [--settings <file.json>]
                                       Search for better settings, checking them on clips held out
@@ -82,6 +88,7 @@ enum LabCLI {
             case "detect": try await detect(rest, store: store)
             case "frames": try await frames(rest, store: store)
             case "mark": try mark(rest, store: store)
+            case "accept": try accept(rest, store: store)
             case "score": try score(rest, store: store)
             case "tune": try tune(rest, store: store)
             case "settings":
@@ -276,7 +283,7 @@ enum LabCLI {
 
     static func mark(_ args: [String], store: LabStore) throws {
         guard args.count >= 3, let clip = store.clip(args[0]), let time = Double(args[1]) else {
-            throw LabError.usage("mark <clip> <time> head <x> <y> | box <n> | hidden | unsure | clear")
+            throw LabError.usage("mark <clip> <time> head <x> <y> | box <n> | guess | hidden | unsure | clear")
         }
         let t = LabStore.checkpoints(clip).min { abs($0 - time) < abs($1 - time) } ?? time
         switch args[2] {
@@ -290,12 +297,49 @@ enum LabCLI {
             }
             let p = frame.people[n]
             store.setMark(.head(t, p.head.x, p.head.y), at: t, for: clip.id)
+        case "guess":
+            guard let g = guessAt(t, clip: clip, store: store) else { throw LabError.usage("No guess at \(t)s (people not found, or the player not followed there).") }
+            store.setMark(.head(t, g.head.x, g.head.y), at: t, for: clip.id)
         case "hidden": store.setMark(LabMark(time: t, kind: .hidden), at: t, for: clip.id)
         case "unsure": store.setMark(LabMark(time: t, kind: .unsure), at: t, for: clip.id)
         case "clear": store.setMark(nil, at: t, for: clip.id)
-        default: throw LabError.usage("mark <clip> <time> head <x> <y> | box <n> | hidden | unsure | clear")
+        default: throw LabError.usage("mark <clip> <time> head <x> <y> | box <n> | guess | hidden | unsure | clear")
         }
         print(String(format: "%@ at %.1fs: %@", clip.title, t, args[2]))
+    }
+
+    /// The current guess (the followed person) at checkpoint `t`.
+    static func guessAt(_ t: Double, clip: LabClip, store: LabStore,
+                        guess: [Double: PlayerChain.Person]? = nil) -> PlayerChain.Person? {
+        guard let d = store.detections(clip.id),
+              let frame = d.frames.min(by: { abs($0.time - t) < abs($1.time - t) }) else { return nil }
+        return (guess ?? LabPictures.guess(store: store, clip: clip))?[frame.time]
+    }
+
+    static func accept(_ args: [String], store: LabStore) throws {
+        guard let key = positional(args, options: ["--from", "--to", "--times"]).first, let clip = store.clip(key) else {
+            throw LabError.noClip(args.first ?? "")
+        }
+        let from = option("--from", in: args).flatMap { Double($0) } ?? -Double.infinity
+        let to = option("--to", in: args).flatMap { Double($0) } ?? .infinity
+        let listed = option("--times", in: args)?.split(separator: ",").compactMap { Double($0) }
+        let checkpoints = LabStore.checkpoints(clip)
+        let times = listed.map { list in list.compactMap { t in checkpoints.min { abs($0 - t) < abs($1 - t) } } }
+            ?? checkpoints.filter { $0 >= from - 0.01 && $0 <= to + 0.01 }
+        let marked = Set(store.marks(clip.id).map { ($0.time * 100).rounded() })
+        let guess = LabPictures.guess(store: store, clip: clip)
+        var accepted = 0
+        var noGuess: [Double] = []
+        for t in times where !marked.contains((t * 100).rounded()) {
+            if let g = guessAt(t, clip: clip, store: store, guess: guess) {
+                store.setMark(.head(t, g.head.x, g.head.y), at: t, for: clip.id)
+                accepted += 1
+            } else {
+                noGuess.append(t)
+            }
+        }
+        print("\(clip.title): accepted the guess at \(accepted) checkpoint\(accepted == 1 ? "" : "s")"
+              + (noGuess.isEmpty ? "" : "; no guess at " + noGuess.map { String(format: "%.1f", $0) }.joined(separator: ", ")))
     }
 
     static func score(_ args: [String], store: LabStore) throws {
@@ -336,25 +380,48 @@ enum LabCLI {
     // MARK: Pictures
 
     static func frames(_ args: [String], store: LabStore) async throws {
-        guard let key = positional(args, options: ["--out", "--times"]).first, let clip = store.clip(key) else {
+        guard let key = positional(args, options: ["--out", "--times", "--per"]).first, let clip = store.clip(key) else {
             throw LabError.noClip(args.first ?? "")
         }
         let out = option("--out", in: args).map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
             ?? store.folder.appending(path: "frames/\(clip.id.uuidString.prefix(8))", directoryHint: .isDirectory)
+        // Fresh pictures each time (old ones would show old guesses and marks).
+        try? FileManager.default.removeItem(at: out)
         try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-        let times = option("--times", in: args)?.split(separator: ",").compactMap { Double($0) } ?? LabStore.checkpoints(clip)
+        let marks = store.marks(clip.id)
+        let marked = Set(marks.map { ($0.time * 100).rounded() })
+        var times = option("--times", in: args)?.split(separator: ",").compactMap { Double($0) } ?? LabStore.checkpoints(clip)
+        if !args.contains("--all"), option("--times", in: args) == nil {
+            times = times.filter { !marked.contains(($0 * 100).rounded()) }
+        }
+        guard !times.isEmpty else { print("Every checkpoint of \(clip.title) is marked (--all draws them anyway)."); return }
         let detections = store.detections(clip.id)
         let guess = LabPictures.guess(store: store, clip: clip)
-        let marks = store.marks(clip.id)
+        let single = args.contains("--single")
+        let per = single ? 1 : max(1, min(9, option("--per", in: args).flatMap { Int($0) } ?? 4))
+
+        var pictures: [(time: Double, image: CGImage)] = []
         for t in times {
-            guard let image = await LabPictures.frame(clip: clip, at: t) else { continue }
+            guard let image = await LabPictures.frame(clip: clip, at: t, maxWidth: single ? 1600 : 1280) else { continue }
             let frame = detections?.frames.min { abs($0.time - t) < abs($1.time - t) }
-            let png = LabPictures.annotated(image, people: frame?.people ?? [], guess: frame.flatMap { f in guess?[f.time] },
-                                            mark: marks.first { abs($0.time - t) < 0.01 }, caption: String(format: "%@  %.1fs", clip.title, t))
-            try png.write(to: out.appending(path: String(format: "%07.2f.png", t)))
+            if let annotated = LabPictures.annotated(image, people: frame?.people ?? [], guess: frame.flatMap { f in guess?[f.time] },
+                                                     mark: marks.first { abs($0.time - t) < 0.01 },
+                                                     caption: single ? String(format: "%@  %.1fs", clip.title, t) : String(format: "%.1fs", t)) {
+                pictures.append((t, annotated))
+            }
         }
-        print("Wrote \(times.count) pictures to \(out.path(percentEncoded: false))")
-        print("People are numbered in each picture: mark with “mark \(clip.title) <time> box <n>”.")
+        var files = 0
+        for start in stride(from: 0, to: pictures.count, by: per) {
+            let group = Array(pictures[start..<min(start + per, pictures.count)])
+            let image = group.count == 1 ? group[0].image : LabPictures.sheet(group.map(\.image))
+            let name = single ? String(format: "%07.2f.png", group[0].time)
+                : String(format: "sheet-%02d (%.1f-%.1fs).png", files + 1, group.first!.time, group.last!.time)
+            try LabPictures.png(image).write(to: out.appending(path: name))
+            files += 1
+        }
+        print("Wrote \(files) picture\(files == 1 ? "" : "s") of \(pictures.count) checkpoints to \(out.path(percentEncoded: false))")
+        print("Each moment is captioned with its time; people are numbered. Mark with “mark \(clip.id.uuidString.prefix(8)) <time> box <n>”,"
+              + " or accept runs of right guesses with “accept \(clip.id.uuidString.prefix(8)) --from <s> --to <s>”.")
     }
 }
 
@@ -389,9 +456,9 @@ enum LabPictures {
         return out
     }
 
-    /// A PNG of `image` with everyone found numbered (grey), the guess (yellow) and the mark (green).
+    /// `image` with everyone found numbered (grey), the guess (yellow) and the mark (green).
     static func annotated(_ image: CGImage, people: [PlayerChain.Person], guess: PlayerChain.Person?, mark: LabMark?,
-                          caption: String) -> Data {
+                          caption: String) -> CGImage? {
         let w = CGFloat(image.width), h = CGFloat(image.height)
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: image.width, pixelsHigh: image.height, bitsPerSample: 8,
                                    samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
@@ -426,7 +493,32 @@ enum LabPictures {
             .font: font, .foregroundColor: NSColor.white, .backgroundColor: NSColor.black.withAlphaComponent(0.7)])
         title.draw(at: CGPoint(x: 8, y: h - title.size().height - 8))
         NSGraphicsContext.restoreGraphicsState()
-        return rep.representation(using: .png, properties: [:]) ?? Data()
+        return rep.cgImage
+    }
+
+    static func png(_ image: CGImage) -> Data {
+        NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) ?? Data()
+    }
+
+    /// Pictures in a grid (two across), in reading order.
+    static func sheet(_ images: [CGImage]) -> CGImage {
+        let columns = images.count <= 2 ? images.count : 2
+        let rows = (images.count + columns - 1) / columns
+        let w = images.map(\.width).max() ?? 1, h = images.map(\.height).max() ?? 1
+        let gap = 8
+        let width = columns * w + (columns - 1) * gap, height = rows * h + (rows - 1) * gap
+        let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.setFillColor(CGColor(gray: 0.1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        for (i, image) in images.enumerated() {
+            let col = i % columns, row = i / columns
+            // CGContext's origin is bottom-left: the first row goes at the top.
+            ctx.draw(image, in: CGRect(x: col * (w + gap), y: height - (row + 1) * h - row * gap,
+                                       width: image.width, height: image.height))
+        }
+        return ctx.makeImage()!
     }
 }
 
