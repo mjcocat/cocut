@@ -1,19 +1,17 @@
 import AVFoundation
-import CoreML
 import Vision
 
 /// Follows the spotlighted player through a clip, for phone exports. It looks through the whole
 /// clip first, 15 frames a second: the people in each frame (body pose and person rectangles, as
-/// Find Rallies finds them, which tells apart players standing together), every fourth frame the
-/// jersey numbers it can read on them and how they look (the re-identification model Find
-/// Rallies uses). Then `PlayerChain` works out which of them is the player across the whole clip,
+/// Find Rallies finds them, which tells apart players standing together), and every fourth frame
+/// the jersey numbers it can read on them. Then `PlayerChain` works out which of them is the player across the whole clip,
 /// starting from the spotlight ring and any clicks on their head.
 enum PlayerTracker {
     /// How often frames are looked at.
     static let interval = 1.0 / 15
-    /// Numbers and looks are taken on every this-many frames (they're slower than finding people).
+    /// Numbers are read on every this-many frames (it's slower than finding people).
     static let detailEvery = 4
-    /// People shorter than this (a share of the picture's height) are too small for numbers or looks.
+    /// People shorter than this (a share of the picture's height) are too small to read numbers on.
     static let detailMinHeight: CGFloat = 0.08
 
     /// Where the player is through `start...end` (clip seconds), in the picture the spotlight was
@@ -74,7 +72,6 @@ enum PlayerTracker {
                                                 height: Double(r.height))
                 if detail, r.height >= detailMinHeight {
                     person.number = readNumber(handler, box: r)
-                    person.look = appearance(handler, box: r)
                     if let n = person.number { reads[n, default: 0] += 1 }
                 }
                 return person
@@ -165,11 +162,6 @@ enum PlayerTracker {
             }
         }
         return nil
-    }
-
-    private static func appearance(_ handler: VNImageRequestHandler, box: CGRect) -> [Float]? {
-        guard let model = ReIDModel.shared else { return nil }
-        return ReIDModel.embedding(handler, region: box, model: model)
     }
 
     // MARK: Pieces

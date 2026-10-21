@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.40.3
+- Phone reels: when your player is completely hidden behind a teammate (Cocut can't see him at all), the frame stays where he was instead of jumping to someone else across the court. Fixes the drift at the end of a clip.
+- Following a clip is quicker.
+
 ## 0.40.2
 - Phone reels follow your player much better, tuned on the clips you sent. With the detections from your Mac, the player is now in the phone frame at 25 of 29 checkpoints in one rally (was 7) and 13 of 14 in another (was 10). A rally that 0.40.1 lost almost at once is now followed most of the way.
 - Still weak: a moment where your player stands right behind a teammate and Cocut sees them as one person. Click Head fixes those.

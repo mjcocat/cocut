@@ -31,8 +31,9 @@ enum PlayerChain {
         var joinCost = 0.7
         var joinSize = 0.35
         /// Weight of looking like them (see `likenesses`): the share a piece's worth rises per
-        /// spread above the typical piece.
-        var lookWeight = 0.15
+        /// spread above the typical piece. Off: teammates in the same uniform look too alike, and
+        /// on a real clip it pulled the chain onto the wrong player.
+        var lookWeight = 0.0
     }
     nonisolated(unsafe) static var settings = Settings()
     /// A person found in a frame, in Vision's normalized picture coordinates (origin bottom-left).
