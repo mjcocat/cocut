@@ -180,7 +180,8 @@ struct TrackedPlayer: Codable {
     /// 5: the player card's number wins over one read on the spotlighted box.
     /// 6: chain tuned on Vision's detections.
     /// 7: appearance left out.
-    static let version = 7
+    /// 8: chunked pieces, retuned on four rallies.
+    static let version = 8
     /// What it was tracked for (trim, spotlight, crop); a change means tracking again.
     var key: String
     /// Size of the spotlight's picture, in pixels.

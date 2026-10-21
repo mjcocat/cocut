@@ -29,7 +29,14 @@ enum PlayerChain {
         /// Joining people into pieces: the most a step may cost (in their heights per frame, plus
         /// change in size), and the most their size may change from frame to frame (log ratio).
         var joinCost = 0.7
-        var joinSize = 0.35
+        var joinSize = 0.5
+        /// Another player's number read on a piece: it's ruled out when read at least `excludeAt`
+        /// times (and more than twice as often as theirs); otherwise each read costs `otherCost`.
+        /// Kept lenient because a box can take in two players standing together.
+        /// Longest piece the chain treats as one (frames; 0 for no limit).
+        var chunkFrames = 30
+        var excludeAt = 5.0
+        var otherCost = 6.0
         /// Weight of looking like them (see `likenesses`): the share a piece's worth rises per
         /// spread above the typical piece. Off: teammates in the same uniform look too alike, and
         /// on a real clip it pulled the chain onto the wrong player.
@@ -74,7 +81,10 @@ enum PlayerChain {
     /// Where the player is in each frame (nil where the chain has a gap).
     static func follow(_ frames: [Frame], anchors: [Anchor], number: Int?, aspect: Double) -> [Person?] {
         guard !frames.isEmpty, !anchors.isEmpty else { return Array(repeating: nil, count: frames.count) }
-        let pieces = tracklets(frames, aspect: aspect)
+        // Pieces are cut into short chunks, so the chain can switch partway through one: a box
+        // that took in two players standing together often runs on after the player has
+        // stepped out of it.
+        let pieces = tracklets(frames, aspect: aspect).flatMap { chunks($0, frames: settings.chunkFrames) }
         var pieceOf: [[Int]] = frames.map { Array(repeating: -1, count: $0.people.count) }
         for (k, piece) in pieces.enumerated() {
             for m in piece.members { pieceOf[m.frame][m.person] = k }
@@ -195,6 +205,14 @@ enum PlayerChain {
         return pieces
     }
 
+    /// A piece cut into runs of at most `frames` frames.
+    static func chunks(_ piece: Tracklet, frames: Int) -> [Tracklet] {
+        guard frames > 0, piece.members.count > frames else { return [piece] }
+        return stride(from: 0, to: piece.members.count, by: frames).map {
+            Tracklet(members: Array(piece.members[$0..<min($0 + frames, piece.members.count)]))
+        }
+    }
+
     /// What the chain needs to know about a piece.
     struct Summary {
         var startTime: Double
@@ -280,8 +298,8 @@ enum PlayerChain {
         if let number {
             let mine = s.numbers[number] ?? 0
             let others = s.numbers.filter { $0.key != number }.values.reduce(0, +)
-            if others >= 2, others > mine * 2 { return nil }
-            bonus += Double(mine) * 20 - Double(others) * 6
+            if Double(others) >= settings.excludeAt, others > mine * 2 { return nil }
+            bonus += Double(mine) * 20 - Double(others) * settings.otherCost
         }
         return max(0.2 * settings.perFrame, perFrame) * Double(s.frames) + bonus
     }

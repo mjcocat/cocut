@@ -33,6 +33,8 @@ if let set = ProcessInfo.processInfo.environment["CHAIN_SET"]?.split(separator: 
     PlayerChain.settings = .init(perFrame: set[0], distanceCost: set[1], sizeCost: set[2], gapCost: set[3],
                                  reach: set[4], reachPerSecond: set[5], lookWeight: set[6])
     if set.count >= 9 { PlayerChain.settings.joinCost = set[7]; PlayerChain.settings.joinSize = set[8] }
+    if set.count >= 11 { PlayerChain.settings.excludeAt = set[9]; PlayerChain.settings.otherCost = set[10] }
+    if set.count >= 12 { PlayerChain.settings.chunkFrames = Int(set[11]) }
 }
 if ProcessInfo.processInfo.environment["CHAIN_DEBUG"] != nil { PlayerChain.debug = { print($0) } }
 let started = Date()

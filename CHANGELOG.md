@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.40.4
+- Phone reels: better when your player starts a rally standing right behind a teammate (lined up before the serve). Cocut used to stay on the teammate; now it picks your player up as soon as they step apart. Tuned on four rallies.
+
 ## 0.40.3
 - Phone reels: when your player is completely hidden behind a teammate (Cocut can't see him at all), the frame stays where he was instead of jumping to someone else across the court. Fixes the drift at the end of a clip.
 - Following a clip is quicker.
