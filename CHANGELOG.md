@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.40.2
+- Phone reels follow your player much better, tuned on the clips you sent. With the detections from your Mac, the player is now in the phone frame at 25 of 29 checkpoints in one rally (was 7) and 13 of 14 in another (was 10). A rally that 0.40.1 lost almost at once is now followed most of the way.
+- Still weak: a moment where your player stands right behind a teammate and Cocut sees them as one person. Click Head fixes those.
+
 ## 0.40.1
 - Phone reels: the Player Card's number now always decides who your player is. 0.40.0 could take a teammate's number read on the spotlighted box (when two players stand together) and follow the wrong player for a whole clip.
 - Following a clip now saves what Cocut saw (in the Following folder next to the log: Help › Show Log), so a clip that's followed badly can be sent in to improve it.

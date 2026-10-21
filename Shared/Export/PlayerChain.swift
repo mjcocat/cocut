@@ -13,21 +13,26 @@ enum PlayerChain {
     /// Receives a description of the pieces and the chain chosen, when set (for tuning).
     nonisolated(unsafe) static var debug: ((String) -> Void)?
 
-    /// How the chain weighs things, tuned on real clips (see scripts/test-player-chain.sh).
+    /// How the chain weighs things, tuned on hand-marked match clips, on both Vision's detections
+    /// (recorded by Cocut) and another detector's (see scripts/test-player-chain.sh).
     struct Settings {
         /// Worth of each frame a piece covers (before looks, size and numbers).
-        var perFrame = 0.3
+        var perFrame = 0.5
         /// Cost of a link's distance (as a share of how far they could have got), its change in
         /// size, and each second of gap.
-        var distanceCost = 6.0
-        var sizeCost = 8.0
-        var gapCost = 4.0
+        var distanceCost = 3.0
+        var sizeCost = 4.0
+        var gapCost = 1.0
         /// How far a player can get: this many of their heights, plus this many per second.
-        var reach = 0.4
-        var reachPerSecond = 1.5
+        var reach = 0.3
+        var reachPerSecond = 0.7
+        /// Joining people into pieces: the most a step may cost (in their heights per frame, plus
+        /// change in size), and the most their size may change from frame to frame (log ratio).
+        var joinCost = 0.7
+        var joinSize = 0.35
         /// Weight of looking like them (see `likenesses`): the share a piece's worth rises per
         /// spread above the typical piece.
-        var lookWeight = 0.3
+        var lookWeight = 0.15
     }
     nonisolated(unsafe) static var settings = Settings()
     /// A person found in a frame, in Vision's normalized picture coordinates (origin bottom-left).
@@ -149,9 +154,9 @@ enum PlayerChain {
                     // place is them half hidden.
                     var size = log(b.height / piece.height)
                     if size < 0, distance < 0.15 { size = max(size, -0.3) * 0.3 }
-                    guard abs(size) < 0.35 else { continue }
+                    guard abs(size) < settings.joinSize else { continue }
                     let cost = distance + abs(size)
-                    if cost < 0.45 { pairs.append((o, j, cost)) }
+                    if cost < settings.joinCost { pairs.append((o, j, cost)) }
                 }
             }
             pairs.sort { $0.cost < $1.cost }

@@ -29,9 +29,10 @@ while i + 2 < args.count {
     if i < args.count, let n = Int(args[i]), !args[i].contains(".") { number = n; i += 1 }
 }
 // CHAIN_SET="perFrame distanceCost sizeCost gapCost reach reachPerSecond lookWeight"
-if let set = ProcessInfo.processInfo.environment["CHAIN_SET"]?.split(separator: " ").compactMap({ Double($0) }), set.count == 7 {
+if let set = ProcessInfo.processInfo.environment["CHAIN_SET"]?.split(separator: " ").compactMap({ Double($0) }), set.count >= 7 {
     PlayerChain.settings = .init(perFrame: set[0], distanceCost: set[1], sizeCost: set[2], gapCost: set[3],
                                  reach: set[4], reachPerSecond: set[5], lookWeight: set[6])
+    if set.count >= 9 { PlayerChain.settings.joinCost = set[7]; PlayerChain.settings.joinSize = set[8] }
 }
 if ProcessInfo.processInfo.environment["CHAIN_DEBUG"] != nil { PlayerChain.debug = { print($0) } }
 let started = Date()
@@ -73,3 +74,24 @@ let cameraOut: [[String: Double]] = frames.map { f in
     return ["time": f.time, "x": c.x, "width": window.width]
 }
 try JSONSerialization.data(withJSONObject: cameraOut).write(to: URL(fileURLWithPath: args[2].replacingOccurrences(of: ".json", with: ".camera.json")))
+
+// CHAIN_GT=gt.json: for each marked head, the piece it's in (span, frames) — to see how
+// fragmented the player's pieces are.
+if let gtPath = ProcessInfo.processInfo.environment["CHAIN_GT"],
+   let gt = try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: gtPath))) as? [String: [Double]] {
+    var pieceOf: [[Int]] = frames.map { Array(repeating: -1, count: $0.people.count) }
+    for (k, piece) in pieces.enumerated() { for m in piece.members { pieceOf[m.frame][m.person] = k } }
+    for (t, g) in gt.sorted(by: { Double($0.key)! < Double($1.key)! }) {
+        let f = frames.indices.min { abs(frames[$0].time - Double(t)!) < abs(frames[$1].time - Double(t)!) }!
+        let hit = frames[f].people.indices.filter { i in
+            let q = frames[f].people[i]
+            return abs(q.head.x - g[0]) < max(0.04, q.width * 0.6) && q.head.y - g[1] > -q.height * 0.25 && q.head.y - g[1] < q.height * 0.45
+        }
+        if let i = hit.first {
+            let k = pieceOf[f][i], s = PlayerChain.summarize(pieces[k], frames)
+            print(String(format: "%5@  piece %3d  %.2f-%.2fs  %d frames  numbers %@", t, k, s.startTime, s.endTime, s.frames, "\(s.numbers)"))
+        } else {
+            print(String(format: "%5@  not found", t))
+        }
+    }
+}
