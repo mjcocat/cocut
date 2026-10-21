@@ -46,8 +46,10 @@ enum PlayerTracker {
         guard reader.startReading() else { return [] }
         defer { reader.cancelReading() }
 
-        // 1. Everyone in every frame.
+        // 1. Everyone in every frame. (Vision's raw person rectangles are kept too, for the
+        // record written below.)
         var frames: [PlayerChain.Frame] = []
+        var rawRectangles: [[CGRect]] = []
         var problems: [String: Int] = [:]
         var reads: [Int: Int] = [:]
         var lastFrame = -Double.infinity
@@ -62,6 +64,10 @@ enum PlayerTracker {
             let boxes = RallyDetector.playerBodies(handler, minHeight: 0.03, maxMidY: 1, problems: &problems)
                 .map(\.box)
                 .filter { crop.contains(CGPoint(x: $0.midX, y: 1 - $0.midY)) }
+            let rectangles = VNDetectHumanRectanglesRequest()
+            rectangles.upperBodyOnly = false
+            try? handler.perform([rectangles])
+            rawRectangles.append((rectangles.results ?? []).map(\.boundingBox))
             let detail = frames.count % detailEvery == 0
             let people = boxes.map { r -> PlayerChain.Person in
                 var person = PlayerChain.Person(x: Double(r.minX), y: Double(r.minY), width: Double(r.width),
@@ -87,6 +93,8 @@ enum PlayerTracker {
             anchors.append(.init(time: click.time, x: Double(c.x), y: Double(c.y), kind: .head))
         }
         let path = PlayerChain.follow(frames, anchors: anchors, number: number, aspect: Double(width / height))
+        record(url: url, frames: frames, rectangles: rawRectangles, anchors: anchors, number: number,
+               size: CGSize(width: width, height: height), path: path)
         let sightings = zip(frames, path).compactMap { frame, person -> CameraPlanner.Sighting? in
             guard let person else { return nil }
             let p = picture.fromVision(CGPoint(x: person.center.x, y: person.center.y))
@@ -102,6 +110,41 @@ enum PlayerTracker {
         if !problems.isEmpty { Log.error("Following the player: Vision problems \(problems)") }
         // Keep only sightings inside the picture.
         return sightings.filter { (-0.1...1.1).contains($0.x) && (-0.1...1.1).contains($0.y) }
+    }
+
+    /// Writes what was found and followed to Cocut's logs folder (Following/<clip>.json), so a
+    /// clip that's followed badly can be sent in and the following tuned on it.
+    private static func record(url: URL, frames: [PlayerChain.Frame], rectangles: [[CGRect]],
+                               anchors: [PlayerChain.Anchor], number: Int?, size: CGSize,
+                               path: [PlayerChain.Person?]) {
+        func round4(_ v: Double) -> Double { (v * 10_000).rounded() / 10_000 }
+        func box(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> [String: Double] {
+            ["x": round4(x), "y": round4(y), "w": round4(w), "h": round4(h)]
+        }
+        let json: [String: Any] = [
+            "clip": url.lastPathComponent,
+            "width": Double(size.width), "height": Double(size.height),
+            "number": number as Any,
+            "anchors": anchors.map { ["time": $0.time, "x": $0.x, "y": $0.y, "kind": $0.kind == .body ? "body" : "head"] },
+            "frames": frames.indices.map { k -> [String: Any] in
+                [
+                    "time": round4(frames[k].time),
+                    "people": frames[k].people.map { p -> [String: Any] in
+                        var o: [String: Any] = box(p.x, p.y, p.width, p.height)
+                        if let n = p.number { o["number"] = n }
+                        return o
+                    },
+                    "rectangles": (k < rectangles.count ? rectangles[k] : []).map {
+                        box(Double($0.minX), Double($0.minY), Double($0.width), Double($0.height))
+                    },
+                    "followed": path[k].map { box($0.x, $0.y, $0.width, $0.height) } as Any,
+                ]
+            },
+        ]
+        let folder = Platform.logsDirectory.appending(path: "Following", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appending(path: url.deletingPathExtension().lastPathComponent + ".json")
+        if let data = try? JSONSerialization.data(withJSONObject: json) { try? data.write(to: file, options: .atomic) }
     }
 
     /// The jersey number on someone, read from the top part of their box (where the number is,

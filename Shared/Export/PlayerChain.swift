@@ -85,9 +85,9 @@ enum PlayerChain {
 
         let summaries = pieces.map { summarize($0, frames) }
         let seedLook = averageLook(required.compactMap { summaries[$0.piece].look })
-        // The number seen on the player pointed out wins over the expected one (the reel may be
-        // about someone else, or the player card out of date).
-        let target = requiredNumber(required.map { summaries[$0.piece] }) ?? number
+        // The expected number (from the player card) when there is one: what's read on the box
+        // pointed out can be a teammate's, when the box takes in two players standing together.
+        let target = number ?? requiredNumber(required.map { summaries[$0.piece] })
         let seedHeight = required.map { summaries[$0.piece].first.height }.reduce(0, +) / Double(required.count)
         let likeness = likenesses(summaries, seedLook: seedLook)
         let values = summaries.indices.map { value(summaries[$0], likeness: likeness[$0], seedHeight: seedHeight, number: target) }

@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.40.1
+- Phone reels: the Player Card's number now always decides who your player is. 0.40.0 could take a teammate's number read on the spotlighted box (when two players stand together) and follow the wrong player for a whole clip.
+- Following a clip now saves what Cocut saw (in the Following folder next to the log: Help › Show Log), so a clip that's followed badly can be sent in to improve it.
+
 ## 0.40.0
 - Phone reels follow your player far better. Cocut now looks through the **whole clip** before deciding who your player is, instead of guessing frame by frame. Moments where it's clear who's who are joined up, and teammates are ruled out by the numbers on their backs. A teammate crossing in front, or your player hidden for a moment, no longer pulls the frame away. In tests on real match clips, the player stayed in the phone frame far more often.
 - One spotlight per clip is all it needs. Click Head is still there for a clip it gets wrong.
