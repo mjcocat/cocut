@@ -116,7 +116,7 @@ final class YouTubeImporter {
             if error is CancellationError || Task.isCancelled {
                 state = .idle
             } else {
-                Log.error("YouTube import failed: \(error.localizedDescription)")
+                Log.error("YouTube import failed: \(Self.describe(error))")
                 state = .failed(error.localizedDescription)
             }
         }
@@ -181,9 +181,14 @@ final class YouTubeImporter {
         var soundTrack: AVAssetTrack?
         var soundDuration = duration
         if let audio {
+            // A sound file AVFoundation can't read (say, WebM) is left out rather than failing.
             let audioAsset = AVURLAsset(url: audio)
-            soundTrack = try await audioAsset.loadTracks(withMediaType: .audio).first
-            soundDuration = try await audioAsset.load(.duration)
+            do {
+                soundTrack = try await audioAsset.loadTracks(withMediaType: .audio).first
+                soundDuration = try await audioAsset.load(.duration)
+            } catch {
+                Log.error("YouTube import: couldn't read the sound (\(audio.pathExtension)): \(Self.describe(error))")
+            }
         }
         if soundTrack == nil {
             soundTrack = try await videoAsset.loadTracks(withMediaType: .audio).first
@@ -194,11 +199,41 @@ final class YouTubeImporter {
                                        of: soundTrack, at: .zero)
         }
 
-        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
-            throw ImportError.download("Cocut couldn't put the video and sound together.")
+        // As .mp4; if that's refused (a codec .mp4 can't hold), as .mov with the same name.
+        var lastError: Error?
+        for type in [AVFileType.mp4, .mov] {
+            guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else { continue }
+            try? FileManager.default.removeItem(at: output)
+            do {
+                try await session.export(to: output, as: type)
+                if type != .mp4 { Log.info("YouTube import: saved as QuickTime (.mp4 was refused)") }
+                return
+            } catch {
+                lastError = error
+                Log.error("YouTube import: putting it together as \(type == .mp4 ? "MP4" : "QuickTime") failed: \(Self.describe(error))"
+                          + " (video \(video.pathExtension), sound \(audio?.pathExtension ?? "none"), \(Int(duration.seconds))s)")
+            }
         }
-        try? FileManager.default.removeItem(at: output)
-        try await session.export(to: output, as: .mp4)
+        // Last resort: the downloaded video as it is, if it plays.
+        if (try? await videoAsset.load(.isPlayable)) == true {
+            try? FileManager.default.removeItem(at: output)
+            try FileManager.default.copyItem(at: video, to: output)
+            Log.info("YouTube import: used the downloaded video as it is\(soundTrack == nil ? "" : " (its own sound only)")")
+            return
+        }
+        throw ImportError.download("Cocut couldn't put the video and sound together. \(lastError?.localizedDescription ?? "")")
+    }
+
+    /// An error with its domain, code and underlying error, for the log (AVFoundation's own
+    /// descriptions are often just "The operation could not be completed").
+    nonisolated static func describe(_ error: Error) -> String {
+        let e = error as NSError
+        var text = "\(e.localizedDescription) [\(e.domain) \(e.code)]"
+        if let reason = e.localizedFailureReason { text += " \(reason)" }
+        if let under = e.userInfo[NSUnderlyingErrorKey] as? NSError {
+            text += " ← \(under.domain) \(under.code) \(under.localizedDescription)"
+        }
+        return text
     }
 
     /// ~/Movies/Cocut/Downloads/<title>.mp4, numbered if taken.

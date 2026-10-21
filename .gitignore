@@ -3,6 +3,7 @@
 Cocut/Info.plist
 Cocut/Cocut.entitlements
 CocutiOS/Info.plist
+Lab/Info.plist
 
 # Build output
 build/

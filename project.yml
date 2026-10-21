@@ -8,7 +8,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.40.4"
+    MARKETING_VERSION: "0.41.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
   Cocut:
@@ -38,6 +38,30 @@ targets:
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  # Cocut Lab: a standalone Mac app for marking where the player is in real clips and tuning how
+  # phone reels follow them. Uses the engine in Shared/; also runs from Terminal (see Lab/LabCLI.swift).
+  CocutLab:
+    type: application
+    platform: macOS
+    sources:
+      - Lab
+      - Shared
+    scheme: {}
+    info:
+      path: Lab/Info.plist
+      properties:
+        CFBundleDisplayName: Cocut Lab
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.developer-tools
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mjcocat.CocutLab
+        PRODUCT_NAME: Cocut Lab
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
 
   # iPhone and iPad. Shares the engine in Shared/ (library, Player Card, Find Rallies, export)
   # with the Mac app; the screens in CocutiOS/ are its own.

@@ -15,7 +15,7 @@ enum PlayerChain {
 
     /// How the chain weighs things, tuned on hand-marked match clips, on both Vision's detections
     /// (recorded by Cocut) and another detector's (see scripts/test-player-chain.sh).
-    struct Settings {
+    struct Settings: Codable, Equatable {
         /// Worth of each frame a piece covers (before looks, size and numbers).
         var perFrame = 0.5
         /// Cost of a link's distance (as a share of how far they could have got), its change in
@@ -44,7 +44,7 @@ enum PlayerChain {
     }
     nonisolated(unsafe) static var settings = Settings()
     /// A person found in a frame, in Vision's normalized picture coordinates (origin bottom-left).
-    struct Person {
+    struct Person: Codable, Hashable {
         var x: Double
         var y: Double
         var width: Double
@@ -58,15 +58,15 @@ enum PlayerChain {
         var center: (x: Double, y: Double) { (x + width / 2, y + height / 2) }
     }
 
-    struct Frame {
+    struct Frame: Codable, Hashable {
         var time: Double
         var people: [Person]
     }
 
     /// Where the user pointed the player out: a spotlight ring (around their body) or a click
     /// (on their head), in Vision coordinates.
-    struct Anchor {
-        enum Kind { case body, head }
+    struct Anchor: Codable, Hashable {
+        enum Kind: String, Codable { case body, head }
         var time: Double
         var x: Double
         var y: Double
@@ -79,12 +79,13 @@ enum PlayerChain {
     }
 
     /// Where the player is in each frame (nil where the chain has a gap).
-    static func follow(_ frames: [Frame], anchors: [Anchor], number: Int?, aspect: Double) -> [Person?] {
+    static func follow(_ frames: [Frame], anchors: [Anchor], number: Int?, aspect: Double,
+                       settings: Settings = PlayerChain.settings) -> [Person?] {
         guard !frames.isEmpty, !anchors.isEmpty else { return Array(repeating: nil, count: frames.count) }
         // Pieces are cut into short chunks, so the chain can switch partway through one: a box
         // that took in two players standing together often runs on after the player has
         // stepped out of it.
-        let pieces = tracklets(frames, aspect: aspect).flatMap { chunks($0, frames: settings.chunkFrames) }
+        let pieces = tracklets(frames, aspect: aspect, settings: settings).flatMap { chunks($0, frames: settings.chunkFrames) }
         var pieceOf: [[Int]] = frames.map { Array(repeating: -1, count: $0.people.count) }
         for (k, piece) in pieces.enumerated() {
             for m in piece.members { pieceOf[m.frame][m.person] = k }
@@ -106,7 +107,7 @@ enum PlayerChain {
         let target = number ?? requiredNumber(required.map { summaries[$0.piece] })
         let seedHeight = required.map { summaries[$0.piece].first.height }.reduce(0, +) / Double(required.count)
         let likeness = likenesses(summaries, seedLook: seedLook)
-        let values = summaries.indices.map { value(summaries[$0], likeness: likeness[$0], seedHeight: seedHeight, number: target) }
+        let values = summaries.indices.map { value(summaries[$0], likeness: likeness[$0], seedHeight: seedHeight, number: target, settings: settings) }
 
         // Pieces that can't be them: at the same time as a piece they were pointed out in.
         var excluded = Set<Int>()
@@ -118,9 +119,9 @@ enum PlayerChain {
         let first = required[0].piece
         let mustVisit = Set(required.map(\.piece))
         let forward = bestChain(from: first, pieces: summaries, values: values, excluded: excluded,
-                                mustVisit: mustVisit, aspect: aspect, backward: false)
+                                mustVisit: mustVisit, aspect: aspect, backward: false, settings: settings)
         let backward = bestChain(from: first, pieces: summaries, values: values, excluded: excluded,
-                                 mustVisit: mustVisit, aspect: aspect, backward: true)
+                                 mustVisit: mustVisit, aspect: aspect, backward: true, settings: settings)
         if let debug {
             for k in (backward.reversed() + forward.dropFirst()) {
                 let s = summaries[k]
@@ -142,7 +143,8 @@ enum PlayerChain {
     /// nearest where it was heading, about the same size, with nobody else nearly as close. A
     /// piece waits up to `bridge` frames for someone who went missing (the detector skips people
     /// now and then, especially when they overlap).
-    static func tracklets(_ frames: [Frame], aspect: Double, bridge: Int = 6) -> [Tracklet] {
+    static func tracklets(_ frames: [Frame], aspect: Double, bridge: Int = 6,
+                          settings: Settings = PlayerChain.settings) -> [Tracklet] {
         var pieces: [Tracklet] = []
         /// `height` is their full height, kept while they're partly hidden (box much shorter).
         struct Open { var piece: Int; var frame: Int; var person: Person; var velocity: (x: Double, y: Double); var height: Double }
@@ -287,7 +289,8 @@ enum PlayerChain {
     /// How much a piece adds to a chain: its length, more when it looks like them or shows their
     /// number, nothing (excluded) when it plainly shows another number. Pieces far bigger or
     /// smaller than when they were pointed out count for little.
-    static func value(_ s: Summary, likeness: Double, seedHeight: Double, number: Int?) -> Double? {
+    static func value(_ s: Summary, likeness: Double, seedHeight: Double, number: Int?,
+                      settings: Settings = PlayerChain.settings) -> Double? {
         var perFrame = settings.perFrame * (1 + likeness * settings.lookWeight)
         // Players run from the sideline to the net, so allow a lot (half to twice the size);
         // beyond that it's someone right by the camera, or a spectator far behind the court.
@@ -329,7 +332,7 @@ enum PlayerChain {
 
     /// Cost of going from piece `a` to piece `b` (forward in time), or nil if one person couldn't
     /// do that: too far for the time between, or suddenly much bigger.
-    static func link(_ a: Summary, _ b: Summary, aspect: Double) -> Double? {
+    static func link(_ a: Summary, _ b: Summary, aspect: Double, settings: Settings = PlayerChain.settings) -> Double? {
         let gap = b.startTime - a.endTime
         guard gap > -0.08, gap < 2.5 else { return nil }
         let g = max(0, gap)
@@ -350,7 +353,8 @@ enum PlayerChain {
     /// The best chain from `start` (forward to the end, or backward to the beginning): the most
     /// value for the least strain, passing through every piece in `mustVisit` on its side.
     static func bestChain(from start: Int, pieces: [Summary], values: [Double?], excluded: Set<Int>,
-                          mustVisit: Set<Int>, aspect: Double, backward: Bool) -> [Int] {
+                          mustVisit: Set<Int>, aspect: Double, backward: Bool,
+                          settings: Settings = PlayerChain.settings) -> [Int] {
         let s0 = pieces[start]
         // Pieces on this side of the start, in the order the chain meets them.
         let side = pieces.indices.filter { k in
@@ -366,7 +370,8 @@ enum PlayerChain {
             let worth = (values[order[i]] ?? 0) + (mustVisit.contains(order[i]) ? 10_000 : 0)
             for j in 0..<i where best[j] > -.infinity {
                 let a = pieces[order[j]]
-                guard let cost = backward ? link(b, a, aspect: aspect) : link(a, b, aspect: aspect) else { continue }
+                guard let cost = backward ? link(b, a, aspect: aspect, settings: settings)
+                        : link(a, b, aspect: aspect, settings: settings) else { continue }
                 let total = best[j] + worth - cost
                 if total > best[i] { best[i] = total; from[i] = j }
             }
@@ -376,4 +381,24 @@ enum PlayerChain {
         while i >= 0 { chain.append(order[i]); i = from[i] }
         return chain
     }
+}
+
+/// Everyone found in a clip, 15 frames a second: what the slow part (Vision, in `PlayerTracker`)
+/// produces, which `PlayerChain` then works through. Cocut Lab saves these to tune the chain on
+/// many clips.
+struct ClipDetections: Codable {
+    /// Upright picture size (pixels, before any crop).
+    var width: Double
+    var height: Double
+    var start: Double
+    var end: Double
+    /// The clip's crop as fractions of the upright frame (top-left origin); nil is all of it.
+    var crop: [Double]?
+    var frames: [PlayerChain.Frame]
+    /// Vision's own person rectangles (not used for following; kept for diagnosing).
+    var rectangles: [[[Double]]]?
+    var problems: [String: Int]?
+
+    var aspect: Double { width / max(1, height) }
+    var unitCrop: CGRect? { crop.map { CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) } }
 }

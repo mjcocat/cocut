@@ -1,0 +1,473 @@
+import AppKit
+import SwiftUI
+
+/// Cocut Lab: mark where the player really is in real clips, and tune how Cocut's phone reels
+/// follow them. With a command (see LabCLI), runs in Terminal instead of opening a window.
+@main
+enum LabMain {
+    static func main() {
+        let args = Array(CommandLine.arguments.dropFirst())
+        MainActor.assumeIsolated {
+            if let first = args.first, LabCLI.commands.contains(first) {
+                LabCLI.run(args)
+            } else {
+                LabApp.main()
+            }
+        }
+    }
+}
+
+struct LabApp: App {
+    @State private var model = LabModel()
+
+    var body: some Scene {
+        Window("Cocut Lab", id: "lab") {
+            LabView()
+                .environment(model)
+                .frame(minWidth: 1000, minHeight: 640)
+        }
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+        }
+    }
+}
+
+/// The lab's state for the window.
+@MainActor
+@Observable
+final class LabModel {
+    var store = LabStore(folder: LabStore.defaultFolder)
+    var selection: UUID?
+    /// Which checkpoint each clip is on.
+    var position: [UUID: Int] = [:]
+    var image: CGImage?
+    var busy: String?
+    var report: String?
+    /// The current settings' guess per clip (by frame time), worked out when needed.
+    private var guesses: [UUID: [Double: PlayerChain.Person]] = [:]
+    private var imageTask: Task<Void, Never>?
+
+    var clip: LabClip? { selection.flatMap { id in store.clips.first { $0.id == id } } }
+    var checkpoints: [Double] { clip.map(LabStore.checkpoints) ?? [] }
+    var index: Int { selection.flatMap { position[$0] } ?? 0 }
+    var time: Double? { checkpoints.indices.contains(index) ? checkpoints[index] : nil }
+
+    func reload() {
+        store = LabStore(folder: store.folder)
+        guesses = [:]
+    }
+
+    // MARK: Moving around
+
+    func select(_ id: UUID?) {
+        selection = id
+        if let id, position[id] == nil {
+            // Start at the first checkpoint not marked yet.
+            let marked = Set(store.marks(id).map { ($0.time * 100).rounded() })
+            position[id] = checkpoints.firstIndex { !marked.contains(($0 * 100).rounded()) } ?? 0
+        }
+        loadImage()
+    }
+
+    func move(_ delta: Int) {
+        guard let id = selection, !checkpoints.isEmpty else { return }
+        position[id] = min(checkpoints.count - 1, max(0, index + delta))
+        loadImage()
+    }
+
+    func loadImage() {
+        imageTask?.cancel()
+        guard let clip, let time else { image = nil; return }
+        imageTask = Task {
+            let frame = await LabPictures.frame(clip: clip, at: time)
+            guard !Task.isCancelled else { return }
+            image = frame
+        }
+    }
+
+    // MARK: Marks
+
+    var marks: [LabMark] { selection.map { store.marks($0) } ?? [] }
+    var mark: LabMark? { time.flatMap { t in marks.first { abs($0.time - t) < 0.01 } } }
+
+    /// People found in the frame nearest the current checkpoint.
+    var people: [PlayerChain.Person] {
+        guard let id = selection, let time, let d = store.detections(id) else { return [] }
+        return d.frames.min { abs($0.time - time) < abs($1.time - time) }?.people ?? []
+    }
+
+    var guess: PlayerChain.Person? {
+        guard let clip, let time, let d = store.detections(clip.id) else { return nil }
+        if guesses[clip.id] == nil { guesses[clip.id] = LabPictures.guess(store: store, clip: clip) ?? [:] }
+        guard let frame = d.frames.min(by: { abs($0.time - time) < abs($1.time - time) }) else { return nil }
+        return guesses[clip.id]?[frame.time]
+    }
+
+    func setMark(_ mark: LabMark?) {
+        guard let clip, let time else { return }
+        store.setMark(mark, at: time, for: clip.id)
+        // A first head mark on a clip with no spotlight is what points the player out.
+        if clip.spotlight == nil { guesses[clip.id] = nil }
+        move(1)
+    }
+
+    func markHead(x: Double, y: Double) {
+        guard let time else { return }
+        setMark(.head(time, x, y))
+    }
+
+    func acceptGuess() {
+        guard let g = guess else { return }
+        markHead(x: g.head.x, y: g.head.y)
+    }
+
+    // MARK: Adding clips
+
+    var cocutProjects: [String] { ((try? LabCLI.cocutProjects()) ?? []).map(\.project.name) }
+
+    func importProject(_ name: String, all: Bool) {
+        Task {
+            _ = await LabCLI.execute(["--lab", store.folder.path(percentEncoded: false), "import-project", name] + (all ? ["--all"] : []))
+            reload()
+        }
+    }
+
+    func addVideos() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.movie]
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        Task {
+            _ = await LabCLI.execute(["--lab", store.folder.path(percentEncoded: false), "add"] + panel.urls.map { $0.path(percentEncoded: false) })
+            reload()
+        }
+    }
+
+    func remove(_ id: UUID) {
+        store.remove(id)
+        store.save()
+        if selection == id { select(nil) }
+    }
+
+    // MARK: Finding people and tuning
+
+    func findPeople() {
+        let todo = store.clips.filter { !store.hasDetections($0.id) }
+        guard !todo.isEmpty else { busy = nil; return }
+        Task {
+            for (n, clip) in todo.enumerated() {
+                busy = "Finding people in \(clip.title) (\(n + 1) of \(todo.count))…"
+                if let found = try? await PlayerTracker.detect(url: clip.videoURL, start: clip.start, end: clip.end,
+                                                               unitCrop: clip.unitCrop) {
+                    store.saveDetections(found, for: clip.id)
+                }
+            }
+            busy = nil
+            guesses = [:]
+        }
+    }
+
+    func tune() {
+        let cases = LabTuner.cases(store)
+        guard cases.count >= 2 else {
+            report = "Tuning needs at least 2 clips with people found and at least 3 marks each."
+            return
+        }
+        busy = "Tuning on \(cases.count) clips…"
+        let folder = store.folder
+        Task {
+            let text = await Task.detached(priority: .userInitiated) { () -> String in
+                let r = LabTuner.tune(cases, baseline: PlayerChain.Settings(), tries: 600, seed: 1) { _ in }
+                let stamp = ISO8601DateFormatter().string(from: r.date).replacingOccurrences(of: ":", with: "-")
+                let md = LabTuner.markdown(r)
+                let reports = folder.appending(path: "reports", directoryHint: .isDirectory)
+                try? md.write(to: reports.appending(path: "tune-\(stamp).md"), atomically: true, encoding: .utf8)
+                try? JSONEncoder.pretty.encode(r).write(to: reports.appending(path: "tune-\(stamp).json"))
+                try? JSONEncoder.pretty.encode(r.tuned).write(to: reports.appending(path: "latest-settings.json"))
+                return md
+            }.value
+            busy = nil
+            report = text
+        }
+    }
+
+    /// Player in the phone frame with the current settings, over every marked clip.
+    var overall: String? {
+        let cases = LabTuner.cases(store)
+        guard !cases.isEmpty else { return nil }
+        let scores = cases.map { LabTuner.score($0, settings: PlayerChain.Settings()) }
+        let f = scores.map(\.framed).reduce(0, +), c = scores.map(\.checked).reduce(0, +)
+        return String(format: "Player in the phone frame: %d of %d marks (%.0f%%)", f, c, 100 * Double(f) / Double(max(1, c)))
+    }
+}
+
+// MARK: - Window
+
+struct LabView: View {
+    @Environment(LabModel.self) private var model
+
+    var body: some View {
+        NavigationSplitView {
+            ClipList()
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280)
+        } detail: {
+            if model.clip != nil {
+                LabelPane()
+            } else {
+                ContentUnavailableView {
+                    Label(model.store.clips.isEmpty ? "No Clips Yet" : "Choose a Clip", systemImage: "figure.volleyball")
+                } description: {
+                    Text(model.store.clips.isEmpty
+                         ? "Add clips from a Cocut project (the ones with a spotlight) or video files, then Find People and mark where your player is every half second."
+                         : "Mark where your player is: click their head, or press Return when the yellow guess is right.")
+                }
+            }
+        }
+        .toolbar { LabToolbar() }
+        .sheet(isPresented: Binding(get: { model.report != nil }, set: { if !$0 { model.report = nil } })) {
+            ReportSheet(text: model.report ?? "")
+        }
+    }
+}
+
+struct LabToolbar: ToolbarContent {
+    @Environment(LabModel.self) private var model
+
+    var body: some ToolbarContent {
+        ToolbarItemGroup {
+            if let busy = model.busy {
+                ProgressView().controlSize(.small)
+                Text(busy).font(.callout).foregroundStyle(.secondary)
+            }
+            Menu {
+                Section("From a Cocut Project") {
+                    ForEach(model.cocutProjects, id: \.self) { name in
+                        Menu(name) {
+                            Button("Clips with a Spotlight") { model.importProject(name, all: false) }
+                            Button("All Clips") { model.importProject(name, all: true) }
+                        }
+                    }
+                }
+                Button("Video Files…") { model.addVideos() }
+            } label: {
+                Label("Add Clips", systemImage: "plus")
+            }
+            Button {
+                model.findPeople()
+            } label: {
+                Label("Find People", systemImage: "person.3.sequence")
+            }
+            .help("Find the people in clips that haven't been looked at yet (Apple's Vision, as in Cocut)")
+            .disabled(model.busy != nil)
+            Button {
+                model.tune()
+            } label: {
+                Label("Tune", systemImage: "slider.horizontal.3")
+            }
+            .help("Search for better settings, checked on clips held out from the search")
+            .disabled(model.busy != nil)
+            Button {
+                NSWorkspace.shared.open(model.store.folder)
+            } label: {
+                Label("Lab Folder", systemImage: "folder")
+            }
+        }
+    }
+}
+
+struct ClipList: View {
+    @Environment(LabModel.self) private var model
+
+    var body: some View {
+        List(selection: Binding(get: { model.selection }, set: { model.select($0) })) {
+            ForEach(model.store.clips) { clip in
+                let marked = model.store.marks(clip.id).count
+                let total = LabStore.checkpoints(clip).count
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(clip.title).lineLimit(1)
+                    HStack(spacing: 6) {
+                        Image(systemName: model.store.hasDetections(clip.id) ? "person.3.fill" : "person.3")
+                            .foregroundStyle(model.store.hasDetections(clip.id) ? Color.green : Color.secondary)
+                            .help(model.store.hasDetections(clip.id) ? "People found" : "People not found yet")
+                        Text("\(marked)/\(total) marked")
+                        Text(clip.group).lineLimit(1)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .tag(clip.id)
+                .contextMenu {
+                    Button("Remove from Lab", role: .destructive) { model.remove(clip.id) }
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(alignment: .leading, spacing: 4) {
+                if let overall = model.overall { Text(overall) }
+                HStack {
+                    Text("Following #")
+                    TextField("11", value: Binding(get: { model.store.index.number },
+                                                   set: { model.store.index.number = $0; model.store.save() }),
+                              format: .number)
+                        .frame(width: 44)
+                }
+            }
+            .font(.callout)
+            .padding(10)
+        }
+    }
+}
+
+struct LabelPane: View {
+    @Environment(LabModel.self) private var model
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(spacing: 10) {
+            header
+            picture
+            controls
+        }
+        .padding(14)
+        .focusable()
+        .focused($focused)
+        .focusEffectDisabled()
+        .onAppear { focused = true }
+        .onKeyPress(.return) { model.acceptGuess(); return .handled }
+        .onKeyPress(.leftArrow) { model.move(-1); return .handled }
+        .onKeyPress(.rightArrow) { model.move(1); return .handled }
+        .onKeyPress(.delete) { model.setMark(nil); return .handled }
+        .onKeyPress(characters: CharacterSet(charactersIn: "hHuU")) { press in
+            model.setMark(LabMark(time: model.time ?? 0, kind: press.characters.lowercased() == "h" ? .hidden : .unsure))
+            return .handled
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            if let clip = model.clip, let time = model.time {
+                Text(clip.title).font(.headline)
+                Text(String(format: "%.1fs", time - clip.start)).monospacedDigit()
+                Text("· \(model.index + 1) of \(model.checkpoints.count)")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if clip.spotlight == nil, !model.marks.contains(where: { $0.kind == .head }) {
+                    Text("No spotlight: your first click points out the player")
+                        .foregroundStyle(.orange)
+                }
+                if !model.store.hasDetections(clip.id) {
+                    Text("Find People first to see the guess").foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var picture: some View {
+        GeometryReader { geo in
+            if let image = model.image {
+                let iw = CGFloat(image.width), ih = CGFloat(image.height)
+                let s = min(geo.size.width / iw, geo.size.height / ih)
+                let rect = CGRect(x: (geo.size.width - iw * s) / 2, y: (geo.size.height - ih * s) / 2, width: iw * s, height: ih * s)
+                ZStack(alignment: .topLeading) {
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .frame(width: rect.width, height: rect.height)
+                        .offset(x: rect.minX, y: rect.minY)
+                    overlay(in: rect)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { p in
+                    guard rect.contains(p) else { return }
+                    model.markHead(x: Double((p.x - rect.minX) / rect.width), y: Double(1 - (p.y - rect.minY) / rect.height))
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(Color.black)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func overlay(in rect: CGRect) -> some View {
+        let people = model.people, guess = model.guess, mark = model.mark
+        func box(_ p: PlayerChain.Person) -> CGRect {
+            CGRect(x: rect.minX + p.x * rect.width, y: rect.minY + (1 - p.y - p.height) * rect.height,
+                   width: p.width * rect.width, height: p.height * rect.height)
+        }
+        return Canvas { context, _ in
+            for p in people {
+                context.stroke(Path(box(p)), with: .color(.white.opacity(0.35)), lineWidth: 1)
+            }
+            if let guess {
+                context.stroke(Path(roundedRect: box(guess).insetBy(dx: -2, dy: -2), cornerRadius: 3), with: .color(.yellow), lineWidth: 3)
+                let h = box(guess)
+                context.fill(Path(ellipseIn: CGRect(x: h.midX - 4, y: h.minY - 4, width: 8, height: 8)), with: .color(.yellow))
+            }
+            if let mark, mark.kind == .head, let x = mark.x, let y = mark.y {
+                let c = CGPoint(x: rect.minX + x * rect.width, y: rect.minY + (1 - y) * rect.height)
+                context.stroke(Path(ellipseIn: CGRect(x: c.x - 10, y: c.y - 10, width: 20, height: 20)), with: .color(.green), lineWidth: 3)
+            }
+        }
+        .allowsHitTesting(false)
+        .overlay(alignment: .topTrailing) {
+            if let mark, mark.kind != .head {
+                Text(mark.kind == .hidden ? "Marked: can't see them" : "Marked: not sure")
+                    .padding(6)
+                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 6))
+                    .foregroundStyle(.white)
+                    .padding(8)
+            }
+        }
+    }
+
+    private var controls: some View {
+        HStack(spacing: 10) {
+            Button { model.move(-1) } label: { Label("Back", systemImage: "chevron.left") }
+                .help("Previous checkpoint (←)")
+            Spacer()
+            Text("Click their head")
+                .foregroundStyle(.secondary)
+            Button("Guess Is Right") { model.acceptGuess() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.guess == nil)
+                .help("The yellow box is the player (Return)")
+            Button("Can't See Them") {
+                model.setMark(LabMark(time: model.time ?? 0, kind: .hidden))
+            }
+            .help("Hidden behind someone, or out of the picture (H)")
+            Button("Not Sure") {
+                model.setMark(LabMark(time: model.time ?? 0, kind: .unsure))
+            }
+            .help("Leave this one out (U)")
+            Button("Clear") { model.setMark(nil) }
+                .help("Remove this mark (Delete)")
+                .disabled(model.mark == nil)
+            Spacer()
+            Button { model.move(1) } label: { Label("Next", systemImage: "chevron.right") }
+                .help("Next checkpoint (→)")
+        }
+    }
+}
+
+struct ReportSheet: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ScrollView {
+                Text(text)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack {
+                Text("Saved in the lab folder's reports.").foregroundStyle(.secondary)
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 760, height: 560)
+    }
+}

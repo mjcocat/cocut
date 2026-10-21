@@ -14,6 +14,8 @@ enum PlayerTracker {
     /// People shorter than this (a share of the picture's height) are too small to read numbers on.
     static let detailMinHeight: CGFloat = 0.08
 
+    typealias Detections = ClipDetections
+
     /// Where the player is through `start...end` (clip seconds), in the picture the spotlight was
     /// placed on: the upright frame, cropped to `unitCrop` (fractions of it) when the clip has one.
     /// `number` is the jersey number they're expected to wear (from the player card), if known.
@@ -21,16 +23,65 @@ enum PlayerTracker {
                        marks: [PlayerMark] = [], number: Int?) async throws -> [CameraPlanner.Sighting] {
         let clicks = marks.filter { $0.time >= start - 0.2 && $0.time <= end }
         guard spot != nil || !clicks.isEmpty else { return [] }
+        guard let found = try await detect(url: url, start: start, end: end, unitCrop: unitCrop) else { return [] }
+        let anchors = Self.anchors(spot: spot, marks: clicks, start: start, unitCrop: unitCrop)
+        let path = PlayerChain.follow(found.frames, anchors: anchors, number: number, aspect: found.aspect)
+        record(url: url, detections: found, anchors: anchors, number: number, path: path)
+
+        let reads = found.frames.flatMap(\.people).compactMap(\.number)
+            .reduce(into: [Int: Int]()) { $0[$1, default: 0] += 1 }
+        let people = found.frames.map(\.people.count).reduce(0, +)
+        let numbers = reads.sorted { $0.value > $1.value }.prefix(8).map { "#\($0.key)×\($0.value)" }.joined(separator: " ")
+        let sightings = Self.sightings(found, path: path)
+        Log.info("Followed the player: in \(sightings.count) of \(found.frames.count) frames, "
+                 + String(format: "%.1f people a frame", Double(people) / Double(max(1, found.frames.count)))
+                 + (clicks.isEmpty ? "" : ", \(clicks.count) head click\(clicks.count == 1 ? "" : "s")")
+                 + ", numbers read: \(numbers.isEmpty ? "none" : numbers)")
+        if let problems = found.problems, !problems.isEmpty { Log.error("Following the player: Vision problems \(problems)") }
+        return sightings
+    }
+
+    /// Where the spotlight ring and head clicks point, in Vision's coordinates.
+    static func anchors(spot: Spotlight?, marks: [PlayerMark], start: Double, unitCrop: CGRect?) -> [PlayerChain.Anchor] {
+        let picture = PictureSpace(crop: unitCrop ?? CGRect(x: 0, y: 0, width: 1, height: 1))
+        var anchors: [PlayerChain.Anchor] = []
+        if let spot {
+            let c = picture.toVision(x: spot.x, y: spot.y)
+            anchors.append(.init(time: start, x: Double(c.x), y: Double(c.y), kind: .body))
+        }
+        for mark in marks {
+            let c = picture.toVision(x: mark.x, y: mark.y)
+            anchors.append(.init(time: mark.time, x: Double(c.x), y: Double(c.y), kind: .head))
+        }
+        return anchors
+    }
+
+    /// The followed path as camera sightings, in the clip's (cropped) picture.
+    static func sightings(_ found: Detections, path: [PlayerChain.Person?]) -> [CameraPlanner.Sighting] {
+        let picture = PictureSpace(crop: found.unitCrop ?? CGRect(x: 0, y: 0, width: 1, height: 1))
+        return zip(found.frames, path).compactMap { frame, person -> CameraPlanner.Sighting? in
+            guard let person else { return nil }
+            let p = picture.fromVision(CGPoint(x: person.center.x, y: person.center.y))
+            return .init(time: frame.time, x: p.x, y: p.y)
+        }
+        // Keep only sightings inside the picture.
+        .filter { (-0.1...1.1).contains($0.x) && (-0.1...1.1).contains($0.y) }
+    }
+
+    /// Everyone in every frame of `start...end`: the people (body pose and person rectangles, as
+    /// Find Rallies finds them) and, every fourth frame, the numbers read on them. Nil when the
+    /// clip has no readable video.
+    static func detect(url: URL, start: Double, end: Double, unitCrop: CGRect?,
+                       progress: ((Double) -> Void)? = nil) async throws -> Detections? {
         let asset = AVURLAsset(url: url)
-        guard let track = try await asset.loadTracks(withMediaType: .video).first else { return [] }
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
         let natural = try await track.load(.naturalSize)
         let preferred = try await track.load(.preferredTransform)
         let orientation = Self.orientation(of: preferred)
         let upright = CGRect(origin: .zero, size: natural).applying(preferred).size
         let width = abs(upright.width), height = abs(upright.height)
-        guard width > 0, height > 0 else { return [] }
+        guard width > 0, height > 0 else { return nil }
         let crop = unitCrop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
-        let picture = PictureSpace(crop: crop)
 
         let reader = try AVAssetReader(asset: asset)
         reader.timeRange = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600),
@@ -39,17 +90,14 @@ enum PlayerTracker {
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         ])
         output.alwaysCopiesSampleData = false
-        guard reader.canAdd(output) else { return [] }
+        guard reader.canAdd(output) else { return nil }
         reader.add(output)
-        guard reader.startReading() else { return [] }
+        guard reader.startReading() else { return nil }
         defer { reader.cancelReading() }
 
-        // 1. Everyone in every frame. (Vision's raw person rectangles are kept too, for the
-        // record written below.)
         var frames: [PlayerChain.Frame] = []
-        var rawRectangles: [[CGRect]] = []
+        var rawRectangles: [[[Double]]] = []
         var problems: [String: Int] = [:]
-        var reads: [Int: Int] = [:]
         var lastFrame = -Double.infinity
         while let sample = output.copyNextSampleBuffer() {
             try Task.checkCancellation()
@@ -65,62 +113,37 @@ enum PlayerTracker {
             let rectangles = VNDetectHumanRectanglesRequest()
             rectangles.upperBodyOnly = false
             try? handler.perform([rectangles])
-            rawRectangles.append((rectangles.results ?? []).map(\.boundingBox))
+            rawRectangles.append((rectangles.results ?? []).map {
+                [Double($0.boundingBox.minX), Double($0.boundingBox.minY), Double($0.boundingBox.width), Double($0.boundingBox.height)]
+            })
             let detail = frames.count % detailEvery == 0
             let people = boxes.map { r -> PlayerChain.Person in
                 var person = PlayerChain.Person(x: Double(r.minX), y: Double(r.minY), width: Double(r.width),
                                                 height: Double(r.height))
-                if detail, r.height >= detailMinHeight {
-                    person.number = readNumber(handler, box: r)
-                    if let n = person.number { reads[n, default: 0] += 1 }
-                }
+                if detail, r.height >= detailMinHeight { person.number = readNumber(handler, box: r) }
                 return person
             }
             frames.append(PlayerChain.Frame(time: time, people: people))
+            if end > start { progress?(min(1, (time - start) / (end - start))) }
         }
-
-        // 2. Who they are, across the whole clip.
-        var anchors: [PlayerChain.Anchor] = []
-        if let spot {
-            let c = picture.toVision(x: spot.x, y: spot.y)
-            anchors.append(.init(time: start, x: Double(c.x), y: Double(c.y), kind: .body))
-        }
-        for click in clicks {
-            let c = picture.toVision(x: click.x, y: click.y)
-            anchors.append(.init(time: click.time, x: Double(c.x), y: Double(c.y), kind: .head))
-        }
-        let path = PlayerChain.follow(frames, anchors: anchors, number: number, aspect: Double(width / height))
-        record(url: url, frames: frames, rectangles: rawRectangles, anchors: anchors, number: number,
-               size: CGSize(width: width, height: height), path: path)
-        let sightings = zip(frames, path).compactMap { frame, person -> CameraPlanner.Sighting? in
-            guard let person else { return nil }
-            let p = picture.fromVision(CGPoint(x: person.center.x, y: person.center.y))
-            return .init(time: frame.time, x: p.x, y: p.y)
-        }
-
-        let people = frames.map(\.people.count).reduce(0, +)
-        let numbers = reads.sorted { $0.value > $1.value }.prefix(8).map { "#\($0.key)×\($0.value)" }.joined(separator: " ")
-        Log.info("Followed the player: in \(sightings.count) of \(frames.count) frames, "
-                 + String(format: "%.1f people a frame", Double(people) / Double(max(1, frames.count)))
-                 + (clicks.isEmpty ? "" : ", \(clicks.count) head click\(clicks.count == 1 ? "" : "s")")
-                 + ", numbers read: \(numbers.isEmpty ? "none" : numbers)")
-        if !problems.isEmpty { Log.error("Following the player: Vision problems \(problems)") }
-        // Keep only sightings inside the picture.
-        return sightings.filter { (-0.1...1.1).contains($0.x) && (-0.1...1.1).contains($0.y) }
+        return Detections(width: Double(width), height: Double(height), start: start, end: end,
+                          crop: unitCrop.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] },
+                          frames: frames, rectangles: rawRectangles, problems: problems.isEmpty ? nil : problems)
     }
 
     /// Writes what was found and followed to Cocut's logs folder (Following/<clip>.json), so a
     /// clip that's followed badly can be sent in and the following tuned on it.
-    private static func record(url: URL, frames: [PlayerChain.Frame], rectangles: [[CGRect]],
-                               anchors: [PlayerChain.Anchor], number: Int?, size: CGSize,
+    private static func record(url: URL, detections: Detections, anchors: [PlayerChain.Anchor], number: Int?,
                                path: [PlayerChain.Person?]) {
         func round4(_ v: Double) -> Double { (v * 10_000).rounded() / 10_000 }
         func box(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> [String: Double] {
             ["x": round4(x), "y": round4(y), "w": round4(w), "h": round4(h)]
         }
+        let frames = detections.frames
+        let rectangles = detections.rectangles ?? []
         let json: [String: Any] = [
             "clip": url.lastPathComponent,
-            "width": Double(size.width), "height": Double(size.height),
+            "width": detections.width, "height": detections.height,
             "number": number as Any,
             "anchors": anchors.map { ["time": $0.time, "x": $0.x, "y": $0.y, "kind": $0.kind == .body ? "body" : "head"] },
             "frames": frames.indices.map { k -> [String: Any] in
@@ -131,9 +154,7 @@ enum PlayerTracker {
                         if let n = p.number { o["number"] = n }
                         return o
                     },
-                    "rectangles": (k < rectangles.count ? rectangles[k] : []).map {
-                        box(Double($0.minX), Double($0.minY), Double($0.width), Double($0.height))
-                    },
+                    "rectangles": (k < rectangles.count ? rectangles[k] : []).map { box($0[0], $0[1], $0[2], $0[3]) },
                     "followed": path[k].map { box($0.x, $0.y, $0.width, $0.height) } as Any,
                 ]
             },

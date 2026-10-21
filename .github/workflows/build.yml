@@ -60,6 +60,20 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build | xcbeautify --renderer github-actions
 
+      - name: Build Cocut Lab (Release, universal)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Cocut.xcodeproj \
+            -scheme CocutLab \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build \
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            build | xcbeautify --renderer github-actions
+
       - name: Check the player model is in the app
         run: |
           APP="build/Build/Products/Release/Cocut.app"
@@ -94,16 +108,25 @@ jobs:
             --sign "$IDENTITY" "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -dr - "$APP"
+          LAB="build/Build/Products/Release/Cocut Lab.app"
+          codesign --force --options runtime --timestamp=none --sign "$IDENTITY" "$LAB"
+          codesign --verify --deep --strict --verbose=2 "$LAB"
+          # The command line works from the app's executable.
+          "$LAB/Contents/MacOS/Cocut Lab" help | head -3
 
       - name: Package
         run: |
           ditto -c -k --sequesterRsrc --keepParent "build/Build/Products/Release/Cocut.app" Cocut.zip
           echo "Built Cocut $VERSION: $(du -h Cocut.zip | cut -f1)"
+          ditto -c -k --sequesterRsrc --keepParent "build/Build/Products/Release/Cocut Lab.app" CocutLab.zip
+          echo "Built Cocut Lab $VERSION: $(du -h CocutLab.zip | cut -f1)"
 
       - uses: actions/upload-artifact@v4
         with:
           name: Cocut-${{ env.VERSION }}-${{ github.run_number }}
-          path: Cocut.zip
+          path: |
+            Cocut.zip
+            CocutLab.zip
           retention-days: 30
 
       # A release is published whenever the version in project.yml has no release yet
@@ -150,7 +173,9 @@ jobs:
           tag_name: v${{ env.VERSION }}
           name: Cocut ${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
-          files: Cocut.zip
+          files: |
+            Cocut.zip
+            CocutLab.zip
           generate_release_notes: true
           body: |
             ${{ steps.notes.outputs.whatsnew }}
