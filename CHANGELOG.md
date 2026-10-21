@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.41.2
+- Cocut Lab: select several clips (⌘-click, Shift-click, ⌘A) and remove them at once with Delete, the trash button, or right-click. It asks first only when clips have marks.
+- Cocut Lab has its own icon.
+
 ## 0.41.1
 - Import from YouTube works with videos macOS can't open as YouTube sends them: with ffmpeg installed (in Terminal: brew install ffmpeg), the downloader puts the video and sound together itself. Without it, Cocut says so instead of a vague error.
 

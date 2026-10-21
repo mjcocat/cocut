@@ -27,7 +27,7 @@ enum LabCLI {
                                       clips without one are pointed out by their first head mark).
       add <video>... [--start S] [--end E] [--number N] [--group G]
                                       Add video files.
-      remove <clip>                   Remove a clip from the lab (the video stays).
+      remove <clip>... | --all        Remove clips from the lab (the videos stay).
       detect [--all] [<clip>...]      Find the people in clips (once per clip; --all redoes them).
       frames <clip> [--out <folder>] [--times t1,t2,...]
                                       Write a picture per checkpoint with everyone found numbered,
@@ -71,10 +71,14 @@ enum LabCLI {
             case "import-project": try importProject(rest, store: &store)
             case "add": try await add(rest, store: &store)
             case "remove":
-                guard let key = rest.first, let clip = store.clip(key) else { throw LabError.noClip(rest.first ?? "") }
-                store.remove(clip.id)
+                guard !rest.isEmpty else { throw LabError.usage("remove <clip>... (or --all)") }
+                let clips = try rest.contains("--all") ? store.clips : rest.map { key in
+                    guard let clip = store.clip(key) else { throw LabError.noClip(key) }
+                    return clip
+                }
+                for clip in clips { store.remove(clip.id) }
                 store.save()
-                print("Removed \(clip.title)")
+                print("Removed \(clips.count) clip\(clips.count == 1 ? "" : "s")")
             case "detect": try await detect(rest, store: store)
             case "frames": try await frames(rest, store: store)
             case "mark": try mark(rest, store: store)

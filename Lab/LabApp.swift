@@ -37,7 +37,12 @@ struct LabApp: App {
 @Observable
 final class LabModel {
     var store = LabStore(folder: LabStore.defaultFolder)
+    /// The clip being marked (when one clip is selected).
     var selection: UUID?
+    /// Clips selected in the list (one or more).
+    var selected: Set<UUID> = []
+    /// Clips waiting for "remove?" to be confirmed (they have marks).
+    var removing: Set<UUID> = []
     /// Which checkpoint each clip is on.
     var position: [UUID: Int] = [:]
     var image: CGImage?
@@ -143,10 +148,32 @@ final class LabModel {
         }
     }
 
-    func remove(_ id: UUID) {
-        store.remove(id)
+    /// The list's selection changed: one clip opens for marking; several show what's selected.
+    func listSelect(_ ids: Set<UUID>) {
+        selected = ids
+        select(ids.count == 1 ? ids.first : nil)
+    }
+
+    /// Removes clips at once, or asks first when any have marks (those would be lost).
+    func askRemove(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        if ids.contains(where: { !store.marks($0).isEmpty }) {
+            removing = ids
+        } else {
+            remove(ids)
+        }
+    }
+
+    func remove(_ ids: Set<UUID>) {
+        for id in ids { store.remove(id) }
         store.save()
-        if selection == id { select(nil) }
+        selected.subtract(ids)
+        removing = []
+        if let s = selection, ids.contains(s) { select(nil) }
+    }
+
+    func marks(in ids: Set<UUID>) -> Int {
+        ids.map { store.marks($0).count }.reduce(0, +)
     }
 
     // MARK: Finding people and tuning
@@ -213,6 +240,27 @@ struct LabView: View {
         } detail: {
             if model.clip != nil {
                 LabelPane()
+            } else if model.selected.count > 1 {
+                ContentUnavailableView {
+                    Label("\(model.selected.count) Clips Selected", systemImage: "rectangle.stack")
+                } description: {
+                    Text("Select one clip to mark it.")
+                } actions: {
+                    Button("Remove from Lab", role: .destructive) { model.askRemove(model.selected) }
+                }
+            } else if model.store.clips.isEmpty {
+                VStack(spacing: 18) {
+                    Image("Logo")
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 220, height: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
+                    Text("Add clips from a Cocut project (the ones with a spotlight) or video files, then Find People and mark where your player is every half second.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: 420)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView {
                     Label(model.store.clips.isEmpty ? "No Clips Yet" : "Choose a Clip", systemImage: "figure.volleyball")
@@ -224,6 +272,14 @@ struct LabView: View {
             }
         }
         .toolbar { LabToolbar() }
+        .confirmationDialog(
+            model.removing.count == 1 ? "Remove this clip from the lab?" : "Remove \(model.removing.count) clips from the lab?",
+            isPresented: Binding(get: { !model.removing.isEmpty }, set: { if !$0 { model.removing = [] } })
+        ) {
+            Button("Remove", role: .destructive) { model.remove(model.removing) }
+        } message: {
+            Text("Their \(model.marks(in: model.removing)) marks are removed too. The videos (and Cocut) aren't touched.")
+        }
         .sheet(isPresented: Binding(get: { model.report != nil }, set: { if !$0 { model.report = nil } })) {
             ReportSheet(text: model.report ?? "")
         }
@@ -267,6 +323,13 @@ struct LabToolbar: ToolbarContent {
             .help("Search for better settings, checked on clips held out from the search")
             .disabled(model.busy != nil)
             Button {
+                model.askRemove(model.selected)
+            } label: {
+                Label("Remove", systemImage: "trash")
+            }
+            .help("Remove the selected clips from the lab (Delete)")
+            .disabled(model.selected.isEmpty)
+            Button {
                 NSWorkspace.shared.open(model.store.folder)
             } label: {
                 Label("Lab Folder", systemImage: "folder")
@@ -279,7 +342,7 @@ struct ClipList: View {
     @Environment(LabModel.self) private var model
 
     var body: some View {
-        List(selection: Binding(get: { model.selection }, set: { model.select($0) })) {
+        List(selection: Binding(get: { model.selected }, set: { model.listSelect($0) })) {
             ForEach(model.store.clips) { clip in
                 let marked = model.store.marks(clip.id).count
                 let total = LabStore.checkpoints(clip).count
@@ -296,11 +359,17 @@ struct ClipList: View {
                     .foregroundStyle(.secondary)
                 }
                 .tag(clip.id)
-                .contextMenu {
-                    Button("Remove from Lab", role: .destructive) { model.remove(clip.id) }
+            }
+        }
+        .contextMenu(forSelectionType: UUID.self) { ids in
+            if !ids.isEmpty {
+                Button(ids.count == 1 ? "Remove from Lab" : "Remove \(ids.count) Clips from Lab", role: .destructive) {
+                    model.askRemove(ids)
                 }
             }
         }
+        // Delete (or ⌘⌫) removes the selected clips.
+        .onDeleteCommand { model.askRemove(model.selected) }
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading, spacing: 4) {
                 if let overall = model.overall { Text(overall) }
