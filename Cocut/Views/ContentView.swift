@@ -67,8 +67,8 @@ struct ContentView: View {
                 }
             }
 
-            // Every way film gets in, in one menu (the same four as Get Started), then the Find
-            // Rallies workspace and watching the result. Undo and Redo live in the Edit menu.
+            // Every way film gets in, in one menu (the same four as Get Started). Recording is also
+            // in the menu bar, Find Rallies in the Window menu (⇧⌘M) and Preview in Export (⌘Y).
             ToolbarItemGroup(placement: .primaryAction) {
                 Menu {
                     ForEach(FilmSource.allCases) { source in
@@ -78,6 +78,13 @@ struct ContentView: View {
                             Label(source.title + "…", systemImage: source.icon)
                         }
                         .disabled(source != .youtube && source != .fullMatch && model.isBusy)
+                        if source == .fullMatch {
+                            Button {
+                                openWindow(id: "rallies")
+                            } label: {
+                                Label("Matches You've Analyzed…   ⇧⌘M", systemImage: "clock.arrow.circlepath")
+                            }
+                        }
                     }
                     Divider()
                     Button {
@@ -103,36 +110,6 @@ struct ContentView: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .help("Add film: a full match, a YouTube video, clips on your Mac, a screen recording, or clips from other projects")
-
-                Button {
-                    openWindow(id: "rallies")
-                } label: {
-                    Label("Find Rallies", systemImage: "figure.volleyball")
-                        .labelStyle(.titleAndIcon)
-                }
-                .help("Find the rallies in a full match video and skip the dead time (⇧⌘M)")
-
-                Button {
-                    openWindow(id: "preview")
-                } label: {
-                    Label("Preview Reel", systemImage: "play.rectangle")
-                }
-                .help("Play the whole reel as it will export, without rendering it (⌘Y)")
-                .disabled(model.library.includedClips.isEmpty)
-            }
-
-            // Recording is what you do most while watching film online: one click, in red.
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    Task { await model.recordNewRegion() }
-                } label: {
-                    Label("Record", systemImage: "record.circle")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Design.record)
-                .help("Drag over the video on screen, then press play to record (⇧⌘R). Add › has more ways to record.")
-                .disabled(model.isBusy)
             }
         }
         // One sheet modifier for both: two .sheet modifiers on the same view means only one of

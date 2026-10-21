@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.43.1
+- A quieter toolbar: just **Add**. Find Rallies is "A full match video…" (or "Matches You've Analyzed…" to go back to one) in that menu, recording is in the menu bar, and Preview is in Export. The keyboard shortcuts still work (⇧⌘M, ⇧⌘R, ⌘Y).
+
 ## 0.43.0
 - One **Add** button in the toolbar for every way to bring film in, the same as Get Started: a full match, a YouTube video, clips on your Mac, recording your screen (full screen or the same region again), and clips from other projects. It replaces Import and the arrow next to Record.
 
