@@ -3,12 +3,14 @@ import CoreML
 import Vision
 
 /// Follows the spotlighted player through a clip, for phone exports. Every frame (15 a second)
-/// it finds the people in the picture with Vision, and `PlayerFollower` picks out the player:
+/// it finds the people in the picture with Vision (body pose and person rectangles, as Find
+/// Rallies does, which tells apart players standing together), and `PlayerFollower` picks out the player:
 /// by where they were heading and how big they look (a teammate passing between the camera and
 /// the net looks far bigger), and when it's close, by the number on their back and how they look,
 /// with the same re-identification model Find Rallies uses. Their number is checked every half
 /// second; if it's wrong twice running, the follow goes back to the last time it was right and
-/// looks for them again.
+/// looks for them again. When nobody found fits, Vision's object tracker (seeded from the last
+/// good box, and held to the same size check) bridges the gap.
 enum PlayerTracker {
     /// How often frames are looked at.
     static let interval = 1.0 / 15
@@ -45,9 +47,13 @@ enum PlayerTracker {
 
         var follower: PlayerFollower?
         var look: [Float]?
+        let sequence = VNSequenceRequestHandler()
+        var problems: [String: Int] = [:]
+        var diag = (people: 0, empty: 0, bridged: 0, longestLost: 0.0)
         var sightings: [CameraPlanner.Sighting] = []
         var lastFrame = -Double.infinity, lastNumberCheck = -Double.infinity, lastSearch = -Double.infinity
         var stats = (frames: 0, found: 0, rewinds: 0, reads: 0)
+        var lastRect: CGRect?
 
         while let sample = output.copyNextSampleBuffer() {
             try Task.checkCancellation()
@@ -58,8 +64,11 @@ enum PlayerTracker {
             stats.frames += 1
 
             let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation)
-            let people = detectPeople(handler)
+            let people = RallyDetector.playerBodies(handler, minHeight: 0.03, maxMidY: 1, problems: &problems)
+                .map(\.box)
                 .filter { crop.contains(CGPoint(x: $0.midX, y: 1 - $0.midY)) }
+            diag.people += people.count
+            if people.isEmpty { diag.empty += 1 }
 
             guard var current = follower else {
                 // First frame: the person inside the ring, or a box the ring's size.
@@ -68,6 +77,7 @@ enum PlayerTracker {
                                           number: number)
                 look = appearance(handler, box: seed)
                 sightings.append(sighting(seed, time: time, picture: picture))
+                lastRect = seed
                 continue
             }
 
@@ -87,35 +97,50 @@ enum PlayerTracker {
                     if let look, let now = appearance(handler, box: people[g.index]) { looks[g.index] = dot(now, look) }
                 }
             }
-            guard let chosen = current.choose(gated, numbers: numbers, looks: looks) else {
+            var rect: CGRect
+            if let chosen = current.choose(gated, numbers: numbers, looks: looks) {
+                rect = people[chosen]
+            } else if let last = lastRect, current.lostFor(at: time) < 1.5,
+                      let tracked = track(last, buffer: buffer, orientation: orientation, sequence: sequence),
+                      !current.gate([box(tracked)], at: time).isEmpty {
+                // Nobody found fits (hidden, or boxed together with someone): the object
+                // tracker carries on from the last good box, if what it finds is the right size.
+                rect = tracked
+                diag.bridged += 1
+            } else {
+                diag.longestLost = max(diag.longestLost, current.lostFor(at: time))
                 follower = current
                 continue
             }
-            current.update(boxes[chosen], at: time)
+            current.update(box(rect), at: time)
+            lastRect = rect
             stats.found += 1
-            sightings.append(sighting(people[chosen], time: time, picture: picture))
+            sightings.append(sighting(rect, time: time, picture: picture))
 
             // Every half second: is it still them? Read the number on their back.
             if time - lastNumberCheck >= numberCheck {
                 lastNumberCheck = time
-                let read = numbers[chosen] ?? readNumber(handler, box: people[chosen])
-                if let read {
-                    stats.reads += 1
-                    if current.read(read, at: time) {
-                        // Slid onto a teammate: drop what was followed since their number was
-                        // last seen, and look for them again from there.
-                        let since = current.lastConfirmed ?? time
-                        sightings.removeAll { $0.time > since }
-                        current.rewind()
-                        stats.rewinds += 1
-                    }
+                let read = readNumber(handler, box: rect)
+                if read != nil { stats.reads += 1 }
+                if current.read(read, at: time) {
+                    // Slid onto a teammate: drop what was followed since it was last surely
+                    // them, and look for them again from there.
+                    let since = current.rewind()
+                    sightings.removeAll { $0.time > since }
+                    lastRect = nil
+                    stats.rewinds += 1
                 }
             }
             follower = current
         }
-        Log.info("Followed the player: found in \(stats.found) of \(stats.frames) frames, \(stats.reads) number reads"
+        let seconds = max(0.001, end - start)
+        Log.info("Followed the player: found in \(stats.found) of \(stats.frames) frames"
+                 + " (\(diag.bridged) bridged by the tracker), \(String(format: "%.1f", Double(diag.people) / Double(max(1, stats.frames)))) people a frame,"
+                 + " \(diag.empty) frames with nobody, longest lost \(String(format: "%.1f", diag.longestLost))s of \(String(format: "%.1f", seconds))s,"
+                 + " \(stats.reads) number reads"
                  + (follower?.number.map { ", #\($0)\(follower?.numberConfirmed == true ? " confirmed" : " not seen")" } ?? "")
                  + (stats.rewinds > 0 ? ", caught \(stats.rewinds) slip\(stats.rewinds == 1 ? "" : "s") onto a teammate" : ""))
+        if !problems.isEmpty { Log.error("Following the player: Vision problems \(problems)") }
         // Keep only sightings inside the picture.
         return sightings.filter { (-0.1...1.1).contains($0.x) && (-0.1...1.1).contains($0.y) }
     }
@@ -129,11 +154,15 @@ enum PlayerTracker {
         return .init(time: time, x: p.x, y: p.y)
     }
 
-    private static func detectPeople(_ handler: VNImageRequestHandler) -> [CGRect] {
-        let request = VNDetectHumanRectanglesRequest()
-        request.upperBodyOnly = false
-        try? handler.perform([request])
-        return (request.results ?? []).map(\.boundingBox)
+    /// Where Vision's object tracker finds `last` in this frame, if it's fairly sure.
+    private static func track(_ last: CGRect, buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
+                              sequence: VNSequenceRequestHandler) -> CGRect? {
+        let request = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox: last))
+        request.trackingLevel = .accurate
+        guard (try? sequence.perform([request], on: buffer, orientation: orientation)) != nil,
+              let result = request.results?.first as? VNDetectedObjectObservation,
+              result.confidence >= 0.4 else { return nil }
+        return result.boundingBox
     }
 
     /// The jersey number on someone, read from the top part of their box (where the number is,

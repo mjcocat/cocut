@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.38.2
+- Phone reels hold on to your player much better. 0.38.1 lost track of them after about a second in most clips. Now Cocut finds players the way Find Rallies does (which tells apart players standing together at the net), follows their head (which stays in view when someone stands in front), and bridges short gaps.
+- It no longer mistakes a teammate's number for your player's.
+
 ## 0.38.1
 - Phone reels stay on your player. The frame used to slide onto a teammate who walked between the camera and your player (they look much bigger up close). Now Cocut follows by size, direction and the **number on their back** (from the Player Card), and if it ever catches itself on the wrong number it goes back and finds your player again.
 - Clips are followed again the first time you export after updating, so it takes a little longer once.

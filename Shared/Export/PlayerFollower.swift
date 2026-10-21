@@ -14,22 +14,30 @@ struct PlayerFollower {
         var width: Double
         var height: Double
 
-        /// Where they stand (bottom middle), which moves more steadily than the middle of the box
-        /// when they jump or reach.
-        var foot: (x: Double, y: Double) { (x + width / 2, y) }
+        /// The top middle: their head. At the net it's the part that stays in view; legs and
+        /// bodies get hidden by teammates in front, which makes the box's bottom jump around.
+        var head: (x: Double, y: Double) { (x + width / 2, y + height) }
         var center: (x: Double, y: Double) { (x + width / 2, y + height / 2) }
     }
 
     struct Settings {
-        /// How much bigger or smaller (as a log ratio) someone may look from one moment to the
-        /// next: ln(1.45). Grows while they're lost.
+        /// How much bigger (as a log ratio) someone may look from one moment to the next:
+        /// ln(1.45). Someone near the camera looks bigger, so this is kept tight. Grows while
+        /// they're lost.
         var sizeTolerance = 0.37
+        /// How much smaller: looser (ln(0.45)), since a teammate in front hides their legs.
+        var shrinkTolerance = 0.8
         /// How far from where they were heading they may turn up, in their own heights.
         var reach = 0.9
         /// How much farther that gets per second they're lost.
         var lostReach = 1.6
         /// Candidates scoring this close to the best are worth a closer look (number, appearance).
         var ambiguity = 0.4
+        /// Fastest anyone moves, in their own heights per second (a sprint is about three).
+        var maxSpeed = 3.0
+        /// A number read this soon after the start (while surely still on the spotlighted player)
+        /// replaces the expected one when it keeps showing.
+        var adoptWindow = 1.5
     }
 
     var settings = Settings()
@@ -39,7 +47,7 @@ struct PlayerFollower {
     private(set) var box: Box
     /// Their height, smoothed (detection boxes breathe as people bend and jump).
     private(set) var height: Double
-    /// How their feet were moving, in picture fractions per second.
+    /// How their head was moving, in picture fractions per second.
     private(set) var velocity: (x: Double, y: Double) = (0, 0)
     private(set) var lastSeen: Double
     /// Their jersey number: expected (from the player card) until read on them, then confirmed.
@@ -48,6 +56,9 @@ struct PlayerFollower {
     /// The last moment their number was read on the box being followed.
     private(set) var lastConfirmed: Double?
     private var confirmedState: (box: Box, height: Double)?
+    /// The last moment no wrong number had been read, to go back to when one keeps showing.
+    private(set) var checkpoint: (time: Double, box: Box, height: Double)
+    private let startTime: Double
     private var wrongReads = 0
     private var otherReads: [Int: Int] = [:]
 
@@ -55,6 +66,8 @@ struct PlayerFollower {
         box = seed
         height = seed.height
         lastSeen = time
+        startTime = time
+        checkpoint = (time, seed, seed.height)
         self.aspect = aspect
         self.number = number
     }
@@ -62,28 +75,30 @@ struct PlayerFollower {
     /// Seconds since they were last picked out.
     func lostFor(at time: Double) -> Double { max(0, time - lastSeen) }
 
-    /// Where their feet should be at `time`, carrying on as they were going (for a little while).
+    /// Where their head should be at `time`, carrying on as they were going (for a little while).
     func predicted(at time: Double) -> (x: Double, y: Double) {
         let dt = min(lostFor(at: time), 0.6)
-        return (box.foot.x + velocity.x * dt, box.foot.y + velocity.y * dt)
+        return (box.head.x + velocity.x * dt, box.head.y + velocity.y * dt)
     }
 
     /// The boxes that could be them at `time`, best first, each with a cost (lower is likelier).
     func gate(_ boxes: [Box], at time: Double) -> [(index: Int, cost: Double)] {
         let lost = max(0, lostFor(at: time) - 0.15)
-        let sizeTolerance = min(0.9, settings.sizeTolerance + 0.3 * lost)
+        let growth = min(0.9, settings.sizeTolerance + 0.3 * lost)
+        let shrink = min(1.2, settings.shrinkTolerance + 0.3 * lost)
         let reach = settings.reach + settings.lostReach * lost
         let p = predicted(at: time)
         var out: [(index: Int, cost: Double)] = []
         for (i, b) in boxes.enumerated() where b.height > 0 {
             let size = log(b.height / height)
-            guard abs(size) <= sizeTolerance else { continue }
+            let tolerance = size > 0 ? growth : shrink
+            guard abs(size) <= tolerance else { continue }
             // In their own heights, so a step means the same near the camera and far from it.
-            let dx = (b.foot.x - p.x) * aspect / height
-            let dy = (b.foot.y - p.y) / height
+            let dx = (b.head.x - p.x) * aspect / height
+            let dy = (b.head.y - p.y) / height
             let distance = (dx * dx + dy * dy).squareRoot()
             guard distance <= reach else { continue }
-            out.append((i, distance / max(reach, 0.001) + 1.5 * abs(size) / sizeTolerance))
+            out.append((i, distance / max(reach, 0.001) + 1.5 * abs(size) / tolerance))
         }
         return out.sorted { $0.cost < $1.cost }
     }
@@ -119,50 +134,66 @@ struct PlayerFollower {
     mutating func update(_ b: Box, at time: Double) {
         let dt = time - lastSeen
         if dt > 0.001 {
-            let v = ((b.foot.x - box.foot.x) / dt, (b.foot.y - box.foot.y) / dt)
+            let v = ((b.head.x - box.head.x) / dt, (b.head.y - box.head.y) / dt)
             // After a long gap the step is an average over it; trust it less.
             let weight = dt > 0.5 ? 0.25 : 0.5
             velocity = (velocity.x * (1 - weight) + v.0 * weight, velocity.y * (1 - weight) + v.1 * weight)
+            // Boxes jump when legs are hidden or arms go up; nobody really moves faster than a sprint.
+            let limit = settings.maxSpeed * height
+            let speed = ((velocity.x * aspect) * (velocity.x * aspect) + velocity.y * velocity.y).squareRoot()
+            if speed > limit {
+                velocity = (velocity.x * limit / speed, velocity.y * limit / speed)
+            }
         }
         box = b
-        height = height * 0.75 + b.height * 0.25
+        // A box much smaller than them is usually them half hidden: keep their full height.
+        height = b.height < height * 0.8 ? height : height * 0.75 + b.height * 0.25
         lastSeen = time
     }
 
-    /// A number read on the box being followed. Returns true when it shows the follower has
-    /// slid onto someone else (their number was seen before, and now another, twice running).
-    mutating func read(_ n: Int, at time: Double) -> Bool {
+    /// A check of the number on the box being followed at `time`: what was read, or nil if
+    /// nothing could be. Returns true when it shows the follower has slid onto someone else:
+    /// another number twice running (once the start is past, or once theirs has been seen).
+    mutating func read(_ n: Int?, at time: Double) -> Bool {
+        guard let n else {
+            if wrongReads == 0 { checkpoint = (time, box, height) }
+            return false
+        }
         if n == number {
             numberConfirmed = true
             lastConfirmed = time
             confirmedState = (box, height)
+            checkpoint = (time, box, height)
             wrongReads = 0
             return false
         }
-        if !numberConfirmed {
-            // The expected number hasn't shown up; if another keeps showing, it's theirs.
+        if !numberConfirmed, time - startTime <= settings.adoptWindow {
+            // Right at the start it's surely them: if another number keeps showing, it's theirs
+            // (the player card's number may be out of date, or the reel is about someone else).
             otherReads[n, default: 0] += 1
             if otherReads[n, default: 0] >= 2 {
                 number = n
                 numberConfirmed = true
                 lastConfirmed = time
                 confirmedState = (box, height)
+                checkpoint = (time, box, height)
             }
             return false
         }
+        guard number != nil else { return false }
         wrongReads += 1
         return wrongReads >= 2
     }
 
-    /// Following the wrong person since `lastConfirmed`: go back to how they were then, and look
-    /// for them afresh.
-    mutating func rewind() {
-        if let confirmedState, let lastConfirmed {
-            box = confirmedState.box
-            height = confirmedState.height
-            lastSeen = lastConfirmed
-        }
+    /// Following the wrong person: go back to the last moment it was surely them, and look for
+    /// them afresh from there. Returns that moment.
+    @discardableResult
+    mutating func rewind() -> Double {
+        box = checkpoint.box
+        height = checkpoint.height
+        lastSeen = checkpoint.time
         velocity = (0, 0)
         wrongReads = 0
+        return checkpoint.time
     }
 }

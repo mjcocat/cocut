@@ -45,7 +45,7 @@ func run(_ people: [Person], seed: String, until end: Double, expected: Int?,
             followed.append(shown[i].id)
             if t - lastCheck >= 0.5 {
                 lastCheck = t
-                if readable(shown[i], t), follower.read(shown[i].number, at: t) {
+                if follower.read(readable(shown[i], t) ? shown[i].number : nil, at: t) {
                     follower.rewind()
                     followed[followed.count - 1] = nil
                 }
@@ -69,6 +69,25 @@ let crossing = run([eleven, twelve], seed: "11", until: 4, expected: 11, visible
 check(!crossing.contains("12"), "never switches to the bigger player in front")
 check(crossing.last == "11", "still on #11 after he passes")
 check(crossing.contains(nil), "(he really was hidden for a moment)")
+
+print("Half hidden instead of gone")
+// While #12 passes in front, #11's legs are hidden: his box is only his top half.
+let halfHidden: [Person] = [eleven, twelve]
+var halfFollower = PlayerFollower(seed: eleven.box(at: 0), time: 0, aspect: aspect, number: 11)
+var halfFollowed: [String] = []
+for frame in 1...Int(4 * fps) {
+    let t = Double(frame) / fps
+    var boxes = halfHidden.map { $0.box(at: t) }
+    if abs(twelve.foot(t).x - eleven.foot(t).x) < 0.07 {
+        boxes[0].y += boxes[0].height * 0.55
+        boxes[0].height *= 0.45
+    }
+    if let i = halfFollower.choose(halfFollower.gate(boxes, at: t)) {
+        halfFollower.update(boxes[i], at: t)
+        halfFollowed.append(halfHidden[i].id)
+    }
+}
+check(!halfFollowed.contains("12") && halfFollowed.count == Int(4 * fps), "stays on his head and shoulders behind the player in front")
 
 print("Two players the same size cross at the net")
 let a = Person(id: "11", number: 11, foot: { t in (0.35 + 0.08 * t, 0.42) }, height: 0.24)
@@ -95,10 +114,27 @@ slid.update(twelve.box(at: 1), at: 1)
 let first = slid.read(12, at: 1)
 let second = slid.read(12, at: 1.5)
 check(!first && second, "two reads of another number mean it's following the wrong player")
-slid.rewind()
-check(slid.lastSeen == 0.5 && slid.box == eleven.box(at: 0), "rewinds to the last time it saw #11")
+let back = slid.rewind()
+check(back == 0.5 && slid.lastSeen == 0.5 && slid.box == eleven.box(at: 0), "rewinds to the last time it saw #11")
 let gated = slid.gate([twelve.box(at: 2), eleven.box(at: 2)], at: 2)
 check(slid.choose(gated, numbers: [0: 12]) == 1, "then picks #11, never the number it slid onto")
+
+var late = PlayerFollower(seed: eleven.box(at: 0), time: 0, aspect: aspect, number: 11)
+_ = late.read(nil, at: 1)
+late.update(twelve.box(at: 2), at: 2)
+let lateFirst = late.read(15, at: 2)
+let lateSecond = late.read(15, at: 2.5)
+check(!lateFirst && lateSecond && late.number == 11, "never adopts a teammate's number after the start")
+check(late.rewind() == 1, "rewinds to the last check without a wrong number")
+
+print("Jumpy boxes")
+var jumpy = PlayerFollower(seed: eleven.box(at: 0), time: 0, aspect: aspect, number: 11)
+var legsHidden = eleven.box(at: 0)
+legsHidden.y += 0.12
+legsHidden.height -= 0.12
+jumpy.update(legsHidden, at: 1 / fps)
+let lostThen = jumpy.gate([eleven.box(at: 0.8)], at: 0.8)
+check(!lostThen.isEmpty, "a box that jumps (legs hidden) doesn't fling the prediction away")
 
 print(failures == 0 ? "\nAll passed" : "\n\(failures) failed")
 exit(failures == 0 ? 0 : 1)
