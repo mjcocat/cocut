@@ -38,6 +38,8 @@ struct Clip: Identifiable, Codable, Hashable {
     /// Where the phone frame looks, set by hand in the phone frame editor (used when
     /// `phoneFraming` is `.custom`).
     var phoneKeys: [PhoneKey]?
+    /// Clicks on the player's head (phone frame editor), where following them starts over.
+    var playerMarks: [PlayerMark]?
     var stars: Int { rating ?? 0 }
     var playerList: [Int] { players ?? [] }
     /// Everyone in the clip: listed players plus anyone tagged in a play.
@@ -671,7 +673,7 @@ final class ClipLibrary {
                                 tagIDs: tagIDs.isEmpty ? nil : tagIDs, crop: old.crop, cropChecked: old.cropChecked,
                                 plays: old.plays, players: old.players, rating: old.rating,
                                 spotlight: old.spotlight, origin: request.origin, phoneFraming: old.phoneFraming,
-                                phoneKeys: old.phoneKeys)
+                                phoneKeys: old.phoneKeys, playerMarks: old.playerMarks)
                 newItems.append(.clip(clip))
                 lastID = clip.id
                 added += 1
@@ -857,11 +859,12 @@ final class ClipLibrary {
     }
 
     /// Saves the phone frame editor's work: the framing and, for `.custom`, its keys.
-    func setPhoneFrame(_ framing: PhoneFraming, keys: [PhoneKey], for clipID: Clip.ID) {
+    func setPhoneFrame(_ framing: PhoneFraming, keys: [PhoneKey], marks: [PlayerMark], for clipID: Clip.ID) {
         checkpoint("Phone Frame")
         updateClip(clipID) { c in
             c.phoneFraming = framing == .automatic ? nil : framing
             c.phoneKeys = keys.isEmpty ? nil : keys.sorted { $0.time < $1.time }
+            c.playerMarks = marks.isEmpty ? nil : marks.sorted { $0.time < $1.time }
         }
         save()
     }

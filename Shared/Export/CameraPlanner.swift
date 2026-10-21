@@ -35,6 +35,14 @@ struct PhoneKey: Codable, Hashable, Sendable {
     var y: Double
 }
 
+/// Where the player's head is at one moment, clicked in the phone frame editor so following
+/// them starts (or starts over) there (clip seconds; picture fractions, top-left origin).
+struct PlayerMark: Codable, Hashable, Sendable {
+    var time: Double
+    var x: Double
+    var y: Double
+}
+
 /// Turns where a player was seen into calm camera movement, like a good camera operator: the
 /// frame holds still while the player moves a little, follows smoothly when they move more,
 /// eases in and out of moves, never whips faster than a set speed, and never shows past the

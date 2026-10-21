@@ -10,7 +10,8 @@ import Vision
 /// with the same re-identification model Find Rallies uses. Their number is checked every half
 /// second; if it's wrong twice running, the follow goes back to the last time it was right and
 /// looks for them again. When nobody found fits, Vision's object tracker (seeded from the last
-/// good box, and held to the same size check) bridges the gap.
+/// good box, and held to the same size check) bridges the gap. Clicks on the player's head in the
+/// phone frame editor start the follow over at that moment, on whoever's head was clicked.
 enum PlayerTracker {
     /// How often frames are looked at.
     static let interval = 1.0 / 15
@@ -21,7 +22,9 @@ enum PlayerTracker {
     /// placed on: the upright frame, cropped to `unitCrop` (fractions of it) when the clip has one.
     /// `number` is the jersey number they're expected to wear (from the player card), if known.
     static func follow(url: URL, start: Double, end: Double, unitCrop: CGRect?,
-                       spot: Spotlight, number: Int?) async throws -> [CameraPlanner.Sighting] {
+                       spot: Spotlight?, marks: [PlayerMark] = [], number: Int?) async throws -> [CameraPlanner.Sighting] {
+        var pending = marks.filter { $0.time >= start - 0.2 && $0.time <= end }.sorted { $0.time < $1.time }
+        guard spot != nil || !pending.isEmpty else { return [] }
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { return [] }
         let natural = try await track.load(.naturalSize)
@@ -49,7 +52,7 @@ enum PlayerTracker {
         var look: [Float]?
         let sequence = VNSequenceRequestHandler()
         var problems: [String: Int] = [:]
-        var diag = (people: 0, empty: 0, bridged: 0, longestLost: 0.0)
+        var diag = (people: 0, empty: 0, bridged: 0, longestLost: 0.0, marks: 0)
         var sightings: [CameraPlanner.Sighting] = []
         var lastFrame = -Double.infinity, lastNumberCheck = -Double.infinity, lastSearch = -Double.infinity
         var stats = (frames: 0, found: 0, rewinds: 0, reads: 0)
@@ -70,8 +73,28 @@ enum PlayerTracker {
             diag.people += people.count
             if people.isEmpty { diag.empty += 1 }
 
+            // A click on their head: start over on whoever's head it was.
+            if let mark = pending.first, time >= mark.time - interval / 2 {
+                pending.removeFirst()
+                let seed = personAt(head: picture.toVision(x: mark.x, y: mark.y), people: people,
+                                    typicalHeight: lastRect?.height ?? spot.map { CGFloat($0.radius) * 2.2 * crop.height } ?? 0.25,
+                                    aspect: width / height)
+                // Whatever was followed just before, far from where they really were, was someone else.
+                let markX = picture.fromVision(CGPoint(x: seed.midX, y: seed.midY)).x
+                sightings.removeAll { $0.time > time - 2 && abs($0.x - markX) > 0.12 }
+                follower = PlayerFollower(seed: box(seed), time: time, aspect: width / height,
+                                          number: follower?.number ?? number)
+                if look == nil { look = appearance(handler, box: seed) }
+                sightings.append(sighting(seed, time: time, picture: picture))
+                lastRect = seed
+                diag.marks += 1
+                continue
+            }
+
             guard var current = follower else {
-                // First frame: the person inside the ring, or a box the ring's size.
+                // First frame: the person inside the spotlight ring, or a box the ring's size.
+                // (With no spotlight, following starts at the first click on their head.)
+                guard let spot else { continue }
                 let seed = seedBox(people: people, spot: spot, picture: picture, aspect: width / height)
                 follower = PlayerFollower(seed: box(seed), time: time, aspect: width / height,
                                           number: number)
@@ -101,7 +124,7 @@ enum PlayerTracker {
             if let chosen = current.choose(gated, numbers: numbers, looks: looks) {
                 rect = people[chosen]
             } else if let last = lastRect, current.lostFor(at: time) < 1.5,
-                      let tracked = track(last, buffer: buffer, orientation: orientation, sequence: sequence),
+                      let tracked = objectTracker(last, buffer: buffer, orientation: orientation, sequence: sequence),
                       !current.gate([box(tracked)], at: time).isEmpty {
                 // Nobody found fits (hidden, or boxed together with someone): the object
                 // tracker carries on from the last good box, if what it finds is the right size.
@@ -139,7 +162,8 @@ enum PlayerTracker {
                  + " \(diag.empty) frames with nobody, longest lost \(String(format: "%.1f", diag.longestLost))s of \(String(format: "%.1f", seconds))s,"
                  + " \(stats.reads) number reads"
                  + (follower?.number.map { ", #\($0)\(follower?.numberConfirmed == true ? " confirmed" : " not seen")" } ?? "")
-                 + (stats.rewinds > 0 ? ", caught \(stats.rewinds) slip\(stats.rewinds == 1 ? "" : "s") onto a teammate" : ""))
+                 + (stats.rewinds > 0 ? ", caught \(stats.rewinds) slip\(stats.rewinds == 1 ? "" : "s") onto a teammate" : "")
+                 + (diag.marks > 0 ? ", \(diag.marks) head click\(diag.marks == 1 ? "" : "s")" : ""))
         if !problems.isEmpty { Log.error("Following the player: Vision problems \(problems)") }
         // Keep only sightings inside the picture.
         return sightings.filter { (-0.1...1.1).contains($0.x) && (-0.1...1.1).contains($0.y) }
@@ -155,7 +179,7 @@ enum PlayerTracker {
     }
 
     /// Where Vision's object tracker finds `last` in this frame, if it's fairly sure.
-    private static func track(_ last: CGRect, buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
+    private static func objectTracker(_ last: CGRect, buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                               sequence: VNSequenceRequestHandler) -> CGRect? {
         let request = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox: last))
         request.trackingLevel = .accurate
@@ -199,6 +223,21 @@ enum PlayerTracker {
         func fromVision(_ p: CGPoint) -> (x: Double, y: Double) {
             ((p.x - crop.minX) / max(crop.width, 0.0001), ((1 - p.y) - crop.minY) / max(crop.height, 0.0001))
         }
+    }
+
+    /// The person whose head is at `head` (Vision coordinates), or a box of a typical player's
+    /// size hanging from it.
+    static func personAt(head: CGPoint, people: [CGRect], typicalHeight: CGFloat, aspect: CGFloat) -> CGRect {
+        func distance(_ r: CGRect) -> CGFloat { hypot((r.midX - head.x) * aspect, r.maxY - head.y) }
+        let near = people.filter { r in
+            head.x >= r.minX - r.width * 0.2 && head.x <= r.maxX + r.width * 0.2
+                && head.y >= r.minY + r.height * 0.5 && head.y <= r.maxY + r.height * 0.12
+        }
+        if let best = near.min(by: { distance($0) < distance($1) }) { return best }
+        let h = min(0.9, max(0.05, typicalHeight))
+        let w = h * 0.4 / aspect
+        return CGRect(x: head.x - w / 2, y: head.y + h * 0.06 - h, width: w, height: h)
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
     }
 
     /// The person under the spotlight on the first frame, or a box the ring's size around it.

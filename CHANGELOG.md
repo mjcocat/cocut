@@ -3,7 +3,8 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
-## 0.38.2
+## 0.39.0
+- New in the **Phone Frame** editor: **Click Head**. Turn it on and click your player's head. Following starts over on them from that moment. Click at the start of a clip, and wherever the frame wanders off them; each click shows as a yellow ring on the timeline. Works on clips without a spotlight too.
 - Phone reels hold on to your player much better. 0.38.1 lost track of them after about a second in most clips. Now Cocut finds players the way Find Rallies does (which tells apart players standing together at the net), follows their head (which stays in view when someone stands in front), and bridges short gaps.
 - It no longer mistakes a teammate's number for your player's.
 

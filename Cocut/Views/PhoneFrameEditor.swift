@@ -26,6 +26,16 @@ struct PhoneFrameEditor: View {
     @State private var following = false
     @State private var drag: DragState?
     @State private var scrubbing = false
+    /// Clicks on the player's head, where following them starts over.
+    @State private var marks: [PlayerMark] = []
+    /// Clicks on the picture mark the player's head instead of moving the frame.
+    @State private var marking = false
+
+    /// What following depends on: tracked again when it changes.
+    private struct FollowRequest: Equatable {
+        var shape: ReelShape
+        var marks: [PlayerMark]
+    }
 
     private struct DragState {
         var center: CGPoint
@@ -60,7 +70,7 @@ struct PhoneFrameEditor: View {
                 .background(.bar)
         }
         .task(id: clip.id) { await load() }
-        .task(id: shape) { await follow() }
+        .task(id: FollowRequest(shape: shape, marks: marks)) { await follow() }
         .onDisappear { teardown() }
     }
 
@@ -83,9 +93,14 @@ struct PhoneFrameEditor: View {
         return CGPoint(x: axis(p.x, w.width), y: axis(p.y, w.height))
     }
 
+    /// Automatic follows the player when there's a spotlight or a click on their head.
+    private var canFollow: Bool {
+        options.followSpotlight && (clip.spotlight != nil || !marks.isEmpty)
+    }
+
     /// What Automatic does for this clip.
     private var automaticIsWhole: Bool {
-        !(options.followSpotlight && clip.spotlight != nil) && options.unspotlitFraming == .wholePicture
+        !canFollow && options.unspotlitFraming == .wholePicture
     }
 
     private var showsWhole: Bool {
@@ -105,12 +120,13 @@ struct PhoneFrameEditor: View {
             return CGPoint(x: c.x, y: c.y)
         case .automatic:
             if automaticIsWhole { return nil }
-            if options.followSpotlight, let spot = clip.spotlight {
+            if canFollow {
                 if let followPath {
                     let c = followPath.center(at: t)
                     return CGPoint(x: c.x, y: c.y)
                 }
-                return bounded(CGPoint(x: spot.x, y: spot.y))
+                if let spot = clip.spotlight { return bounded(CGPoint(x: spot.x, y: spot.y)) }
+                if let mark = marks.first { return bounded(CGPoint(x: mark.x, y: mark.y + 0.12)) }
             }
             return bounded(CGPoint(x: 0.5, y: 0.5))
         }
@@ -122,7 +138,28 @@ struct PhoneFrameEditor: View {
         return keys.filter { abs($0.time - time) < 0.15 }.min { abs($0.time - time) < abs($1.time - time) }
     }
 
+    /// The head click nearest the playhead, if it's close enough to count as "on" it.
+    private var markAtPlayhead: PlayerMark? {
+        marks.filter { abs($0.time - time) < 0.2 }.min { abs($0.time - time) < abs($1.time - time) }
+    }
+
     // MARK: Editing
+
+    /// Their head is at `p` now: following starts over from here, on them.
+    private func mark(_ p: CGPoint) {
+        player?.pause()
+        playing = false
+        marks.removeAll { abs($0.time - time) < 0.2 }
+        marks.append(PlayerMark(time: time, x: Double(min(1, max(0, p.x))), y: Double(min(1, max(0, p.y)))))
+        marks.sort { $0.time < $1.time }
+        // Head clicks steer the automatic follow.
+        framing = .automatic
+    }
+
+    private func removeMark() {
+        guard let mark = markAtPlayhead else { return }
+        marks.removeAll { $0 == mark }
+    }
 
     /// Moves the frame to `p` at the playhead: a key there (paused), or steering (playing).
     private func place(_ p: CGPoint) {
@@ -173,7 +210,7 @@ struct PhoneFrameEditor: View {
     private func save() {
         player?.pause()
         let final: PhoneFraming = framing == .custom && keys.isEmpty ? .automatic : framing
-        library.setPhoneFrame(final, keys: keys, for: clip.id)
+        library.setPhoneFrame(final, keys: keys, marks: marks, for: clip.id)
         onDone()
     }
 
@@ -182,6 +219,7 @@ struct PhoneFrameEditor: View {
     private func load() async {
         framing = clip.phoneFraming ?? .automatic
         keys = clip.phoneKeys ?? []
+        marks = clip.playerMarks ?? []
         if framing == .custom, keys.isEmpty { framing = .automatic }
         shape = options.shape.isPhone ? options.shape : .vertical
         time = start
@@ -211,10 +249,10 @@ struct PhoneFrameEditor: View {
     }
 
     private func follow() async {
-        guard options.followSpotlight, let spot = clip.spotlight else { followPath = nil; return }
+        guard canFollow else { followPath = nil; return }
         following = true
         let path = await ReelExporter.followPath(
-            clip: clip, url: url, spot: spot, renderSize: shape.phoneSize,
+            clip: clip, url: url, spot: clip.spotlight, marks: marks, renderSize: shape.phoneSize,
             number: Int(model.profile.profile.featuredNumber.trimmingCharacters(in: .whitespaces)),
             cacheDirectory: library.rootDirectory.appending(path: "Framing", directoryHint: .isDirectory))
         // A newer run (the shape changed) takes over.
@@ -282,7 +320,7 @@ struct PhoneFrameEditor: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { value in
-                    guard rect.width > 0 else { return }
+                    guard rect.width > 0, !marking else { return }
                     func fraction(_ p: CGPoint) -> CGPoint {
                         CGPoint(x: (p.x - rect.minX) / rect.width, y: (p.y - rect.minY) / rect.height)
                     }
@@ -298,7 +336,13 @@ struct PhoneFrameEditor: View {
                     place(CGPoint(x: d.center.x + value.translation.width / rect.width,
                                   y: d.center.y + value.translation.height / rect.height))
                 }
-                .onEnded { _ in drag = nil })
+                .onEnded { value in
+                    drag = nil
+                    if marking, rect.width > 0, rect.contains(value.location) {
+                        mark(CGPoint(x: (value.location.x - rect.minX) / rect.width,
+                                     y: (value.location.y - rect.minY) / rect.height))
+                    }
+                })
             .overlay(alignment: .top) {
                 Text(hint)
                     .font(.callout.weight(.medium))
@@ -314,7 +358,8 @@ struct PhoneFrameEditor: View {
     }
 
     private var hint: String {
-        if following { return "Following the player… (only the first time)" }
+        if marking { return "Click your player's head. Following starts over from there." }
+        if following { return "Following the player…" }
         if showsWhole { return "Whole picture: drag to frame it instead" }
         if playing { return "Drag while it plays to steer the frame" }
         return "Drag the frame, or click where it should look"
@@ -329,7 +374,13 @@ struct PhoneFrameEditor: View {
                            width: w.width * rect.width, height: w.height * rect.height)
         let whole = showsWhole
         let onKey = keyAtPlayhead != nil
+        let head = markAtPlayhead.map { CGPoint(x: rect.minX + $0.x * rect.width, y: rect.minY + $0.y * rect.height) }
         return Canvas { context, _ in
+            // A head click at the playhead: a ring where it was clicked.
+            if let head {
+                let ring = CGRect(x: head.x - 11, y: head.y - 11, width: 22, height: 22)
+                context.stroke(Path(ellipseIn: ring), with: .color(.yellow), lineWidth: 3)
+            }
             if !whole {
                 var dim = Path(rect)
                 dim.addRect(frame)
@@ -431,6 +482,13 @@ struct PhoneFrameEditor: View {
                                 .offset(x: x(key.time) - 3.5)
                         }
                     }
+                    // Head clicks: yellow rings.
+                    ForEach(marks, id: \.self) { mark in
+                        Circle()
+                            .strokeBorder(Color.yellow, lineWidth: mark == markAtPlayhead ? 3 : 2)
+                            .frame(width: 11, height: 11)
+                            .offset(x: x(mark.time) - 5.5)
+                    }
                     Circle()
                         .fill(.white)
                         .shadow(radius: 1.5)
@@ -475,13 +533,28 @@ struct PhoneFrameEditor: View {
 
     private var controls: some View {
         HStack(spacing: 14) {
+            Toggle(isOn: $marking) {
+                Label("Click Head", systemImage: "person.crop.circle.badge.plus")
+            }
+            .toggleStyle(.button)
+            .help("Turn on, then click your player's head in the picture. Following starts over on them from that moment: do it at the start, and wherever the frame loses them.")
+
+            if markAtPlayhead != nil {
+                Button("Remove Click", systemImage: "person.crop.circle.badge.minus", action: removeMark)
+                    .help("Remove the head click at the playhead")
+            } else if !marks.isEmpty {
+                Text("\(marks.count) head \(marks.count == 1 ? "click" : "clicks")")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
             Picker("Framing", selection: Binding(
                 get: { framing },
                 set: { new in
                     if new == .custom, keys.isEmpty { becomeCustom() } else { framing = new }
                 }
             )) {
-                Text(clip.spotlight != nil && options.followSpotlight ? "Follow Player" : "Automatic").tag(PhoneFraming.automatic)
+                Text(canFollow ? "Follow Player" : "Automatic").tag(PhoneFraming.automatic)
                 Text("Centered").tag(PhoneFraming.centered)
                 Text("Whole").tag(PhoneFraming.wholePicture)
                 Text("Custom").tag(PhoneFraming.custom)
