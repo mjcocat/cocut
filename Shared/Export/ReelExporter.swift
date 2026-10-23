@@ -419,23 +419,28 @@ final class ReelExporter {
                 }
                 let duration = clip.trimEndSeconds - clip.trimStartSeconds
                 guard duration > 0.1 else { continue }
-                var still: ReelSegment?
-                var moment = clip.trimStartSeconds
-                if options.showSpotlights, let spot = clip.spotlight {
-                    status("Drawing the spotlight on “\(clip.title)”…")
-                    moment = spot.moment(in: clip)
-                    let ringColor = options.spotlightColor.flatMap { Color(hex: $0) } ?? profile.accentColor
-                    still = await spotlightSegment(clip: clip, url: url, spot: spot, at: moment, accent: Platform.cgColor(ringColor),
-                                                   options: options, size: stillSize, fps: fps, work: work)
-                    // On a phone, the held frame looks at the athlete.
-                    if options.shape.isPhone { still?.framing = .window(.fixed(x: spot.x, y: spot.y)) }
-                }
                 var framing: SegmentFraming?
                 if options.shape.isPhone {
                     framing = await phoneFraming(for: clip, url: url, options: options, renderSize: renderSize,
                                                  number: Int(profile.featuredNumber.trimmingCharacters(in: .whitespaces)),
                                                  cacheDirectory: library.rootDirectory.appending(path: "Framing", directoryHint: .isDirectory),
                                                  status: status)
+                }
+                var still: ReelSegment?
+                var moment = clip.trimStartSeconds
+                if options.showSpotlights, let spot = clip.spotlight {
+                    status("Drawing the spotlight on “\(clip.title)”…")
+                    moment = spot.moment(in: clip)
+                    let ringColor = options.spotlightColor.flatMap { Color(hex: $0) } ?? profile.accentColor
+                    if case .window(let path) = framing {
+                        // A phone reel: the hold is drawn in the clip's own window at that moment.
+                        still = await spotlightSegment(clip: clip, url: url, spot: spot, at: moment, accent: Platform.cgColor(ringColor),
+                                                       options: options, size: renderSize, fps: fps, work: work, phoneWindow: path)
+                    } else {
+                        still = await spotlightSegment(clip: clip, url: url, spot: spot, at: moment, accent: Platform.cgColor(ringColor),
+                                                       options: options, size: stillSize, fps: fps, work: work)
+                    }
+                    if options.shape.isPhone { still?.framing = .whole }
                 }
                 func part(_ from: Double, _ to: Double, title: String?) -> ReelSegment {
                     var segment = ReelSegment(url: url, start: from, duration: to - from,
@@ -467,12 +472,16 @@ final class ReelExporter {
     /// around the athlete and a ring in the team color snaps in. Made like a card (a still turned
     /// into frames), so it needs no video overlay. Nil if the frame can't be read.
     private static func spotlightSegment(clip: Clip, url: URL, spot: Spotlight, at moment: Double, accent: CGColor,
-                                         options: ExportOptions, size: CGSize, fps: Int32, work: URL) async -> ReelSegment? {
-        guard var frame = await VideoFrames.firstFrame(url: url, at: moment, crop: clip.unitCrop) else {
+                                         options: ExportOptions, size: CGSize, fps: Int32, work: URL,
+                                         phoneWindow: CameraPath? = nil) async -> ReelSegment? {
+        guard let frame = await VideoFrames.firstFrame(url: url, at: moment, crop: clip.unitCrop) else {
             Log.error("Couldn't read the frame of \(clip.fileName) at \(moment)s for its spotlight")
             return nil
         }
-        // Match the clip when black bars will be cropped away from it.
+        let fw = CGFloat(frame.width), fh = CGFloat(frame.height)
+        // The part of the frame the clip shows (pixels, top-left origin): all of it, or without
+        // the black bars the clip will have cropped away.
+        var picture = CGRect(x: 0, y: 0, width: fw, height: fh)
         if clip.crop == nil, options.removeBlackBars {
             let asset = AVURLAsset(url: url)
             if let track = try? await asset.loadTracks(withMediaType: .video).first,
@@ -481,23 +490,42 @@ final class ReelExporter {
                let bars = await ReelComposer.contentRect(asset: asset, natural: natural,
                                                          range: CMTimeRange(start: CMTime(seconds: clip.trimStartSeconds, preferredTimescale: 600),
                                                                             end: CMTime(seconds: clip.trimEndSeconds, preferredTimescale: 600))) {
-                let sx = CGFloat(frame.width) / natural.width, sy = CGFloat(frame.height) / natural.height
-                let rect = CGRect(x: bars.minX * sx, y: bars.minY * sy, width: bars.width * sx, height: bars.height * sy).integral
-                // The ring was placed on the uncropped frame: move it into the cropped picture.
-                if let cropped = frame.cropping(to: rect) {
-                    let fw = CGFloat(frame.width), fh = CGFloat(frame.height)
-                    var moved = spot
-                    moved.x = (spot.x * fw - rect.minX) / rect.width
-                    moved.y = (spot.y * fh - rect.minY) / rect.height
-                    moved.radius = spot.radius * fh / rect.height
-                    frame = cropped
-                    return await writeSpotlight(frame: frame, clip: clip, spot: moved, accent: accent, shape: options.spotlightShape, ring: options.spotlightRing,
-                                                fill: options.fillFrame, size: size, fps: fps, work: work)
-                }
+                let sx = fw / natural.width, sy = fh / natural.height
+                picture = CGRect(x: bars.minX * sx, y: bars.minY * sy, width: bars.width * sx, height: bars.height * sy).integral
+                    .intersection(picture)
             }
         }
-        return await writeSpotlight(frame: frame, clip: clip, spot: spot, accent: accent, shape: options.spotlightShape, ring: options.spotlightRing,
-                                    fill: options.fillFrame, size: size, fps: fps, work: work)
+        var shown = picture
+        let drawSize = size
+        var fill = options.fillFrame
+        if let phoneWindow, size.height > 0 {
+            // A phone reel: exactly the window the clip shows at this moment, so the hold and the
+            // clip match frame for frame (as PhoneFrame.draw places it).
+            let aspect = size.width / size.height
+            let w: CGFloat, h: CGFloat
+            if picture.width / picture.height > aspect {
+                h = picture.height
+                w = h * aspect
+            } else {
+                w = picture.width
+                h = w / aspect
+            }
+            let c = phoneWindow.center(at: moment)
+            let cx = min(picture.maxX - w / 2, max(picture.minX + w / 2, CGFloat(c.x) * fw))
+            let cy = min(picture.maxY - h / 2, max(picture.minY + h / 2, CGFloat(c.y) * fh))
+            shown = CGRect(x: cx - w / 2, y: cy - h / 2, width: w, height: h).integral.intersection(picture)
+            fill = true
+        }
+        guard !shown.isEmpty, let image = shown == CGRect(x: 0, y: 0, width: fw, height: fh) ? frame : frame.cropping(to: shown) else {
+            return nil
+        }
+        // The ring was placed on the whole frame: move it into the part shown.
+        var moved = spot
+        moved.x = (spot.x * fw - shown.minX) / shown.width
+        moved.y = (spot.y * fh - shown.minY) / shown.height
+        moved.radius = spot.radius * fh / shown.height
+        return await writeSpotlight(frame: image, clip: clip, spot: moved, accent: accent, shape: options.spotlightShape,
+                                    ring: options.spotlightRing, fill: fill, size: drawSize, fps: fps, work: work)
     }
 
     private static func writeSpotlight(frame: CGImage, clip: Clip, spot: Spotlight, accent: CGColor, shape: SpotlightShape,

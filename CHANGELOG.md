@@ -3,6 +3,10 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.51.1
+- Phone reels: no more jump between the spotlight hold and the clip. The hold is now cut from exactly the part of the picture the clip shows at that moment (where it's following the player), so the clip carries on from the same frame. Before, the hold was zoomed out and centered on the ring, then jumped.
+- The spotlight editor's **Play** plays the whole clip as the reel will: up to the spotlight, the hold with the ring (or brush stroke), then the rest. **Stop** ends it.
+
 ## 0.51.0
 - **Painted** spotlight is now a calligraphy brush stroke: a smooth oval, thick and thin like an angled brush, brushed on more slowly (about a second), stopping just short of where it began and ending in dry-brush streaks.
 - **No Ring** is the default for new setups (just the lit area around the athlete). If you'd already picked a ring, it stays as you set it; change it next to the spotlight shape and color.

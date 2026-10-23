@@ -15,8 +15,10 @@ struct SpotlightEditor: View {
     @State private var image: CGImage?
     @State private var spot: Spotlight = .standard
     @State private var placed = false
-    /// When Play was pressed, while the spotlight plays.
+    /// When the spotlight's hold began, while Play shows it.
     @State private var playStart: Date?
+    /// The clip playing as the reel will show it (Play), until it ends or is stopped.
+    @State private var previewPlayer: AVPlayer?
     /// The moment shown and spotlighted (seconds in the video).
     @State private var time: Double = 0
     @State private var ready = false
@@ -30,7 +32,13 @@ struct SpotlightEditor: View {
                 let picture = fitted(in: geo.size)
                 ZStack(alignment: .topLeading) {
                     Color.black
-                    if let image {
+                    if let previewPlayer, picture.width > 0 {
+                        // Playing: the clip, with the spotlight only during its hold.
+                        PlayerLayerView(player: previewPlayer)
+                            .frame(width: picture.width, height: picture.height)
+                            .offset(x: picture.minX, y: picture.minY)
+                        if playStart != nil { ring(in: picture) }
+                    } else if let image {
                         Image(decorative: image, scale: 1)
                             .resizable()
                             .frame(width: picture.width, height: picture.height)
@@ -42,7 +50,7 @@ struct SpotlightEditor: View {
                 }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                    guard picture.width > 0 else { return }
+                    guard picture.width > 0, previewPlayer == nil else { return }
                     spot.x = min(1, max(0, (value.location.x - picture.minX) / picture.width))
                     spot.y = min(1, max(0, (value.location.y - picture.minY) / picture.height))
                     placed = true
@@ -93,12 +101,12 @@ struct SpotlightEditor: View {
                     .help("Size")
                 SpotlightStyleControls()
                 Button {
-                    playSpotlight()
+                    if previewPlayer == nil { playClip() } else { stopPreview() }
                 } label: {
-                    Label("Play", systemImage: "play.fill")
+                    Label(previewPlayer == nil ? "Play" : "Stop", systemImage: previewPlayer == nil ? "play.fill" : "stop.fill")
                 }
                 .disabled(image == nil)
-                .help("See the spotlight as the reel shows it")
+                .help("Play the clip as the reel shows it: up to the spotlight, the hold with the ring, then the rest")
                 Spacer()
                 if clip.spotlight != nil {
                     Button("Remove", role: .destructive) { onSave(nil, false) }
@@ -121,7 +129,9 @@ struct SpotlightEditor: View {
             .padding(.vertical, 10)
             .background(.bar)
         }
+        .onDisappear { stopPreview() }
         .task(id: clip.id) {
+            stopPreview()
             ready = false
             // A clip without one starts from the last ring (its size carries over with Save & Next).
             if let existing = clip.spotlight {
@@ -200,14 +210,45 @@ struct SpotlightEditor: View {
         .allowsHitTesting(false)
     }
 
-    /// Plays the spotlight as the reel shows it (the dimming, then the ring), once.
-    private func playSpotlight() {
-        let started = Date()
-        playStart = started
+    /// Plays the clip as the reel shows it: from its start up to the spotlight's moment, the hold
+    /// there (the dimming, then the ring) for as long as the reel holds it, then the rest.
+    private func playClip() {
+        stopPreview()
+        let item = AVPlayerItem(url: url)
+        item.forwardPlaybackEndTime = CMTime(seconds: end, preferredTimescale: 600)
+        if let crop = clip.cropRect { item.videoComposition = PlayerView.cropComposition(for: item.asset, crop: crop) }
+        let player = AVPlayer(playerItem: item)
+        previewPlayer = player
+        let moment = min(end, max(start, time))
+        func at(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 600) }
         Task {
-            try? await Task.sleep(for: .seconds(ExportOptions.spotlightSeconds + 0.4))
-            if playStart == started { playStart = nil }
+            await player.seek(to: at(start), toleranceBefore: .zero, toleranceAfter: .zero)
+            if moment - start > 0.05 {
+                player.play()
+                while previewPlayer === player, player.currentTime().seconds < moment - 0.03 {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                player.pause()
+                await player.seek(to: at(moment), toleranceBefore: .zero, toleranceAfter: .zero)
+            }
+            guard previewPlayer === player else { return }
+            playStart = Date()
+            try? await Task.sleep(for: .seconds(ExportOptions.spotlightSeconds))
+            guard previewPlayer === player else { return }
+            playStart = nil
+            player.play()
+            while previewPlayer === player, player.currentTime().seconds < end - 0.05 {
+                try? await Task.sleep(for: .milliseconds(50))
+                if player.rate == 0, player.currentTime().seconds >= end - 0.2 { break }
+            }
+            if previewPlayer === player { stopPreview() }
         }
+    }
+
+    private func stopPreview() {
+        previewPlayer?.pause()
+        previewPlayer = nil
+        playStart = nil
     }
 
     /// The clip's first frame (at its trim start), cropped like the clip.
