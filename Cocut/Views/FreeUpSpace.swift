@@ -58,8 +58,8 @@ final class SpaceCleaner {
 
     var selectedBytes: Int64 { items.filter { selected.contains($0.url) }.map(\.bytes).reduce(0, +) }
 
-    static var downloadsFolder: URL { YouTubeImporter.downloadsFolder }
-    static var exportsFolder: URL { Platform.moviesRoot.appending(path: "Cocut/Exports", directoryHint: .isDirectory) }
+    nonisolated static var downloadsFolder: URL { YouTubeImporter.downloadsFolder }
+    nonisolated static var exportsFolder: URL { Platform.moviesRoot.appending(path: "Cocut/Exports", directoryHint: .isDirectory) }
 
     func scan(projects: [ProjectFolder], openMatch: URL?) async {
         scanning = true

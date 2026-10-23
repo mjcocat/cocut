@@ -38,7 +38,7 @@ final class YouTubeImporter {
     }
 
     /// Finished downloads: ~/Movies/Cocut/Downloads.
-    static var downloadsFolder: URL {
+    nonisolated static var downloadsFolder: URL {
         Platform.moviesRoot.appending(path: "Cocut/Downloads", directoryHint: .isDirectory)
     }
 
