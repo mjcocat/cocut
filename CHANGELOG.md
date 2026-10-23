@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.48.2
+- A quieter "Made with Cocut": over the clips it's just Cocut's icon, small and faint, in the corner. The words are now a small line at the bottom of the end card (with the icon). The same switch in Export turns off both.
+
 ## 0.48.1
 - The "Made with Cocut" mark shows its words again (only the little icon came through), and clip-name captions show their text: both are now drawn as pictures, which exports render reliably.
 

@@ -101,6 +101,8 @@ struct PlayerCardView: View {
     let kind: CardKind
     /// The design canvas: 1920×1080, or 1080 wide and taller for phone reels.
     var canvasSize: CGSize = PlayerCardView.canvas
+    /// A small "Made with Cocut" line at the bottom of the end card (exports with the mark on).
+    var madeWithCocut = false
 
     static let canvas = CGSize(width: 1920, height: 1080)
 
@@ -142,9 +144,30 @@ struct PlayerCardView: View {
                 sectionCard(title)
             }
         }
+        .overlay(alignment: .bottom) {
+            if madeWithCocut, case .end = kind {
+                madeWithCocutLine
+                    // Phone reels: just above where the social apps draw their captions.
+                    .padding(.bottom, isTall ? tallBottom * 0.7 : 44)
+            }
+        }
         .frame(width: canvasSize.width, height: canvasSize.height)
         .clipped()
         .environment(\.colorScheme, profile.theme == .night || profile.theme == .team ? .dark : .light)
+    }
+
+    /// Cocut's icon and "Made with Cocut", small and quiet.
+    private var madeWithCocutLine: some View {
+        HStack(spacing: 12) {
+            Image("Logo")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 40, height: 40)
+            Text("Made with Cocut")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(palette.secondary)
+        }
+        .opacity(0.7)
     }
 
     // MARK: Backgrounds
@@ -873,12 +896,13 @@ extension PlayerCardView {
     /// Renders the card to a bitmap of the given pixel size: 16:9, or taller than wide for the
     /// phone layouts.
     @MainActor
-    static func render(profile: PlayerProfile, headshot: PlatformImage?, kind: CardKind, pixelSize: CGSize) -> CGImage? {
+    static func render(profile: PlayerProfile, headshot: PlatformImage?, kind: CardKind, pixelSize: CGSize,
+                       madeWithCocut: Bool = false) -> CGImage? {
         let canvas = pixelSize.height > pixelSize.width
             ? CGSize(width: 1080, height: (1080 * pixelSize.height / pixelSize.width).rounded())
             : Self.canvas
         let renderer = ImageRenderer(content: PlayerCardView(profile: profile, headshot: headshot, kind: kind,
-                                                             canvasSize: canvas))
+                                                             canvasSize: canvas, madeWithCocut: madeWithCocut))
         renderer.proposedSize = ProposedViewSize(canvas)
         renderer.scale = pixelSize.width / canvas.width
         renderer.isOpaque = true

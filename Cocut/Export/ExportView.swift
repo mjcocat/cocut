@@ -90,7 +90,7 @@ struct ExportView: View {
                     Toggle("Include sound", isOn: $exporter.options.includeSound)
                     Toggle(isOn: $exporter.options.madeWithCocut) {
                         Text("“Made with Cocut” mark")
-                        Text("A small, faint logo in the corner of the clips. Not on the cards, and not in Preview.")
+                        Text("Cocut's icon, small and faint, in the corner of the clips (not in Preview), and “Made with Cocut” at the bottom of the end card.")
                     }
                 }
 

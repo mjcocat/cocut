@@ -63,7 +63,8 @@ struct ExportOptions: Codable, Equatable {
     var followSpotlight = true
     /// Phone shapes: clips without a spotlight (or not followed) are centered, or shown whole.
     var unspotlitFraming: PhoneFraming = .centered
-    /// A small, faint "Made with Cocut" mark in a corner of the clips (not on the cards).
+    /// Cocut's icon, small and faint, in a corner of the clips, and "Made with Cocut" at the
+    /// bottom of the end card.
     var madeWithCocut = true
 
     /// The size to draw at: phone shapes are 1080 wide; previews are two-thirds size.
@@ -358,7 +359,8 @@ final class ReelExporter {
         if profile.showEndCard {
             status("Drawing the end card…")
             segments.append(try await cardSegment(kind: .end, label: "End card", profile: profile, headshot: headshot,
-                                                  size: cardSize, fps: fps, seconds: options.cardSeconds, work: work))
+                                                  size: cardSize, fps: fps, seconds: options.cardSeconds, work: work,
+                                                  madeWithCocut: options.madeWithCocut))
         }
         return segments
     }
@@ -419,8 +421,9 @@ final class ReelExporter {
 
     private static func cardSegment(kind: CardKind, label: String, profile: PlayerProfile, headshot: PlatformImage?,
                                     size: CGSize, fps: Int32, seconds: Double, work: URL,
-                                    progressBar: Bool = false) async throws -> ReelSegment {
-        guard let image = PlayerCardView.render(profile: profile, headshot: headshot, kind: kind, pixelSize: size) else {
+                                    progressBar: Bool = false, madeWithCocut: Bool = false) async throws -> ReelSegment {
+        guard let image = PlayerCardView.render(profile: profile, headshot: headshot, kind: kind, pixelSize: size,
+                                                madeWithCocut: madeWithCocut) else {
             throw ExportError.cardFailed
         }
         // The progress bar uses the theme's highlight color over a faint track.
@@ -908,12 +911,11 @@ enum ReelComposer {
         return AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: video, in: parent)
     }
 
-    /// The mark: Cocut's icon and "Made with Cocut", small and faint, bottom right (bottom
-    /// center in phone shapes, where the right edge is covered by the social app's buttons).
-    /// Drawn as one picture: text layers don't render when exporting through the overlay tool.
+    /// The mark over clips: Cocut's icon, small and faint, bottom right (bottom center in phone
+    /// shapes, where the right edge is covered by the social app's buttons).
     private static func madeWithCocutLayer(renderSize: CGSize, scale: CGFloat, phone: Bool, mark: CGImage) -> CALayer {
         let width = CGFloat(mark.width), height = CGFloat(mark.height)
-        let margin = 44 * scale
+        let margin = 36 * scale
         let x = phone ? (renderSize.width - width) / 2 : renderSize.width - margin - width
         let y = phone ? renderSize.height * 0.035 : margin
         let box = CALayer()
@@ -946,37 +948,21 @@ enum ReelComposer {
         return context.makeImage()
     }
 
-    /// The mark's picture at the reel's scale: icon, words, a soft shadow, a little see-through.
+    /// The mark's picture at the reel's scale: just Cocut's icon, faint, with a soft shadow (the
+    /// words are on the end card). Nil where the icon isn't bundled.
     private static func madeWithCocutImage(scale: CGFloat, logo: CGImage?) -> CGImage? {
-        let font = CTFontCreateUIFontForLanguage(.emphasizedSystem, 34 * scale, nil)
-            ?? CTFontCreateWithName("Helvetica-Bold" as CFString, 34 * scale, nil)
-        let attributes: [NSAttributedString.Key: Any] = [
-            NSAttributedString.Key(kCTFontAttributeName as String): font,
-            NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),
-        ]
-        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "Made with Cocut", attributes: attributes))
-        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
-        let textWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
-        let icon = logo == nil ? 0 : 60 * scale
-        let gap = logo == nil ? 0 : 14 * scale
+        guard let logo else { return nil }
+        let icon = 44 * scale
         let pad = 8 * scale   // room for the shadow
-        let contentHeight = max(icon, ascent + descent)
-        let width = Int((pad * 2 + icon + gap + textWidth).rounded(.up))
-        let height = Int((pad * 2 + contentHeight).rounded(.up))
-        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        let side = Int((icon + pad * 2).rounded(.up))
+        guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        context.setAlpha(0.85)
+        context.setAlpha(0.7)
         context.setShadow(offset: CGSize(width: 0, height: -1.5 * scale), blur: 6 * scale,
-                          color: CGColor(gray: 0, alpha: 0.55))
-        context.beginTransparencyLayer(auxiliaryInfo: nil)
-        if let logo {
-            context.interpolationQuality = .high
-            context.draw(logo, in: CGRect(x: pad, y: pad + (contentHeight - icon) / 2, width: icon, height: icon))
-        }
-        context.textPosition = CGPoint(x: pad + icon + gap, y: pad + (contentHeight - ascent - descent) / 2 + descent)
-        CTLineDraw(line, context)
-        context.endTransparencyLayer()
+                          color: CGColor(gray: 0, alpha: 0.5))
+        context.interpolationQuality = .high
+        context.draw(logo, in: CGRect(x: pad, y: pad, width: icon, height: icon))
         return context.makeImage()
     }
 
