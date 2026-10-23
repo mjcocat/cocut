@@ -80,7 +80,7 @@ struct ContentView: View {
                         Button {
                             startFilm(.youtube, model: model, openWindow: openWindow)
                         } label: {
-                            Label("From YouTube…", systemImage: FilmSource.youtube.icon)
+                            Label("From YouTube or Hudl…", systemImage: FilmSource.youtube.icon)
                         }
                         Divider()
                         Button {
@@ -129,7 +129,7 @@ struct ContentView: View {
                 }
                 .labelStyle(.titleAndIcon)
                 .fixedSize()
-                .help("Add film: a full match, a YouTube video, clips on your Mac, a screen recording, or clips from other projects")
+                .help("Add film: a full match, a YouTube or Hudl video, clips on your Mac, a screen recording, or clips from other projects")
             }
         }
         // One sheet modifier for both: two .sheet modifiers on the same view means only one of

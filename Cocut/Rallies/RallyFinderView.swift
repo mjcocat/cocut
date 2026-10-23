@@ -160,9 +160,9 @@ struct RallyFinderView: View {
                 Button {
                     openWindow(id: "youtube")
                 } label: {
-                    Label("Import from YouTube…", systemImage: "play.rectangle")
+                    Label("Import from YouTube or Hudl…", systemImage: "play.rectangle")
                 }
-                .help("Download a whole match from YouTube, then find its rallies (⇧⌘I)")
+                .help("Download a whole match from YouTube or Hudl, then find its rallies (⇧⌘I)")
                 Button("Team Roster…") { editingRoster = true }
                     .help("Your team's jersey numbers: only these are listed on rallies, so opponents and misreads are left out")
             }

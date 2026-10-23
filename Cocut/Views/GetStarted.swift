@@ -9,7 +9,7 @@ enum FilmSource: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .fullMatch: return "A full match video"
-        case .youtube: return "A video on YouTube"
+        case .youtube: return "A video on YouTube or Hudl"
         case .clips: return "Clips on your Mac"
         case .online: return "Record from your screen"
         }
@@ -19,7 +19,7 @@ enum FilmSource: String, CaseIterable, Identifiable {
         switch self {
         case .fullMatch: return "From your camera or phone. Cocut finds the rallies and cuts out the dead time between them."
         case .youtube: return "Download the whole video in full quality, then find its rallies or keep it as a clip."
-        case .clips: return "Hudl downloads, phone videos and other short clips. Or drop them on this window."
+        case .clips: return "Phone videos, downloads and other short clips. Or drop them on this window."
         case .online: return "Play film in your browser, like Hudl. Cocut records a clip each time you press play."
         }
     }
@@ -46,7 +46,7 @@ enum FilmSource: String, CaseIterable, Identifiable {
     var action: String {
         switch self {
         case .fullMatch: return "Find Rallies…"
-        case .youtube: return "Import from YouTube…"
+        case .youtube: return "Import from YouTube or Hudl…"
         case .clips: return "Import Videos…"
         case .online: return "Record Region"
         }
@@ -364,7 +364,7 @@ struct NewProjectWizard: View {
                 }
             }
             Text(source == nil ? "Not sure yet? Just create the project; the Clips screen shows these choices too."
-                               : "Create opens \(source == .fullMatch ? "Find Rallies" : source == .youtube ? "Import from YouTube" : source == .clips ? "the file picker" : "region selection") right away.")
+                               : "Create opens \(source == .fullMatch ? "Find Rallies" : source == .youtube ? "Import from YouTube or Hudl" : source == .clips ? "the file picker" : "region selection") right away.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

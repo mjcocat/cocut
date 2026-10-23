@@ -3,8 +3,8 @@ import AVFoundation
 import CryptoKit
 import SwiftUI
 
-/// Downloads a whole video from YouTube (or another site yt-dlp supports) in its original
-/// quality, as one movie Cocut can use: for a full match, cleaner than recording the screen.
+/// Downloads a whole video from YouTube, Hudl (see `Hudl`) or another site yt-dlp supports, in its
+/// original quality, as one movie Cocut can use: for a full match, cleaner than recording the screen.
 ///
 /// The download itself is done by yt-dlp, which Cocut fetches from its official GitHub release
 /// on first use, checks against the release's published checksums, and refreshes weekly (sites
@@ -42,11 +42,15 @@ final class YouTubeImporter {
         Platform.moviesRoot.appending(path: "Cocut/Downloads", directoryHint: .isDirectory)
     }
 
-    func start(_ link: String) {
+    /// Downloads `link`, or, for Hudl, the stream `hudl` found behind it.
+    func start(_ link: String, hudl: Hudl.Video? = nil) {
         guard !isRunning else { return }
         let link = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        task = Task { await run(link) }
+        task = Task { await run(hudl?.stream ?? link, hudl: hudl) }
     }
+
+    /// Shown while a Hudl link is looked up, before the download starts.
+    func lookingUp() { state = .preparing("Looking up the video on Hudl…") }
 
     func cancel() {
         runner.terminate()
@@ -57,29 +61,46 @@ final class YouTubeImporter {
 
     func reset() { state = .idle }
 
-    private func run(_ link: String) async {
+    private func run(_ link: String, hudl: Hudl.Video?) async {
+        let site = hudl != nil ? "Hudl" : "YouTube"
         let work = FileManager.default.temporaryDirectory.appending(path: "cocut-download-\(UUID().uuidString)",
                                                                      directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: work) }
         do {
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            // Hudl streams come in MPEG-TS pieces that only ffmpeg turns into a movie macOS can play.
+            if hudl != nil, Self.ffmpeg == nil {
+                throw ImportError.download("Hudl videos need ffmpeg to put them together. Install it (in Terminal: "
+                                           + "brew install ffmpeg) and try again.")
+            }
             state = .preparing("Getting the downloader…")
             let tool = try await YTDLP.ensure()
             try Task.checkCancellation()
 
+            // Hudl's streams expect to be played from Hudl, with the user's sign-in.
+            var siteArguments: [String] = []
+            if let hudl {
+                siteArguments += ["--referer", "https://www.hudl.com/"]
+                if !hudl.cookies.isEmpty {
+                    let cookies = work.appending(path: "cookies.txt")
+                    try Hudl.writeCookies(hudl.cookies, to: cookies)
+                    siteArguments += ["--cookies", cookies.path(percentEncoded: false)]
+                }
+            }
+
             state = .preparing("Looking up the video…")
             // The title, and the tallest picture the video is offered in (any format).
             let info = try await runner.run(tool, ["--no-playlist", "--skip-download", "-f", "bv*/b",
-                                                   "--print", "title", "--print", "%(height)s", link])
+                                                   "--print", "title", "--print", "%(height)s"] + siteArguments + [link])
             try Task.checkCancellation()
             guard info.status == 0 else { throw ImportError.download(Self.reason(from: info.output)) }
             // The last two lines that aren't yt-dlp's own messages.
             let printed = info.output.split(separator: "\n").map(String.init)
                 .filter { !$0.hasPrefix("WARNING") && !$0.hasPrefix("ERROR") && !$0.hasPrefix("[") }
             let offered = printed.last.flatMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-            let title = (offered != nil ? printed.dropLast().last : printed.last)?
-                .trimmingCharacters(in: .whitespaces) ?? "YouTube video"
-            Log.info("YouTube import: \(title), offered up to \(offered.map { "\($0)p" } ?? "unknown")")
+            let title = hudl?.title ?? (offered != nil ? printed.dropLast().last : printed.last)?
+                .trimmingCharacters(in: .whitespaces) ?? "\(site) video"
+            Log.info("\(site) import: \(title), offered up to \(offered.map { "\($0)p" } ?? "unknown")")
 
             // H.264 video up to 1080p: what AVFoundation plays on every Mac. Never AV1 or VP9, which
             // older Macs can't play; the combined file (360p at most) only when nothing else exists.
@@ -87,14 +108,17 @@ final class YouTubeImporter {
                 // With ffmpeg (e.g. from Homebrew), yt-dlp puts picture and sound together itself:
                 // more reliable than AVFoundation with some of YouTube's files.
                 state = .downloading("Downloading…", 0)
-                let file = try await download(tool, link, format: "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[vcodec^=avc1]",
-                                              extra: ["--merge-output-format", "mp4", "--ffmpeg-location", ffmpeg.path(percentEncoded: false)],
+                // Hudl's own streams may not say which codec they use; any up to 1080p then.
+                let format = "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[vcodec^=avc1]" + (hudl != nil ? "/b[height<=1080]/b" : "")
+                let file = try await download(tool, link, format: format,
+                                              extra: ["--merge-output-format", "mp4", "--ffmpeg-location", ffmpeg.path(percentEncoded: false)]
+                                                  + siteArguments,
                                               to: work, name: "video", label: "Downloading…", range: 0...0.95)
                 try Task.checkCancellation()
                 try FileManager.default.createDirectory(at: Self.downloadsFolder, withIntermediateDirectories: true)
                 let output = Self.uniqueURL(for: title)
                 try FileManager.default.moveItem(at: file, to: output)
-                Log.info("YouTube import: joined by yt-dlp with ffmpeg (\(ffmpeg.path(percentEncoded: false)))")
+                Log.info("\(site) import: joined by yt-dlp with ffmpeg (\(ffmpeg.path(percentEncoded: false)))")
                 await finish(output, offered: offered)
                 return
             }
@@ -124,7 +148,7 @@ final class YouTubeImporter {
             if error is CancellationError || Task.isCancelled {
                 state = .idle
             } else {
-                Log.error("YouTube import failed: \(Self.describe(error))")
+                Log.error("\(site) import failed: \(Self.describe(error))")
                 state = .failed(error.localizedDescription)
             }
         }
@@ -441,8 +465,9 @@ enum YouTubeKind: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// Import from YouTube: paste a link, say whether it's a full match or a clip, download.
-/// A match opens Find Rallies; a clip goes into Clips.
+/// Import from YouTube or Hudl: paste a link, say whether it's a full match or a clip, download.
+/// A match opens Find Rallies; a clip goes into Clips. Hudl team film opens a browser window to
+/// sign in and find the video first (`HudlBrowser`).
 struct YouTubeImportView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
@@ -450,6 +475,8 @@ struct YouTubeImportView: View {
     @State private var importer = YouTubeImporter()
     @State private var link = ""
     @State private var kind: YouTubeKind = .match
+    /// The Hudl page to sign in on and find the video, while that window is up.
+    @State private var hudlPage: String?
 
     private var linkLooksRight: Bool {
         guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -465,7 +492,7 @@ struct YouTubeImportView: View {
                     .foregroundStyle(Design.record)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Design.Space.xs) {
-                    Text("Import from YouTube").font(.title2.weight(.semibold))
+                    Text("Import from YouTube or Hudl").font(.title2.weight(.semibold))
                     Text("Downloads the whole video in its original quality: cleaner than recording the screen. Only for film you have the right to use, like your own uploads or your team's.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -473,7 +500,7 @@ struct YouTubeImportView: View {
                 }
             }
 
-            TextField("Link", text: $link, prompt: Text("https://www.youtube.com/watch?v=…"))
+            TextField("Link", text: $link, prompt: Text("A YouTube or Hudl link"))
                 .textFieldStyle(.roundedBorder)
                 .disabled(importer.isRunning)
                 .onSubmit(start)
@@ -506,6 +533,14 @@ struct YouTubeImportView: View {
         .padding(Design.Space.xl)
         .frame(width: 540)
         .onAppear(perform: pasteLinkIfCopied)
+        .sheet(item: Binding(get: { hudlPage.map(HudlPage.init) }, set: { hudlPage = $0?.link })) { page in
+            HudlBrowser(link: page.link) { video in
+                hudlPage = nil
+                importer.start(page.link, hudl: video)
+            } onCancel: {
+                hudlPage = nil
+            }
+        }
         .onChange(of: importer.state) { _, state in
             if case .finished(let url) = state { use(url) }
         }
@@ -517,7 +552,7 @@ struct YouTubeImportView: View {
             EmptyView()
         case .lower(let file, let got, let expected):
             Banner(tone: .warning, icon: "exclamationmark.triangle.fill", title: "Only \(got)p came through",
-                   message: "YouTube offers this video at \(expected)p, but the download was \(got)p. Trying again often gets the full quality.") {
+                   message: "The video is offered at \(expected)p, but the download was \(got)p. Trying again often gets the full quality.") {
                 Button("Use \(got)p") { use(file) }
                 Button("Try Again") {
                     try? FileManager.default.removeItem(at: file)
@@ -552,15 +587,29 @@ struct YouTubeImportView: View {
     }
 
     private func start() {
-        guard linkLooksRight, !importer.isRunning else { return }
-        importer.start(link)
+        guard linkLooksRight, !importer.isRunning, hudlPage == nil else { return }
+        guard Hudl.isHudl(link) else { return importer.start(link) }
+        // A public broadcast or a stream link downloads straight away; team film needs signing in.
+        let page = link
+        importer.lookingUp()
+        Task {
+            let video = await Hudl.direct(page)
+            guard case .preparing = importer.state else { return }  // cancelled meanwhile
+            if let video {
+                importer.reset()
+                importer.start(page, hudl: video)
+            } else {
+                importer.reset()
+                hudlPage = page
+            }
+        }
     }
 
     /// A link already on the clipboard fills the field, so it's paste-free.
     private func pasteLinkIfCopied() {
         guard link.isEmpty, let copied = NSPasteboard.general.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines),
-              copied.contains("youtube.com/") || copied.contains("youtu.be/") else { return }
+              copied.contains("youtube.com/") || copied.contains("youtu.be/") || Hudl.isHudl(copied) else { return }
         link = copied
     }
 
@@ -581,4 +630,10 @@ struct YouTubeImportView: View {
             }
         }
     }
+}
+
+/// A Hudl page for the sign-in sheet.
+private struct HudlPage: Identifiable {
+    let link: String
+    var id: String { link }
 }

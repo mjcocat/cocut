@@ -42,7 +42,7 @@ struct CocutApp: App {
         .restorationBehavior(.disabled)
         .commandsRemoved()
 
-        Window("Import from YouTube", id: "youtube") {
+        Window("Import from YouTube or Hudl", id: "youtube") {
             YouTubeImportView()
                 .environment(model)
         }
@@ -125,7 +125,7 @@ struct AppCommands: Commands {
             .keyboardShortcut("i", modifiers: [.command])
             .disabled(model.isBusy)
 
-            Button("Import from YouTube…") {
+            Button("Import from YouTube or Hudl…") {
                 openWindow(id: "youtube")
             }
             .keyboardShortcut("i", modifiers: [.command, .shift])

@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.45.0
+- **Import from Hudl**, next to YouTube (Add Videos › Full Match › From YouTube or Hudl…, or ⇧⌘I). Paste a Hudl link: a public broadcast downloads right away; for your team's film, a Hudl window opens where you sign in once (Cocut remembers it) and open the video, and Cocut downloads it in full quality. Hudl needs ffmpeg (brew install ffmpeg).
+
 ## 0.44.4
 - Phone reels follow your player better: tuned on 16 clips from three matches, they keep the player in frame more often and switch to a teammate standing next to them less. Clips are followed again the next time you export.
 
