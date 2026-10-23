@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.47.1
+- Hudl: public highlight links (www.hudl.com/video/…) download right away, with the highlight's name, and no sign-in. Before, the Hudl window opened and played the video but Download never lit up. Highlights come at Hudl's best quality for them (720p) and don't need ffmpeg.
+
 ## 0.47.0
 - Exports carry a small, faint **Made with Cocut** mark (the Cocut icon and the words) in the corner of the clips: bottom right in widescreen, bottom center in phone shapes. It isn't on the intro or end cards. On by default; turn it off in Export › Clips › “Made with Cocut” mark. (Preview doesn't show it.)
 

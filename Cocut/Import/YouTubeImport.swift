@@ -68,8 +68,9 @@ final class YouTubeImporter {
         defer { try? FileManager.default.removeItem(at: work) }
         do {
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-            // Hudl streams come in MPEG-TS pieces that only ffmpeg turns into a movie macOS can play.
-            if hudl != nil, Self.ffmpeg == nil {
+            // Hudl streams come in pieces that only ffmpeg turns into a movie macOS can play
+            // (a highlight's plain .mp4 file doesn't need it).
+            if let hudl, hudl.stream.lowercased().contains(".m3u8"), Self.ffmpeg == nil {
                 throw ImportError.download("Hudl videos need ffmpeg to put them together. Install it (in Terminal: "
                                            + "brew install ffmpeg) and try again.")
             }
@@ -123,7 +124,8 @@ final class YouTubeImporter {
                 return
             }
             state = .downloading("Downloading the video…", 0)
-            let video = try await download(tool, link, format: "bv*[vcodec^=avc1][height<=1080]/b[vcodec^=avc1]",
+            let video = try await download(tool, link, format: "bv*[vcodec^=avc1][height<=1080]/b[vcodec^=avc1]"
+                                               + (hudl != nil ? "/b[height<=1080]/b" : ""), extra: siteArguments,
                                            to: work, name: "video", label: "Downloading the video…", range: 0...0.85)
             try Task.checkCancellation()
             var audio: URL?

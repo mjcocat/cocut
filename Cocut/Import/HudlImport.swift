@@ -13,6 +13,8 @@ import WebKit
 /// - Team film (www.hudl.com/watch/video/…): behind Hudl's sign-in. Cocut opens the page in a
 ///   browser window, the user signs in once (it's remembered), and Cocut picks the stream link
 ///   (vi.hudl.com/…/video.ondemand.m3u8) up from the page.
+/// - Public highlights (www.hudl.com/video/…): plain .mp4 files (360p to 720p) named in the page
+///   itself, no sign-in needed.
 enum Hudl {
     /// What to download: the stream, the video's name, and the Hudl sign-in to send with it.
     struct Video {
@@ -26,12 +28,13 @@ enum Hudl {
         return host == "hudl.com" || host.hasSuffix(".hudl.com") || host.hasSuffix("blueframetech.com")
     }
 
-    /// The video behind a link that needs no sign-in: a public broadcast, or a stream link
-    /// itself. Nil for team film, which is found by signing in (`HudlBrowser`).
+    /// The video behind a link that needs no sign-in: a public broadcast, a public highlight,
+    /// or a video link itself. Nil for team film, which is found by signing in (`HudlBrowser`).
     static func direct(_ link: String) async -> Video? {
         let link = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        if link.lowercased().contains(".m3u8") { return Video(stream: link) }
-        guard let broadcast = broadcast(in: link) else { return nil }
+        let lower = link.lowercased()
+        if lower.contains(".m3u8") || lower.contains(".mp4") { return Video(stream: link) }
+        guard let broadcast = broadcast(in: link) else { return await fromPage(link) }
         async let title = broadcastTitle(broadcast.id)
         let stream = await broadcastStream(broadcast.number)
             ?? "https://vcloud.hudl.com/file/broadcast/\(broadcast.number).m3u8?hfr=1"
@@ -49,6 +52,51 @@ enum Hudl {
         let number = String(text.dropFirst("Broadcast".count))
         guard !number.isEmpty, number.allSatisfy(\.isNumber) else { return nil }
         return (id, number)
+    }
+
+    /// A page that names its video without signing in (public highlights): the best one on it.
+    private static func fromPage(_ link: String) async -> Video? {
+        guard let url = URL(string: link) else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+                         forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let html = String(data: data, encoding: .utf8),
+              let stream = best(videos(inPage: html)) else { return nil }
+        Log.info("Hudl import: found the video in the page without signing in")
+        return Video(stream: stream, title: pageTitle(html))
+    }
+
+    /// Video links (streams and .mp4 files on Hudl's servers) named in a page's source.
+    static func videos(inPage html: String) -> [String] {
+        let text = html.replacingOccurrences(of: "\\u002F", with: "/", options: .caseInsensitive)
+            .replacingOccurrences(of: "\\/", with: "/").replacingOccurrences(of: "&amp;", with: "&")
+        guard let pattern = try? NSRegularExpression(pattern: #"https?://[^"'\s<>\\]+?\.(?:m3u8|mp4)[^"'\s<>\\]*"#,
+                                                     options: .caseInsensitive) else { return [] }
+        var found: [String] = []
+        for m in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let r = Range(m.range, in: text) else { continue }
+            let link = String(text[r])
+            if isHudl(link), !found.contains(link) { found.append(link) }
+        }
+        return found
+    }
+
+    /// The page's og:title ("2 Blocks vs Edwardsville"), else its <title> without " - Hudl".
+    static func pageTitle(_ html: String) -> String? {
+        func capture(_ pattern: String) -> String? {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+                  let m = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+                  let r = Range(m.range(at: 1), in: html) else { return nil }
+            return String(html[r])
+        }
+        let title = (capture(#"property="og:title"\s+content="([^"]+)""#) ?? capture(#"<title>([^<]+)"#))?
+            .replacingOccurrences(of: " - Hudl", with: "")
+            .replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return title?.isEmpty == false ? title : nil
     }
 
     /// Where a broadcast's video is, as Hudl's player is told (the <Content> of its VMAP).
@@ -100,8 +148,17 @@ enum Hudl {
 
     /// Of the stream links on a page, the one to download: Hudl's own film first.
     static func best(_ streams: [String]) -> String? {
-        streams.first { $0.contains("video.ondemand") } ?? streams.first { $0.contains("vi.hudl.com") }
-            ?? streams.first { $0.contains("blueframetech") } ?? streams.first
+        let hls = streams.filter { $0.lowercased().contains(".m3u8") }
+        if let stream = hls.first(where: { $0.contains("video.ondemand") }) ?? hls.first(where: { $0.contains("vi.hudl.com") })
+            ?? hls.first(where: { $0.contains("blueframetech") }) ?? hls.first {
+            return stream
+        }
+        // Files: the tallest ("…_720.mp4" over "…_480.mp4").
+        func height(_ link: String) -> Int {
+            guard let r = link.range(of: #"_(\d{3,4})\.mp4"#, options: .regularExpression) else { return 0 }
+            return Int(link[r].dropFirst().dropLast(4)) ?? 0
+        }
+        return streams.filter { $0.lowercased().contains(".mp4") }.max { height($0) < height($1) }
     }
 
     /// Looks for stream links on the page: in what it has loaded, in its video players, and in its source.
@@ -109,13 +166,14 @@ enum Hudl {
     (() => {
       const found = [];
       const add = (u) => { if (u && !found.includes(u)) found.push(u); };
-      for (const e of performance.getEntriesByType('resource')) if (/\.m3u8/i.test(e.name)) add(e.name);
+      const video = /\.(m3u8|mp4)/i, hudl = /^https?:\/\/[^\/]*(hudl\.com|blueframetech\.com)\//i;
+      for (const e of performance.getEntriesByType('resource')) if (video.test(e.name) && hudl.test(e.name)) add(e.name);
       for (const v of document.querySelectorAll('video, source')) {
         const u = v.currentSrc || v.src;
-        if (u && /\.m3u8/i.test(u)) add(u);
+        if (u && video.test(u) && hudl.test(u)) add(u);
       }
       const html = document.documentElement.innerHTML.replace(/\\u002F/gi, '/').replace(/\\\//g, '/').replace(/&amp;/g, '&');
-      for (const m of html.matchAll(/https?:\/\/[^"'\s<>\\]+?\.m3u8[^"'\s<>\\]*/gi)) add(m[0]);
+      for (const m of html.matchAll(/https?:\/\/[^"'\s<>\\]+?\.(?:m3u8|mp4)[^"'\s<>\\]*/gi)) if (hudl.test(m[0])) add(m[0]);
       return JSON.stringify({ streams: found, title: document.title });
     })()
     """#
