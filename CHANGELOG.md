@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.49.1
+- Phone Frame › Custom: steering while the clip plays works like holding the camera. The frame stays exactly where you hold it (even when the mouse is still), replaces the old path there, and when you let go it stays put for a second before gliding on, instead of snapping back to the path that was there. Steered moves are smoothed so hand wobble doesn't show.
+
 ## 0.49.0
 - **Position the headshot**: Player Card › **Position…** next to Choose Photo. Drag the photo to choose what's in the middle and zoom in with the slider; the card preview updates as you go. Every card layout (round and square photos, widescreen and phone) uses it. A new photo starts centered.
 

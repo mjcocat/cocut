@@ -136,7 +136,8 @@ enum CameraPlanner {
                 if span > 0.6 { f = f * f * (3 - 2 * f) }
                 return value(a) + (value(b) - value(a)) * f
             }
-            return gaussian(raw, sigma: 0.12 / step).map { min(hi, max(lo, $0)) }
+            // Smooths out the wobble of a hand steering, without dulling deliberate moves.
+            return gaussian(raw, sigma: 0.2 / step).map { min(hi, max(lo, $0)) }
         }
         return CameraPath(start: start, step: step, xs: axis({ $0.x }, size: window.width),
                           ys: axis({ $0.y }, size: window.height))

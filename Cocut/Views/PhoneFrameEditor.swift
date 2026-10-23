@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Frame a clip for phone reels by hand. The whole picture is on the left with the phone frame
 /// drawn on it; the phone-shaped result is on the right, live. Drag the frame (or the phone
-/// picture) to move it: paused, that sets a key at the playhead; while playing, it steers. The
-/// export glides from key to key.
+/// picture) to move it: paused, that sets a key at the playhead; while playing, you steer it like
+/// a camera operator, and what you steer replaces the path there. The export glides from key to key.
 struct PhoneFrameEditor: View {
     @Environment(AppModel.self) private var model
     let clip: Clip
@@ -45,6 +45,8 @@ struct PhoneFrameEditor: View {
         /// Keys laid down by this drag (while playing), which it may replace as it goes.
         var laid: Set<Double> = []
         var lastLaid = -Double.infinity
+        /// Where the frame is held while steering (playing).
+        var target: CGPoint?
     }
 
     private var library: ClipLibrary { model.library }
@@ -111,6 +113,8 @@ struct PhoneFrameEditor: View {
 
     /// Where the frame looks at `t`; nil when the whole picture is shown.
     private func center(at t: Double) -> CGPoint? {
+        // Steering: the frame is where it's held, right away.
+        if playing, let target = drag?.target, abs(t - time) < 0.001 { return target }
         switch framing {
         case .wholePicture:
             return nil
@@ -167,24 +171,44 @@ struct PhoneFrameEditor: View {
     private func place(_ p: CGPoint) {
         let p = bounded(p)
         if framing != .custom { becomeCustom() }
-        let key = PhoneKey(time: time, x: Double(p.x), y: Double(p.y))
         if playing, var d = drag {
-            // Steering: replace what was there between where the drag began and now.
-            keys.removeAll { $0.time >= d.startTime - 0.01 && $0.time <= time + 0.01 && !d.laid.contains($0.time) }
-            if time - d.lastLaid >= 0.2 {
-                keys.append(key)
-                d.laid.insert(key.time)
-                d.lastLaid = time
-            } else if let i = keys.firstIndex(where: { $0.time == d.lastLaid }) {
-                keys[i].x = key.x
-                keys[i].y = key.y
-            }
+            d.target = p
             drag = d
-        } else {
-            keys.removeAll { abs($0.time - time) < 0.15 }
-            keys.append(key)
+            steer()
+            return
+        }
+        keys.removeAll { abs($0.time - time) < 0.15 }
+        keys.append(PhoneKey(time: time, x: Double(p.x), y: Double(p.y)))
+        keys.sort { $0.time < $1.time }
+    }
+
+    /// While playing with the frame held: a key every tenth of a second where it's held (also
+    /// when the mouse is still), replacing the path from where the drag began. Keys just ahead go
+    /// too, so the old path doesn't pull the frame away while it's held.
+    private func steer() {
+        guard var d = drag, let target = d.target else { return }
+        keys.removeAll { $0.time >= d.startTime - 0.01 && $0.time <= time + 0.4 && !d.laid.contains($0.time) }
+        if time - d.lastLaid >= 0.1 {
+            keys.append(PhoneKey(time: time, x: Double(target.x), y: Double(target.y)))
+            d.laid.insert(time)
+            d.lastLaid = time
+        } else if let i = keys.firstIndex(where: { $0.time == d.lastLaid }) {
+            keys[i].x = Double(target.x)
+            keys[i].y = Double(target.y)
         }
         keys.sort { $0.time < $1.time }
+        drag = d
+    }
+
+    /// Letting go. While playing, the frame stays where it was let go for a second (the old keys
+    /// there go), then glides on to the path after.
+    private func endDrag() {
+        if playing, let d = drag, d.target != nil {
+            keys.removeAll { $0.time > time && $0.time <= time + 1.0 && !d.laid.contains($0.time) }
+            keys.append(PhoneKey(time: time, x: Double(d.target!.x), y: Double(d.target!.y)))
+            keys.sort { $0.time < $1.time }
+        }
+        drag = nil
     }
 
     /// Switching to Custom starts from what's showing: the followed path (as keys every half
@@ -240,11 +264,8 @@ struct PhoneFrameEditor: View {
                 guard !scrubbing else { return }
                 time = min(end, max(start, t.seconds))
                 playing = player.rate != 0
-                // Hold the last key a drag laid while the clip keeps going.
-                if playing, let d = drag, d.lastLaid > -Double.infinity, time - d.lastLaid >= 0.2,
-                   let last = keys.first(where: { $0.time == d.lastLaid }) {
-                    place(CGPoint(x: last.x, y: last.y))
-                }
+                // Keep laying keys where the frame is held while the clip plays on.
+                if playing, drag?.target != nil { steer() }
             }
         }
         self.player = player
@@ -341,7 +362,7 @@ struct PhoneFrameEditor: View {
                                   y: d.center.y + value.translation.height / rect.height))
                 }
                 .onEnded { value in
-                    drag = nil
+                    endDrag()
                     if marking, rect.width > 0, rect.contains(value.location) {
                         mark(CGPoint(x: (value.location.x - rect.minX) / rect.width,
                                      y: (value.location.y - rect.minY) / rect.height))
@@ -443,7 +464,7 @@ struct PhoneFrameEditor: View {
                     place(CGPoint(x: d.center.x - value.translation.width * perPoint,
                                   y: d.center.y - value.translation.height * perPoint * aspect))
                 }
-                .onEnded { _ in drag = nil })
+                .onEnded { _ in endDrag() })
         }
         .aspectRatio(shape.aspect, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
