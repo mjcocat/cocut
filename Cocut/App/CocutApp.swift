@@ -50,6 +50,14 @@ struct CocutApp: App {
         .restorationBehavior(.disabled)
         .commandsRemoved()
 
+        Window("Free Up Space", id: "cleanup") {
+            FreeUpSpaceView()
+                .environment(model)
+        }
+        .defaultSize(width: 760, height: 620)
+        .restorationBehavior(.disabled)
+        .commandsRemoved()
+
         Window("Reel Preview", id: "preview") {
             ReelPreviewView()
                 .environment(model)
@@ -140,6 +148,10 @@ struct AppCommands: Commands {
                 openWindow(id: "rallies")
             }
             .keyboardShortcut("m", modifiers: [.command, .shift])
+
+            Button("Free Up Space…") {
+                openWindow(id: "cleanup")
+            }
 
             Button("Preview Reel") {
                 openWindow(id: "preview")

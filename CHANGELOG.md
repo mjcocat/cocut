@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.46.0
+- **Free Up Space** (File › Free Up Space…, or in Find Rallies): lists the big files Cocut made with their sizes: full matches downloaded from YouTube and Hudl, exported reels, and temporary files left by stopped downloads or exports. Each download says which match uses it and whether its rallies are already in Clips; those are ticked for you. Move to Trash puts them in the Trash (you can still put them back). Your clips and projects are never touched.
+
 ## 0.45.1
 - Hudl: public broadcasts from newer Hudl streams (like school livestream archives) download now. Before, Hudl refused them ("HTTP Error 403: Forbidden"); Cocut now asks Hudl's player where the video is, the same way the Hudl website does.
 

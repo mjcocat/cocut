@@ -165,6 +165,8 @@ struct RallyFinderView: View {
                 .help("Download a whole match from YouTube or Hudl, then find its rallies (⇧⌘I)")
                 Button("Team Roster…") { editingRoster = true }
                     .help("Your team's jersey numbers: only these are listed on rallies, so opponents and misreads are left out")
+                Button("Free Up Space…") { openWindow(id: "cleanup") }
+                    .help("Move downloaded match videos you no longer need, old exports and leftover files to the Trash")
             }
 
             RecentMatchesList(finder: finder)
