@@ -185,7 +185,8 @@ struct TrackedPlayer: Codable {
     /// 7: appearance left out.
     /// 8: chunked pieces, retuned on four rallies.
     /// 9: retuned on 16 rallies from three matches.
-    static let version = 9
+    /// 10: frames with few people found are looked at again in halves (small players, 720p).
+    static let version = 10
     /// What it was tracked for (trim, spotlight, crop); a change means tracking again.
     var key: String
     /// Size of the spotlight's picture, in pixels.

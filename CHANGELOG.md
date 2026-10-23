@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.48.6
+- Phone reels follow players who are small in the picture better (wide shots, 720p Hudl highlights). When Cocut finds only a few people in a frame, it looks again at each half of the picture, where players are nearly twice the size to it. On a Hudl highlight it was finding about 2 of the 10 players a frame and lost the athlete after 3 seconds. Clips are followed again the next time you export.
+
 ## 0.48.5
 - Fixed: phone exports came out completely white (and widescreen ones white during the cards) whenever the Cocut logo or clip names were on. Cocut now draws every frame of the reel itself, logo and captions included, instead of using macOS's overlay tool, which was blanking the picture.
 

@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 import Vision
 
 /// Follows the spotlighted player through a clip, for phone exports. It looks through the whole
@@ -110,9 +111,11 @@ enum PlayerTracker {
             lastFrame = time
 
             let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation)
-            let boxes = RallyDetector.playerBodies(handler, minHeight: 0.03, maxMidY: 1, problems: &problems)
-                .map(\.box)
-                .filter { crop.contains(CGPoint(x: $0.midX, y: 1 - $0.midY)) }
+            var found = RallyDetector.playerBodies(handler, minHeight: 0.03, maxMidY: 1, problems: &problems).map(\.box)
+            if found.count < Self.fewPeople {
+                found += Self.halves(buffer, orientation: orientation, besides: found, problems: &problems)
+            }
+            let boxes = found.filter { crop.contains(CGPoint(x: $0.midX, y: 1 - $0.midY)) }
             let rectangles = VNDetectHumanRectanglesRequest()
             rectangles.upperBodyOnly = false
             try? handler.perform([rectangles])
@@ -132,6 +135,41 @@ enum PlayerTracker {
         return Detections(width: Double(width), height: Double(height), start: start, end: end,
                           crop: unitCrop.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] },
                           frames: frames, rectangles: rawRectangles, problems: problems.isEmpty ? nil : problems)
+    }
+
+    /// Fewer people than this in a frame (a volleyball court has twelve) means many were missed,
+    /// usually because they're small in the picture (a wide shot, or 720p): look again at each half.
+    static let fewPeople = 4
+
+    /// People found in the left and right halves of the frame on their own (overlapping in the
+    /// middle), who weren't found in the whole frame. The detector looks at a shrunken copy of
+    /// what it's given, so in a half each player is nearly twice the size to it. Boxes are in
+    /// Vision's coordinates for the whole frame.
+    private static func halves(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, besides found: [CGRect],
+                               problems: inout [String: Int]) -> [CGRect] {
+        let upright = CIImage(cvPixelBuffer: buffer).oriented(orientation)
+        let whole = upright.extent
+        var added: [CGRect] = []
+        for half in [CGRect(x: 0, y: 0, width: 0.56, height: 1), CGRect(x: 0.44, y: 0, width: 0.56, height: 1)] {
+            let area = CGRect(x: whole.minX + half.minX * whole.width, y: whole.minY,
+                              width: half.width * whole.width, height: whole.height)
+            let part = upright.cropped(to: area).transformed(by: CGAffineTransform(translationX: -area.minX, y: -area.minY))
+            let handler = VNImageRequestHandler(ciImage: part, options: [:])
+            for box in RallyDetector.playerBodies(handler, minHeight: 0.03, maxMidY: 1, problems: &problems).map(\.box) {
+                let full = CGRect(x: half.minX + box.minX * half.width, y: box.minY,
+                                  width: box.width * half.width, height: box.height)
+                guard !(found + added).contains(where: { sameBox($0, full) }) else { continue }
+                added.append(full)
+            }
+        }
+        return added
+    }
+
+    /// Two boxes on the same person: most of the smaller one is inside the other.
+    private static func sameBox(_ a: CGRect, _ b: CGRect) -> Bool {
+        let common = a.intersection(b)
+        guard !common.isNull, common.width > 0, common.height > 0 else { return false }
+        return common.width * common.height > 0.5 * min(a.width * a.height, b.width * b.height)
     }
 
     /// Writes what was found and followed to Cocut's logs folder (Following/<clip>.json), so a
