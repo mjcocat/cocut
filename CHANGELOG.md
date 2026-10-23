@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.45.1
+- Hudl: public broadcasts from newer Hudl streams (like school livestream archives) download now. Before, Hudl refused them ("HTTP Error 403: Forbidden"); Cocut now asks Hudl's player where the video is, the same way the Hudl website does.
+
 ## 0.45.0
 - **Import from Hudl**, next to YouTube (Add Videos › Full Match › From YouTube or Hudl…, or ⇧⌘I). Paste a Hudl link: a public broadcast downloads right away; for your team's film, a Hudl window opens where you sign in once (Cocut remembers it) and open the video, and Cocut downloads it in full quality. Hudl needs ffmpeg (brew install ffmpeg).
 

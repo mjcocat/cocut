@@ -6,8 +6,10 @@ import WebKit
 /// yt-dlp issue 9022). Hudl plays its video as an HLS stream (.m3u8), which yt-dlp downloads and
 /// ffmpeg puts together as one .mp4. There are two kinds of link:
 ///
-/// - Public broadcasts (fan.hudl.com/…/watch?b=…): the `b` is "Broadcast<number>" in base64, and
-///   the stream is at vcloud.blueframetech.com/file/broadcast/<number>.m3u8. No sign-in needed.
+/// - Public broadcasts (fan.hudl.com/…/watch?b=…): the `b` is "Broadcast<number>" in base64. Hudl's
+///   player asks vcloud.hudl.com/api/broadcast/vmap/<number> where the video is (its <Content>):
+///   for older broadcasts vcloud…/file/broadcast/<number>.m3u8, for newer ones a vh.hudl.com
+///   link (asking for the file/broadcast one directly is refused). No sign-in needed.
 /// - Team film (www.hudl.com/watch/video/…): behind Hudl's sign-in. Cocut opens the page in a
 ///   browser window, the user signs in once (it's remembered), and Cocut picks the stream link
 ///   (vi.hudl.com/…/video.ondemand.m3u8) up from the page.
@@ -30,8 +32,10 @@ enum Hudl {
         let link = link.trimmingCharacters(in: .whitespacesAndNewlines)
         if link.lowercased().contains(".m3u8") { return Video(stream: link) }
         guard let broadcast = broadcast(in: link) else { return nil }
-        let title = await broadcastTitle(broadcast.id)
-        return Video(stream: "https://vcloud.blueframetech.com/file/broadcast/\(broadcast.number).m3u8?hfr=1", title: title)
+        async let title = broadcastTitle(broadcast.id)
+        let stream = await broadcastStream(broadcast.number)
+            ?? "https://vcloud.hudl.com/file/broadcast/\(broadcast.number).m3u8?hfr=1"
+        return Video(stream: stream, title: await title)
     }
 
     /// A broadcast link's id ("QnJvYWRjYXN0ODc2ODA2") and number (876806).
@@ -45,6 +49,25 @@ enum Hudl {
         let number = String(text.dropFirst("Broadcast".count))
         guard !number.isEmpty, number.allSatisfy(\.isNumber) else { return nil }
         return (id, number)
+    }
+
+    /// Where a broadcast's video is, as Hudl's player is told (the <Content> of its VMAP).
+    private static func broadcastStream(_ number: String) async -> String? {
+        guard let url = URL(string: "https://vcloud.hudl.com/api/broadcast/vmap/\(number)?minify_js=1") else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let xml = String(data: data, encoding: .utf8) else { return nil }
+        return stream(inVMAP: xml)
+    }
+
+    /// "<Content …><![CDATA[https://…m3u8…]]></Content>" → the link.
+    static func stream(inVMAP xml: String) -> String? {
+        guard let r = xml.range(of: #"<Content[^>]*>\s*<!\[CDATA\[\s*([^\]\s]+)"#, options: .regularExpression) else { return nil }
+        let match = String(xml[r])
+        guard let start = match.range(of: "CDATA[") else { return nil }
+        let link = match[start.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return link.hasPrefix("http") ? link : nil
     }
 
     /// A public broadcast's name, from Hudl's public API ("Varsity vs Central"); nil if it can't be read.
