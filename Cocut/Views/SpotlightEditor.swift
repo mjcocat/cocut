@@ -1,8 +1,9 @@
 import AVFoundation
 import SwiftUI
 
-/// Place the spotlight ring on a clip's first frame: click the athlete, drag to adjust, size
-/// with the slider. Return saves and moves to the next clip.
+/// Place the spotlight ring: pick the moment (the first frame, or later when the athlete is
+/// hidden at the start), click the athlete, drag to adjust, size with the slider. Return saves
+/// and moves to the next clip.
 struct SpotlightEditor: View {
     @Environment(AppModel.self) private var model
     let clip: Clip
@@ -14,6 +15,12 @@ struct SpotlightEditor: View {
     @State private var image: CGImage?
     @State private var spot: Spotlight = .standard
     @State private var placed = false
+    /// The moment shown and spotlighted (seconds in the video).
+    @State private var time: Double = 0
+    @State private var ready = false
+
+    private var start: Double { clip.trimStartSeconds }
+    private var end: Double { max(clip.trimEndSeconds, clip.trimStartSeconds + 0.01) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,7 +46,9 @@ struct SpotlightEditor: View {
                     placed = true
                 })
                 .overlay(alignment: .top) {
-                    Text(placed ? "Drag to adjust. The reel holds this frame with the ring around them." : "Click your athlete")
+                    Text(placed ? (time - start < 0.05 ? "Drag to adjust. The reel opens on this frame with the ring around them."
+                                                      : "Drag to adjust. The reel plays up to here, then holds it with the ring around them.")
+                                : "Click your athlete. Hidden behind someone? Slide to a moment where you can see them.")
                         .font(.callout.weight(.medium))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12)
@@ -48,6 +57,30 @@ struct SpotlightEditor: View {
                         .padding(.top, 12)
                         .allowsHitTesting(false)
                 }
+            }
+
+            if end - start > 0.3 {
+                HStack(spacing: 10) {
+                    Text("Moment").foregroundStyle(.secondary)
+                    Button { step(-1 / 15) } label: { Image(systemName: "chevron.left") }
+                        .buttonStyle(.borderless)
+                        .keyboardShortcut(.leftArrow, modifiers: [])
+                        .help("Back a little (←)")
+                    Slider(value: $time, in: start...end)
+                    Button { step(1 / 15) } label: { Image(systemName: "chevron.right") }
+                        .buttonStyle(.borderless)
+                        .keyboardShortcut(.rightArrow, modifiers: [])
+                        .help("On a little (→)")
+                    Text(String(format: "%.1f s", time - start))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 52, alignment: .trailing)
+                    Button("First Frame") { time = start }
+                        .disabled(time - start < 0.05)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .background(.bar)
             }
 
             HStack(spacing: 14) {
@@ -64,13 +97,13 @@ struct SpotlightEditor: View {
                 Button("Cancel", action: onCancel)
                     .keyboardShortcut(.cancelAction)
                 if hasNext {
-                    Button("Save") { onSave(spot, false) }
-                    Button("Save & Next") { onSave(spot, true) }
+                    Button("Save") { onSave(saved, false) }
+                    Button("Save & Next") { onSave(saved, true) }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                         .help("Save and go to the next clip (Return)")
                 } else {
-                    Button("Save") { onSave(spot, false) }
+                    Button("Save") { onSave(saved, false) }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                 }
@@ -80,12 +113,36 @@ struct SpotlightEditor: View {
             .background(.bar)
         }
         .task(id: clip.id) {
+            ready = false
+            // A clip without one starts from the last ring (its size carries over with Save & Next).
             if let existing = clip.spotlight {
                 spot = existing
                 placed = true
             }
-            image = await Self.firstFrame(url: url, at: clip.trimStartSeconds, crop: clip.unitCrop)
+            time = clip.spotlight?.moment(in: clip) ?? start
+            image = await Self.firstFrame(url: url, at: time, crop: clip.unitCrop)
+            ready = true
         }
+        // The frame at the moment, as the slider moves (the latest position wins).
+        .task(id: "\(clip.id)-\(Int((time * 30).rounded()))") {
+            guard ready else { return }
+            try? await Task.sleep(for: .milliseconds(40))
+            guard !Task.isCancelled else { return }
+            if let frame = await Self.firstFrame(url: url, at: time, crop: clip.unitCrop), !Task.isCancelled {
+                image = frame
+            }
+        }
+    }
+
+    /// The spotlight with its moment (none when it's the clip's first frame).
+    private var saved: Spotlight {
+        var s = spot
+        s.time = time - start < 0.05 ? nil : time
+        return s
+    }
+
+    private func step(_ seconds: Double) {
+        time = min(end, max(start, time + seconds))
     }
 
     /// The picture's rect, fitted (letterboxed) in the available space.

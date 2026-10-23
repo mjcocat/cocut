@@ -88,6 +88,14 @@ struct Spotlight: Codable, Hashable {
     var x: Double
     var y: Double
     var radius: Double
+    /// When in the clip it's placed (seconds in the video); nil for the clip's first frame. The
+    /// reel plays up to it, holds that frame with the ring, then carries on.
+    var time: Double? = nil
+
+    /// The moment it's on, inside the clip's trimmed part.
+    func moment(in clip: Clip) -> Double {
+        min(max(time ?? clip.trimStartSeconds, clip.trimStartSeconds), clip.trimEndSeconds)
+    }
 
     static let standard = Spotlight(x: 0.5, y: 0.5, radius: 0.09)
 }

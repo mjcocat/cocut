@@ -11,8 +11,15 @@ struct LabClip: Codable, Identifiable, Hashable {
     var end: Double
     /// The clip's crop as fractions of the upright frame (x, y, width, height; top-left origin).
     var crop: [Double]?
-    /// Cocut's spotlight ring: x, y (fractions of the cropped picture, top-left origin), radius.
+    /// Cocut's spotlight ring: x, y (fractions of the cropped picture, top-left origin), radius,
+    /// and the moment it's placed at (video seconds) when that isn't the clip's start.
     var spotlight: [Double]?
+
+    /// When the spotlight is placed: its moment, or the clip's start.
+    var spotlightTime: Double {
+        guard let s = spotlight, s.count >= 4 else { return start }
+        return max(start, s[3])
+    }
     /// Jersey number of the player to follow; nil uses the lab's.
     var number: Int?
     /// Clips in the same group (a match, a project) are held out together when checking that

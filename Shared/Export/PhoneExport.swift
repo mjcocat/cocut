@@ -144,7 +144,9 @@ extension ReelExporter {
         let crop = clip.unitCrop
         let key = ([clip.trimStartSeconds, clip.trimEndSeconds, spot?.x ?? -1, spot?.y ?? -1, spot?.radius ?? -1,
                     Double(crop?.minX ?? 0), Double(crop?.minY ?? 0), Double(crop?.width ?? 1), Double(crop?.height ?? 1)]
-                   + marks.flatMap { [$0.time, $0.x, $0.y] })
+                   + marks.flatMap { [$0.time, $0.x, $0.y] }
+                   // Only when set, so clips spotlighted on their first frame keep their cached path.
+                   + (spot?.time.map { [$0] } ?? []))
             .map { String(format: "%.4f", $0) }.joined(separator: "_") + "_\(number ?? -1)"
         let file = cacheDirectory.appending(path: "\(clip.id.uuidString)-\(TrackedPlayer.version).json")
         if let data = try? Data(contentsOf: file), let cached = try? JSONDecoder().decode(TrackedPlayer.self, from: data),

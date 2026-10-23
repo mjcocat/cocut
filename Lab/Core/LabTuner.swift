@@ -44,7 +44,7 @@ enum LabTuner {
             var scored = marks.filter { $0.kind == .head }
             if let s = clip.spotlight, s.count >= 2 {
                 let crop = clip.unitCrop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
-                anchors.append(.init(time: clip.start, x: Double(crop.minX) + s[0] * Double(crop.width),
+                anchors.append(.init(time: clip.spotlightTime, x: Double(crop.minX) + s[0] * Double(crop.width),
                                      y: 1 - (Double(crop.minY) + s[1] * Double(crop.height)), kind: .body))
             } else if let first = scored.first, let x = first.x, let y = first.y {
                 anchors.append(.init(time: first.time, x: x, y: y, kind: .head))

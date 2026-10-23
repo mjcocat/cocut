@@ -319,25 +319,39 @@ final class ReelExporter {
                 }
                 let duration = clip.trimEndSeconds - clip.trimStartSeconds
                 guard duration > 0.1 else { continue }
+                var still: ReelSegment?
+                var moment = clip.trimStartSeconds
                 if options.showSpotlights, let spot = clip.spotlight {
                     status("Drawing the spotlight on “\(clip.title)”…")
+                    moment = spot.moment(in: clip)
                     let ringColor = options.spotlightColor.flatMap { Color(hex: $0) } ?? profile.accentColor
-                    if var still = await spotlightSegment(clip: clip, url: url, spot: spot, accent: Platform.cgColor(ringColor),
-                                                          options: options, size: stillSize, fps: fps, work: work) {
-                        // On a phone, the held frame looks at the athlete.
-                        if options.shape.isPhone { still.framing = .window(.fixed(x: spot.x, y: spot.y)) }
-                        segments.append(still)
-                    }
+                    still = await spotlightSegment(clip: clip, url: url, spot: spot, at: moment, accent: Platform.cgColor(ringColor),
+                                                   options: options, size: stillSize, fps: fps, work: work)
+                    // On a phone, the held frame looks at the athlete.
+                    if options.shape.isPhone { still?.framing = .window(.fixed(x: spot.x, y: spot.y)) }
                 }
-                var segment = ReelSegment(url: url, start: clip.trimStartSeconds, duration: duration,
-                                          title: clip.title, isCard: false, crop: clip.cropRect, clipID: clip.id)
+                var framing: SegmentFraming?
                 if options.shape.isPhone {
-                    segment.framing = await phoneFraming(for: clip, url: url, options: options, renderSize: renderSize,
-                                                         number: Int(profile.featuredNumber.trimmingCharacters(in: .whitespaces)),
-                                                         cacheDirectory: library.rootDirectory.appending(path: "Framing", directoryHint: .isDirectory),
-                                                         status: status)
+                    framing = await phoneFraming(for: clip, url: url, options: options, renderSize: renderSize,
+                                                 number: Int(profile.featuredNumber.trimmingCharacters(in: .whitespaces)),
+                                                 cacheDirectory: library.rootDirectory.appending(path: "Framing", directoryHint: .isDirectory),
+                                                 status: status)
                 }
-                segments.append(segment)
+                func part(_ from: Double, _ to: Double, title: String?) -> ReelSegment {
+                    var segment = ReelSegment(url: url, start: from, duration: to - from,
+                                              title: title, isCard: false, crop: clip.cropRect, clipID: clip.id)
+                    segment.framing = framing
+                    return segment
+                }
+                if let still, moment - clip.trimStartSeconds >= 0.2 {
+                    // Spotlight placed later in the clip: play up to it, hold it, then carry on.
+                    segments.append(part(clip.trimStartSeconds, moment, title: clip.title))
+                    segments.append(still)
+                    if clip.trimEndSeconds - moment >= 0.1 { segments.append(part(moment, clip.trimEndSeconds, title: nil)) }
+                } else {
+                    if let still { segments.append(still) }
+                    segments.append(part(clip.trimStartSeconds, clip.trimEndSeconds, title: clip.title))
+                }
             }
         }
         if profile.showEndCard {
@@ -348,13 +362,13 @@ final class ReelExporter {
         return segments
     }
 
-    /// The clip's first frame as a short movie with the spotlight drawn on: the picture dims
+    /// The clip's frame at the spotlight's moment as a short movie with the spotlight drawn on: the picture dims
     /// around the athlete and a ring in the team color snaps in. Made like a card (a still turned
     /// into frames), so it needs no video overlay. Nil if the frame can't be read.
-    private static func spotlightSegment(clip: Clip, url: URL, spot: Spotlight, accent: CGColor, options: ExportOptions,
-                                         size: CGSize, fps: Int32, work: URL) async -> ReelSegment? {
-        guard var frame = await VideoFrames.firstFrame(url: url, at: clip.trimStartSeconds, crop: clip.unitCrop) else {
-            Log.error("Couldn't read the first frame of \(clip.fileName) for its spotlight")
+    private static func spotlightSegment(clip: Clip, url: URL, spot: Spotlight, at moment: Double, accent: CGColor,
+                                         options: ExportOptions, size: CGSize, fps: Int32, work: URL) async -> ReelSegment? {
+        guard var frame = await VideoFrames.firstFrame(url: url, at: moment, crop: clip.unitCrop) else {
+            Log.error("Couldn't read the frame of \(clip.fileName) at \(moment)s for its spotlight")
             return nil
         }
         // Match the clip when black bars will be cropped away from it.
@@ -556,8 +570,11 @@ enum ReelComposer {
         var overlaps: [Double] = Array(repeating: 0, count: max(0, n - 1))
         if options.transition == .crossfade {
             for i in 0..<(n - 1) {
-                // A spotlight still cuts straight into its clip (it is the clip's first frame).
-                overlaps[i] = loaded[i].segment.isSpotlight ? 0 : min(ExportOptions.transitionSeconds,
+                // A spotlight still cuts straight into its clip (it's a frame of it), and from it
+                // when it's placed partway through.
+                let spotlight = loaded[i].segment.isSpotlight || loaded[i + 1].segment.isSpotlight
+                    && loaded[i].segment.clipID == loaded[i + 1].segment.clipID && !loaded[i].segment.isCard
+                overlaps[i] = spotlight ? 0 : min(ExportOptions.transitionSeconds,
                                   loaded[i].length / 3, loaded[i + 1].length / 3)
             }
         }
@@ -612,6 +629,10 @@ enum ReelComposer {
             if let crop = loaded[i].crop {
                 li.setCropRectangle(crop, at: time(start))
             }
+            // Cards and spotlight stills are drawn at the reel's size, so AVFoundation passes their
+            // frames through untouched, and with an overlay (the mark, captions) those frames came
+            // out white. A hair under full opacity makes it compose them like every other frame.
+            if overlays { li.setOpacity(0.999, at: time(start)) }
             return li
         }
         func instruction(_ from: Double, _ to: Double, _ layers: [AVMutableVideoCompositionLayerInstruction]) {
@@ -894,14 +915,14 @@ enum ReelComposer {
     /// center in phone shapes, where the right edge is covered by the social app's buttons).
     private static func madeWithCocutLayer(renderSize: CGSize, scale: CGFloat, phone: Bool, logo: CGImage?) -> CALayer {
         let text = "Made with Cocut"
-        let fontSize = 22 * scale
+        let fontSize = 34 * scale
         let font = PlatformFont.systemFont(ofSize: fontSize, weight: .semibold)
         let textSize = (text as NSString).size(withAttributes: [.font: font])
-        let icon = logo == nil ? 0 : 30 * scale
-        let gap = logo == nil ? 0 : 9 * scale
+        let icon = logo == nil ? 0 : 60 * scale
+        let gap = logo == nil ? 0 : 14 * scale
         let width = icon + gap + textSize.width.rounded(.up) + 2 * scale
         let height = max(icon, textSize.height)
-        let margin = 36 * scale
+        let margin = 44 * scale
         let x = phone ? (renderSize.width - width) / 2 : renderSize.width - margin - width
         let y = phone ? renderSize.height * 0.035 : margin
 
@@ -911,7 +932,7 @@ enum ReelComposer {
         // Faint, with a soft shadow so it reads on bright sand and white walls alike.
         let content = CALayer()
         content.frame = box.bounds
-        content.opacity = 0.7
+        content.opacity = 0.8
         content.shadowColor = CGColor(gray: 0, alpha: 1)
         content.shadowOpacity = 0.45
         content.shadowRadius = 3 * scale
@@ -943,7 +964,7 @@ enum ReelComposer {
     private static func cocutLogo() -> CGImage? {
         #if os(macOS)
         guard let image = PlatformImage(named: "Logo") else { return nil }
-        var rect = CGRect(x: 0, y: 0, width: 128, height: 128)
+        var rect = CGRect(x: 0, y: 0, width: 256, height: 256)
         return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
         #else
         return PlatformImage(named: "Logo")?.cgImage

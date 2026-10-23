@@ -49,7 +49,8 @@ enum PlayerTracker {
         var anchors: [PlayerChain.Anchor] = []
         if let spot {
             let c = picture.toVision(x: spot.x, y: spot.y)
-            anchors.append(.init(time: start, x: Double(c.x), y: Double(c.y), kind: .body))
+            // At the spotlight's moment (the clip's start unless it was placed later).
+            anchors.append(.init(time: max(start, spot.time ?? start), x: Double(c.x), y: Double(c.y), kind: .body))
         }
         for mark in marks {
             let c = picture.toVision(x: mark.x, y: mark.y)
