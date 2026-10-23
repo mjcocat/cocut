@@ -142,12 +142,12 @@ extension ReelExporter {
     private static func trackedPlayer(clip: Clip, url: URL, spot: Spotlight?, marks: [PlayerMark], number: Int?,
                                       cacheDirectory: URL, progress: (@Sendable (Double) -> Void)? = nil) async -> TrackedPlayer? {
         let crop = clip.unitCrop
-        let key = ([clip.trimStartSeconds, clip.trimEndSeconds, spot?.x ?? -1, spot?.y ?? -1, spot?.radius ?? -1,
-                    Double(crop?.minX ?? 0), Double(crop?.minY ?? 0), Double(crop?.width ?? 1), Double(crop?.height ?? 1)]
-                   + marks.flatMap { [$0.time, $0.x, $0.y] }
-                   // Only when set, so clips spotlighted on their first frame keep their cached path.
-                   + (spot?.time.map { [$0] } ?? []))
-            .map { String(format: "%.4f", $0) }.joined(separator: "_") + "_\(number ?? -1)"
+        var values: [Double] = [clip.trimStartSeconds, clip.trimEndSeconds, spot?.x ?? -1, spot?.y ?? -1, spot?.radius ?? -1]
+        values += [Double(crop?.minX ?? 0), Double(crop?.minY ?? 0), Double(crop?.width ?? 1), Double(crop?.height ?? 1)]
+        values += marks.flatMap { [$0.time, $0.x, $0.y] }
+        // Only when set, so clips spotlighted on their first frame keep their cached path.
+        if let time = spot?.time { values.append(time) }
+        let key = values.map { String(format: "%.4f", $0) }.joined(separator: "_") + "_\(number ?? -1)"
         let file = cacheDirectory.appending(path: "\(clip.id.uuidString)-\(TrackedPlayer.version).json")
         if let data = try? Data(contentsOf: file), let cached = try? JSONDecoder().decode(TrackedPlayer.self, from: data),
            cached.key == key {
