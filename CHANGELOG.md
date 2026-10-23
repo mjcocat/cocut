@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.44.4
+- Phone reels follow your player better: tuned on 16 clips from three matches, they keep the player in frame more often and switch to a teammate standing next to them less. Clips are followed again the next time you export.
+
 ## 0.44.3
 - Phone Frame editor: while Cocut follows the player for the first time it shows how far along it is ("Following the player… 40%"); the frame starts moving when it's done. Before, it looked like it wasn't trying.
 - Click Head is gone: the spotlight alone is enough now. (Head clicks from before can be cleared with Clear Head Clicks.)

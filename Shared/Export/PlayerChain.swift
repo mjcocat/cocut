@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 /// Follows one player through a whole clip at once, rather than frame by frame. First the people
 /// found in each frame are joined into short pieces ("tracklets") wherever it's clear who's who:
@@ -17,26 +20,26 @@ enum PlayerChain {
     /// (recorded by Cocut) and another detector's (see scripts/test-player-chain.sh).
     struct Settings: Codable, Equatable {
         /// Worth of each frame a piece covers (before looks, size and numbers).
-        var perFrame = 0.5
+        var perFrame = 0.265
         /// Cost of a link's distance (as a share of how far they could have got), its change in
         /// size, and each second of gap.
-        var distanceCost = 3.0
-        var sizeCost = 4.0
-        var gapCost = 1.0
+        var distanceCost = 10.2
+        var sizeCost = 13.3
+        var gapCost = 0.0469
         /// How far a player can get: this many of their heights, plus this many per second.
-        var reach = 0.3
-        var reachPerSecond = 0.7
+        var reach = 0.207
+        var reachPerSecond = 0.517
         /// Joining people into pieces: the most a step may cost (in their heights per frame, plus
         /// change in size), and the most their size may change from frame to frame (log ratio).
-        var joinCost = 0.7
-        var joinSize = 0.5
+        var joinCost = 0.406
+        var joinSize = 0.688
         /// Another player's number read on a piece: it's ruled out when read at least `excludeAt`
         /// times (and more than twice as often as theirs); otherwise each read costs `otherCost`.
         /// Kept lenient because a box can take in two players standing together.
         /// Longest piece the chain treats as one (frames; 0 for no limit).
-        var chunkFrames = 30
-        var excludeAt = 5.0
-        var otherCost = 6.0
+        var chunkFrames = 0
+        var excludeAt = 7.0
+        var otherCost = 2.09
         /// Weight of looking like them (see `likenesses`): the share a piece's worth rises per
         /// spread above the typical piece. Off: teammates in the same uniform look too alike, and
         /// on a real clip it pulled the chain onto the wrong player.
