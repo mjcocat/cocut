@@ -33,6 +33,13 @@ enum SpotlightRing: String, Codable, CaseIterable, Identifiable {
         case .painted: return "Painted"
         }
     }
+    /// How much of a painted ring is painted `t` seconds into the spotlight: over 0.9 s, easing
+    /// out like a hand finishing a stroke.
+    static func brushProgress(_ t: Double) -> Double {
+        let p = min(1, max(0, (t - 0.1) / 0.9))
+        return 1 - (1 - p) * (1 - p)
+    }
+
     /// Line width at 1080p (a painted stroke's widest point).
     var width: CGFloat {
         switch self {
@@ -40,40 +47,71 @@ enum SpotlightRing: String, Codable, CaseIterable, Identifiable {
         case .thin: return 4
         case .standard: return 8
         case .thick: return 16
-        case .painted: return 18
+        case .painted: return 24
         }
     }
 
-    /// A painted ring around the ellipse at `center` (radii `rx`, `ry`), as a filled outline: one
-    /// loose brush stroke that wobbles a little, tapers at both ends and overlaps where it ends.
-    /// `progress` (0...1) is how much of it has been painted so far.
-    static func paintedStroke(center: CGPoint, rx: CGFloat, ry: CGFloat, width: CGFloat, progress: Double = 1) -> CGPath {
-        let steps = 180
-        let shown = max(2, Int((Double(steps) * min(1, max(0, progress))).rounded()))
-        let start = -0.62 * Double.pi, sweep = 2.18 * Double.pi
-        var middle: [CGPoint] = [], widths: [CGFloat] = []
-        for i in 0...shown {
-            let u = Double(i) / Double(steps)
-            let a = start + sweep * u
-            // A hand doesn't draw a perfect ellipse, and the end lands a little outside the start.
-            let k = 1 + 0.035 * sin(3 * a + 0.7) + 0.02 * sin(7 * a + 1.9) + 0.07 * (u - 0.5)
-            middle.append(CGPoint(x: center.x + rx * CGFloat(k * cos(a)), y: center.y + ry * CGFloat(k * sin(a))))
-            let taper = min(1, u / 0.1, (1 - u) / 0.22)
-            widths.append(width * CGFloat((0.25 + 0.75 * max(0, taper)) * (1 + 0.15 * sin(5 * a))))
+    /// The painted ring around the ellipse at `center` (radii `rx`, `ry`), as filled shapes with
+    /// their opacity: one calligraphy brush stroke on a smooth oval (thick and thin with the
+    /// brush's angle), that stops a little short of where it began and breaks into dry-brush
+    /// streaks. `progress` (0...1) is how much has been painted. `yUp`: Core Graphics coordinates
+    /// (the same stroke, mirrored so it looks alike either way up).
+    static func paintedStrokes(center: CGPoint, rx: CGFloat, ry: CGFloat, width: CGFloat, progress: Double = 1,
+                               yUp: Bool = false) -> [(path: CGPath, alpha: CGFloat)] {
+        let a0 = -0.62 * Double.pi, sweep = 1.9 * Double.pi
+        func point(_ u: Double) -> CGPoint {
+            let a = a0 + sweep * u, k = CGFloat(1 + 0.035 * u)
+            return CGPoint(x: center.x + rx * k * CGFloat(cos(a)), y: center.y + ry * k * CGFloat(sin(a)))
         }
-        var left: [CGPoint] = [], right: [CGPoint] = []
-        for i in middle.indices {
-            let a = middle[max(0, i - 1)], b = middle[min(middle.count - 1, i + 1)]
-            let dx = b.x - a.x, dy = b.y - a.y
-            let length = max(0.0001, (dx * dx + dy * dy).squareRoot())
-            let nx = -dy / length * widths[i] / 2, ny = dx / length * widths[i] / 2
-            left.append(CGPoint(x: middle[i].x + nx, y: middle[i].y + ny))
-            right.append(CGPoint(x: middle[i].x - nx, y: middle[i].y - ny))
+        func tangent(_ u: Double) -> (x: CGFloat, y: CGFloat) {
+            let p = point(max(0, u - 0.002)), q = point(min(1, u + 0.002))
+            let dx = q.x - p.x, dy = q.y - p.y, length = max(0.0001, (dx * dx + dy * dy).squareRoot())
+            return (dx / length, dy / length)
         }
-        let path = CGMutablePath()
-        path.addLines(between: left + right.reversed())
-        path.closeSubpath()
-        return path
+        // A broad brush held at 45°: thickest moving across it, thinnest along it.
+        func nib(_ u: Double) -> CGFloat {
+            let t = tangent(u)
+            return width * CGFloat(0.3 + 0.7 * abs(sin(atan2(Double(t.y), Double(t.x)) - .pi / 4)))
+        }
+        func body(_ u: Double) -> CGFloat {
+            var w = nib(u)
+            if u < 0.04 { w *= CGFloat(0.55 + 0.45 * u / 0.04) }
+            if u > 0.84 { w *= CGFloat(max(0, (0.97 - u) / 0.13)) }
+            return w
+        }
+        func ribbon(_ us: [Double], width: (Double) -> CGFloat, offset: (Double) -> CGFloat = { _ in 0 }) -> CGPath {
+            var left: [CGPoint] = [], right: [CGPoint] = []
+            for u in us {
+                let p = point(u), t = tangent(u), n = (x: -t.y, y: t.x)
+                let o = offset(u), w = width(u) / 2
+                let c = CGPoint(x: p.x + n.x * o, y: p.y + n.y * o)
+                left.append(CGPoint(x: c.x + n.x * w, y: c.y + n.y * w))
+                right.append(CGPoint(x: c.x - n.x * w, y: c.y - n.y * w))
+            }
+            let path = CGMutablePath()
+            let outline = (left + right.reversed()).map { yUp ? CGPoint(x: $0.x, y: 2 * center.y - $0.y) : $0 }
+            path.addLines(between: outline)
+            path.closeSubpath()
+            return path
+        }
+        var out: [(path: CGPath, alpha: CGFloat)] = []
+        let steps = 240
+        let end = min(progress, 0.97)
+        let shown = Int(end * Double(steps))
+        if shown >= 1 { out.append((ribbon((0...shown).map { Double($0) / Double(steps) }, width: body), 1)) }
+        // Dry-brush streaks where the stroke runs out.
+        let seeds = [0.13, 0.71, 0.42, 0.95, 0.27, 0.58, 0.84]
+        let begin = 0.78
+        for (j, seed) in seeds.enumerated() {
+            let offset = (Double(j) / Double(seeds.count - 1) - 0.5) * 0.9
+            let stop = 0.93 + 0.07 * seed
+            let e = min(progress, stop)
+            guard e > begin else { continue }
+            let us = (0...40).map { begin + (e - begin) * Double($0) / 40 }
+            out.append((ribbon(us, width: { u in width * 0.2 * CGFloat(max(0.2, 1 - (u - begin) / (stop - begin))) },
+                               offset: { u in CGFloat(offset) * nib(u) }), 0.85))
+        }
+        return out
     }
 }
 
@@ -111,7 +149,7 @@ struct ExportOptions: Codable, Equatable {
     /// Freeze on the first frame and ring the athlete, for clips with a spotlight.
     var showSpotlights = true
     var spotlightShape: SpotlightShape = .oval
-    var spotlightRing: SpotlightRing = .standard
+    var spotlightRing: SpotlightRing = .none
     /// The ring's color as "#RRGGBB"; nil uses the team color.
     var spotlightColor: String? = nil
     /// A bar along the bottom of the intro card that fills while it's on screen.
@@ -1131,11 +1169,14 @@ enum SpotlightMovieWriter {
                 guard ring != .none else { return }
                 ctx.saveGState()
                 if ring == .painted {
-                    ctx.setShadow(offset: .zero, blur: 10 * size.height / 1080, color: CGColor(gray: 0, alpha: 0.5))
-                    ctx.setFillColor(accent)
-                    ctx.addPath(SpotlightRing.paintedStroke(center: center, rx: rx * 1.05, ry: radius * 1.05, width: line,
-                                                            progress: ease(t / 0.45)))
-                    ctx.fillPath()
+                    // Brushed on, unhurried.
+                    ctx.setShadow(offset: .zero, blur: 8 * size.height / 1080, color: CGColor(gray: 0, alpha: 0.45))
+                    for stroke in SpotlightRing.paintedStrokes(center: center, rx: rx * 1.05, ry: radius * 1.05, width: line,
+                                                               progress: SpotlightRing.brushProgress(t), yUp: true) {
+                        ctx.setFillColor(accent.copy(alpha: stroke.alpha) ?? accent)
+                        ctx.addPath(stroke.path)
+                        ctx.fillPath()
+                    }
                 } else {
                     let r = radius * scale, rxs = rx * scale
                     ctx.setShadow(offset: .zero, blur: 10 * size.height / 1080, color: CGColor(gray: 0, alpha: 0.6 * ringAlpha))

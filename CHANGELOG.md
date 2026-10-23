@@ -3,6 +3,11 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.51.0
+- **Painted** spotlight is now a calligraphy brush stroke: a smooth oval, thick and thin like an angled brush, brushed on more slowly (about a second), stopping just short of where it began and ending in dry-brush streaks.
+- **No Ring** is the default for new setups (just the lit area around the athlete). If you'd already picked a ring, it stays as you set it; change it next to the spotlight shape and color.
+- The spotlight editor has a **Play** button: see the spotlight exactly as the reel shows it (the dimming, then the ring or brush stroke) before exporting.
+
 ## 0.50.0
 - **Spotlight ring styles**: **No Ring** (just the lit area around the athlete), **Thin**, **Standard**, **Thick**, or **Painted**, a hand-drawn brush stroke that paints itself on around the athlete. Choose it next to the shape and color in the spotlight editor or Export; the editor shows it as the reel will.
 

@@ -15,6 +15,8 @@ struct SpotlightEditor: View {
     @State private var image: CGImage?
     @State private var spot: Spotlight = .standard
     @State private var placed = false
+    /// When Play was pressed, while the spotlight plays.
+    @State private var playStart: Date?
     /// The moment shown and spotlighted (seconds in the video).
     @State private var time: Double = 0
     @State private var ready = false
@@ -90,6 +92,13 @@ struct SpotlightEditor: View {
                     .frame(width: 140)
                     .help("Size")
                 SpotlightStyleControls()
+                Button {
+                    playSpotlight()
+                } label: {
+                    Label("Play", systemImage: "play.fill")
+                }
+                .disabled(image == nil)
+                .help("See the spotlight as the reel shows it")
                 Spacer()
                 if clip.spotlight != nil {
                     Button("Remove", role: .destructive) { onSave(nil, false) }
@@ -160,26 +169,44 @@ struct SpotlightEditor: View {
         let options = model.exporter.options
         let rx = r * options.spotlightShape.aspect
         let accent = options.spotlightColor.flatMap { Color(hex: $0) } ?? model.profile.profile.accentColor
-        return ZStack(alignment: .topLeading) {
+        let ring = options.spotlightRing
+        let width = max(1.5, ring.width * picture.height / 1080)
+        return TimelineView(.animation(paused: playStart == nil)) { timeline in
+            // Playing: seconds into the spotlight, drawn as the reel draws it; otherwise its final look.
+            let t = playStart.map { timeline.date.timeIntervalSince($0) }
             Canvas { context, size in
-                var dim = Path(CGRect(origin: .zero, size: size))
-                dim.addEllipse(in: CGRect(x: c.x - rx * 1.15, y: c.y - r * 1.15, width: rx * 2.3, height: r * 2.3))
-                context.fill(dim, with: .color(.black.opacity(placed ? 0.5 : 0.25)), style: FillStyle(eoFill: true))
-                // The ring as the reel draws it (at this picture's scale).
-                let ring = options.spotlightRing
-                let width = max(1.5, ring.width * picture.height / 1080)
+                func ease(_ p: Double) -> Double { let c = min(1, max(0, p)); return 1 - (1 - c) * (1 - c) }
+                let dim = t.map { 0.55 * ease($0 / 0.25) } ?? (placed ? 0.5 : 0.25)
+                var shade = Path(CGRect(origin: .zero, size: size))
+                shade.addEllipse(in: CGRect(x: c.x - rx * 1.15, y: c.y - r * 1.15, width: rx * 2.3, height: r * 2.3))
+                context.fill(shade, with: .color(.black.opacity(dim)), style: FillStyle(eoFill: true))
                 switch ring {
                 case .none:
                     break
                 case .painted:
-                    context.fill(Path(SpotlightRing.paintedStroke(center: c, rx: rx * 1.05, ry: r * 1.05, width: width)),
-                                 with: .color(accent))
+                    for stroke in SpotlightRing.paintedStrokes(center: c, rx: rx * 1.05, ry: r * 1.05, width: width,
+                                                               progress: t.map(SpotlightRing.brushProgress) ?? 1) {
+                        context.fill(Path(stroke.path), with: .color(accent.opacity(stroke.alpha)))
+                    }
                 default:
-                    context.stroke(Path(ellipseIn: CGRect(x: c.x - rx, y: c.y - r, width: rx * 2, height: r * 2)),
-                                   with: .color(accent), lineWidth: width)
+                    let alpha = t.map { ease($0 / 0.2) } ?? 1
+                    let scale = t.map { 1.9 - 0.9 * ease($0 / 0.35) } ?? 1
+                    context.stroke(Path(ellipseIn: CGRect(x: c.x - rx * scale, y: c.y - r * scale,
+                                                          width: rx * 2 * scale, height: r * 2 * scale)),
+                                   with: .color(accent.opacity(alpha)), lineWidth: width)
                 }
             }
-            .allowsHitTesting(false)
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// Plays the spotlight as the reel shows it (the dimming, then the ring), once.
+    private func playSpotlight() {
+        let started = Date()
+        playStart = started
+        Task {
+            try? await Task.sleep(for: .seconds(ExportOptions.spotlightSeconds + 0.4))
+            if playStart == started { playStart = nil }
         }
     }
 
