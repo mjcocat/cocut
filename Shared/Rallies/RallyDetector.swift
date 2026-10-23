@@ -672,6 +672,7 @@ enum RallyDetector {
     private static func readRallies(asset: AVURLAsset, track: AVAssetTrack, spans: AsyncStream<Span>, quickReading: Bool,
                                     progress: @escaping @Sendable (Double) -> Void) async throws -> [Span: RallyReading] {
         let composition = try await RallyFrames.makeComposition(asset: asset, track: track)
+        warmUp()
         var readings: [Span: RallyReading] = [:]
         let workers = numberWorkers
         try await withThrowingTaskGroup(of: (Span, RallyReading).self) { group in
@@ -689,8 +690,10 @@ enum RallyDetector {
                 let times = frameTimes(in: span)
                 received += times.count
                 group.addTask {
-                    let reading = try readRally(asset: asset, track: track, composition: composition, span: span,
-                                                times: times, quick: quickReading)
+                    let reading = try await watched(span: span, frames: times.count) { beat in
+                        try readRally(asset: asset, track: track, composition: composition, span: span,
+                                      times: times, quick: quickReading, beat: beat)
+                    }
                     return (span, reading)
                 }
                 running += 1
@@ -700,6 +703,114 @@ enum RallyDetector {
             while let finished = try await group.next() { collect(finished) }
         }
         return readings
+    }
+
+    /// How long a rally may go without finishing a frame before it's given up on. A frame takes
+    /// well under a second; this only happens when a system framework (video decoding, text
+    /// recognition, the appearance model) never returns, which would otherwise stall the match.
+    static let stallSeconds = 90.0
+
+    /// A rally worker's sign of life, and how it's told to stop.
+    final class Heartbeat: @unchecked Sendable {
+        private let lock = NSLock()
+        private var last = Date()
+        private var stopped = false
+
+        /// Called for every frame: records progress, and stops the worker once it's been given up on.
+        func touch() throws {
+            let stop = lock.withLock { () -> Bool in
+                last = Date()
+                return stopped
+            }
+            if stop { throw CancellationError() }
+        }
+
+        var quietFor: TimeInterval { lock.withLock { Date().timeIntervalSince(last) } }
+        func stop() { lock.withLock { stopped = true } }
+    }
+
+    /// Runs `work` (one rally) on a thread of its own and waits for it, unless it stops making
+    /// progress for `stallSeconds`: then the rally is left out (as unread) and the match goes on.
+    /// A stuck call can't be interrupted, but it no longer holds everything up.
+    private static func watched(span: Span, frames: Int,
+                                _ work: @escaping @Sendable (Heartbeat) throws -> RallyReading) async throws -> RallyReading {
+        let beat = Heartbeat()
+        let once = Once<Swift.Result<RallyReading, Error>>()
+        let watchdog = Task.detached {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                if beat.quietFor > stallSeconds {
+                    beat.stop()
+                    let at = String(format: "%d:%02d", Int(span.start) / 60, Int(span.start) % 60)
+                    Log.error("Find Rallies: the rally at \(at) stopped responding for \(Int(stallSeconds))s and was left out "
+                              + "(if numbers stop being read after this, quit and reopen Cocut)")
+                    var reading = RallyReading()
+                    reading.frames = frames
+                    reading.unread = frames
+                    reading.problems["Rally stopped responding and was left out"] = 1
+                    once.resolve(.success(reading))
+                    return
+                }
+            }
+        }
+        defer { watchdog.cancel() }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RallyReading, Error>) in
+                once.onResolve { continuation.resume(with: $0) }
+                Thread.detachNewThread {
+                    let result = Swift.Result { try work(beat) }
+                    once.resolve(result)
+                }
+            }
+        } onCancel: {
+            beat.stop()
+            once.resolve(.failure(CancellationError()))
+        }
+    }
+
+    /// A result delivered once, whichever of several sources has it first.
+    private final class Once<Value>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: Value?
+        private var handler: ((Value) -> Void)?
+
+        func resolve(_ v: Value) {
+            let deliver: ((Value) -> Void)? = lock.withLock {
+                guard value == nil else { return nil }
+                value = v
+                return handler
+            }
+            deliver?(v)
+        }
+
+        func onResolve(_ h: @escaping (Value) -> Void) {
+            let ready: Value? = lock.withLock {
+                handler = h
+                return value
+            }
+            if let ready { h(ready) }
+        }
+    }
+
+    /// Loads the appearance model and the text reader once, one at a time, before the workers
+    /// start: the first match after launch otherwise has four workers loading them at once.
+    private static func warmUp() {
+        let start = Date()
+        _ = ReIDModel.shared
+        if let context = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0,
+                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                   bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+            context.setFillColor(CGColor(gray: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+            if let image = context.makeImage() {
+                for level in [VNRequestTextRecognitionLevel.accurate, .fast] {
+                    let request = VNRecognizeTextRequest()
+                    request.recognitionLevel = level
+                    try? VNImageRequestHandler(cgImage: image).perform([request])
+                }
+            }
+        }
+        Log.info(String(format: "Number pass ready in %.1fs", Date().timeIntervalSince(start)))
     }
 
     /// The rallies' readings, in time order, put together: tracks numbered across the match,
@@ -752,7 +863,7 @@ enum RallyDetector {
     /// second (from the rally's first frame), also each player's torso up close (with `quick`, not
     /// for players whose number is already clear in this rally).
     private static func readRally(asset: AVURLAsset, track: AVAssetTrack, composition: AVVideoComposition,
-                                  span: Span, times: [Double], quick: Bool) throws -> RallyReading {
+                                  span: Span, times: [Double], quick: Bool, beat: Heartbeat) throws -> RallyReading {
         var out = RallyReading()
         out.frames = times.count
         var frames = RallyFrames(asset: asset, track: track, composition: composition, spans: [span], times: [times])
@@ -762,7 +873,7 @@ enum RallyDetector {
         /// Numbers read on each track so far in this rally.
         var votes: [Int: [Int: Int]] = [:]
         while let next = StageTimes.timed(&decoding, { frames.next() }) {
-            try Task.checkCancellation()
+            try beat.touch()
             guard let image = next.image else {
                 out.unread += 1
                 continue

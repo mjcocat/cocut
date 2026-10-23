@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.47.2
+- Find Rallies no longer gets stuck at 98–99%. If one rally stops responding while its jersey numbers are read (it waits on macOS's video or text reading), Cocut leaves that rally's numbers out after 90 seconds and finishes; the log says which rally. The number reader also starts up once before the work begins, instead of four times at once, which is when it got stuck.
+
 ## 0.47.1
 - Hudl: public highlight links (www.hudl.com/video/…) download right away, with the highlight's name, and no sign-in. Before, the Hudl window opened and played the video but Download never lit up. Highlights come at Hudl's best quality for them (720p) and don't need ffmpeg.
 
