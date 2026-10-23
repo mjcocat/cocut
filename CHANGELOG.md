@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.48.1
+- The "Made with Cocut" mark shows its words again (only the little icon came through), and clip-name captions show their text: both are now drawn as pictures, which exports render reliably.
+
 ## 0.48.0
 - **Spotlight any moment in the clip**, not just the first frame. If your athlete is hidden behind someone at the start, slide **Moment** in the spotlight editor (or use ← →) to where you can see them and click them there. The reel plays up to that moment, holds it with the ring, then carries on. Phone reels follow the player from that moment too, backwards to the start as well as forwards.
 - Fixed: since 0.47.0, exports showed white instead of the intro and end cards (they only flashed during the crossfade), and white where a spotlight holds its frame.

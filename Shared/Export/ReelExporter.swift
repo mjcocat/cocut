@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreMedia
+import CoreText
 import QuartzCore
 import SwiftUI
 
@@ -840,14 +841,13 @@ enum ReelComposer {
         video.frame = parent.frame
         parent.addSublayer(video)
 
-        if mark {
-            let logo = cocutLogo()
+        if mark, let picture = madeWithCocutImage(scale: scale, logo: cocutLogo()) {
             for (i, item) in loaded.enumerated() where !item.segment.isCard {
                 // While the clip is on screen, fading with it across transitions.
                 let from = starts[i] + (i > 0 ? overlaps[i - 1] : 0) / 2
                 let to = starts[i] + item.length - (i < loaded.count - 1 ? overlaps[i] : 0) / 2
                 guard to - from > 0.2 else { continue }
-                let layer = madeWithCocutLayer(renderSize: renderSize, scale: scale, phone: phone, logo: logo)
+                let layer = madeWithCocutLayer(renderSize: renderSize, scale: scale, phone: phone, mark: picture)
                 let edge = min(0.25, (to - from) / 4) / (to - from)
                 let fade = CAKeyframeAnimation(keyPath: "opacity")
                 fade.values = [0, 1, 1, 0]
@@ -885,17 +885,14 @@ enum ReelComposer {
             bar.backgroundColor = accent
             box.addSublayer(bar)
 
-            let text = CATextLayer()
-            text.string = title
-            text.font = font
-            text.fontSize = 40 * scale
-            text.foregroundColor = CGColor(gray: 1, alpha: 1)
-            text.alignmentMode = .left
-            text.truncationMode = .end
-            text.contentsScale = 2
-            text.frame = CGRect(x: barW + padX, y: (height - textSize.height) / 2 - 2 * scale,
-                                width: width - barW - padX * 2, height: textSize.height + 4 * scale)
-            box.addSublayer(text)
+            // The words as a picture: text layers don't render when exporting through the overlay tool.
+            let textFrame = CGRect(x: barW + padX, y: 0, width: width - barW - padX * 2, height: height)
+            if let words = textImage(title, size: 40 * scale, in: textFrame.size) {
+                let text = CALayer()
+                text.frame = textFrame
+                text.contents = words
+                box.addSublayer(text)
+            }
 
             let fade = CAKeyframeAnimation(keyPath: "opacity")
             fade.values = [0, 1, 1, 0]
@@ -913,51 +910,74 @@ enum ReelComposer {
 
     /// The mark: Cocut's icon and "Made with Cocut", small and faint, bottom right (bottom
     /// center in phone shapes, where the right edge is covered by the social app's buttons).
-    private static func madeWithCocutLayer(renderSize: CGSize, scale: CGFloat, phone: Bool, logo: CGImage?) -> CALayer {
-        let text = "Made with Cocut"
-        let fontSize = 34 * scale
-        let font = PlatformFont.systemFont(ofSize: fontSize, weight: .semibold)
-        let textSize = (text as NSString).size(withAttributes: [.font: font])
-        let icon = logo == nil ? 0 : 60 * scale
-        let gap = logo == nil ? 0 : 14 * scale
-        let width = icon + gap + textSize.width.rounded(.up) + 2 * scale
-        let height = max(icon, textSize.height)
+    /// Drawn as one picture: text layers don't render when exporting through the overlay tool.
+    private static func madeWithCocutLayer(renderSize: CGSize, scale: CGFloat, phone: Bool, mark: CGImage) -> CALayer {
+        let width = CGFloat(mark.width), height = CGFloat(mark.height)
         let margin = 44 * scale
         let x = phone ? (renderSize.width - width) / 2 : renderSize.width - margin - width
         let y = phone ? renderSize.height * 0.035 : margin
-
         let box = CALayer()
-        box.frame = CGRect(x: x, y: y, width: width, height: height)
+        box.frame = CGRect(x: x.rounded(), y: y.rounded(), width: width, height: height)
+        box.contents = mark
         box.opacity = 0
-        // Faint, with a soft shadow so it reads on bright sand and white walls alike.
-        let content = CALayer()
-        content.frame = box.bounds
-        content.opacity = 0.8
-        content.shadowColor = CGColor(gray: 0, alpha: 1)
-        content.shadowOpacity = 0.45
-        content.shadowRadius = 3 * scale
-        content.shadowOffset = CGSize(width: 0, height: -1 * scale)
-        box.addSublayer(content)
-
-        if let logo {
-            let image = CALayer()
-            image.frame = CGRect(x: 0, y: (height - icon) / 2, width: icon, height: icon)
-            image.contents = logo
-            image.contentsGravity = .resizeAspect
-            image.minificationFilter = .trilinear
-            content.addSublayer(image)
-        }
-        let label = CATextLayer()
-        label.string = text
-        label.font = font
-        label.fontSize = fontSize
-        label.foregroundColor = CGColor(gray: 1, alpha: 1)
-        label.alignmentMode = .left
-        label.contentsScale = 2
-        label.frame = CGRect(x: icon + gap, y: (height - textSize.height) / 2 - 1 * scale,
-                             width: width - icon - gap, height: textSize.height + 2 * scale)
-        content.addSublayer(label)
         return box
+    }
+
+    /// One line of bold white text, vertically centered in `size` and cut short with "…" if it's too long.
+    private static func textImage(_ string: String, size fontSize: CGFloat, in size: CGSize) -> CGImage? {
+        let font = CTFontCreateUIFontForLanguage(.emphasizedSystem, fontSize, nil)
+            ?? CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
+        func line(_ text: String) -> CTLine {
+            CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+                NSAttributedString.Key(kCTFontAttributeName as String): font,
+                NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),
+            ]))
+        }
+        var drawn = line(string)
+        if let short = CTLineCreateTruncatedLine(drawn, Double(size.width), .end, line("…")) { drawn = short }
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        _ = CTLineGetTypographicBounds(drawn, &ascent, &descent, &leading)
+        guard size.width >= 1, size.height >= 1,
+              let context = CGContext(data: nil, width: Int(size.width.rounded(.up)), height: Int(size.height.rounded(.up)),
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.textPosition = CGPoint(x: 0, y: (size.height - ascent - descent) / 2 + descent)
+        CTLineDraw(drawn, context)
+        return context.makeImage()
+    }
+
+    /// The mark's picture at the reel's scale: icon, words, a soft shadow, a little see-through.
+    private static func madeWithCocutImage(scale: CGFloat, logo: CGImage?) -> CGImage? {
+        let font = CTFontCreateUIFontForLanguage(.emphasizedSystem, 34 * scale, nil)
+            ?? CTFontCreateWithName("Helvetica-Bold" as CFString, 34 * scale, nil)
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),
+        ]
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "Made with Cocut", attributes: attributes))
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        let textWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        let icon = logo == nil ? 0 : 60 * scale
+        let gap = logo == nil ? 0 : 14 * scale
+        let pad = 8 * scale   // room for the shadow
+        let contentHeight = max(icon, ascent + descent)
+        let width = Int((pad * 2 + icon + gap + textWidth).rounded(.up))
+        let height = Int((pad * 2 + contentHeight).rounded(.up))
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.setAlpha(0.85)
+        context.setShadow(offset: CGSize(width: 0, height: -1.5 * scale), blur: 6 * scale,
+                          color: CGColor(gray: 0, alpha: 0.55))
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        if let logo {
+            context.interpolationQuality = .high
+            context.draw(logo, in: CGRect(x: pad, y: pad + (contentHeight - icon) / 2, width: icon, height: icon))
+        }
+        context.textPosition = CGPoint(x: pad + icon + gap, y: pad + (contentHeight - ascent - descent) / 2 + descent)
+        CTLineDraw(line, context)
+        context.endTransparencyLayer()
+        return context.makeImage()
     }
 
     /// Cocut's app icon (the Logo image), small enough to draw quickly; nil where it isn't bundled.
