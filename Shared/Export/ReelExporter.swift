@@ -63,7 +63,7 @@ struct ExportOptions: Codable, Equatable {
     var followSpotlight = true
     /// Phone shapes: clips without a spotlight (or not followed) are centered, or shown whole.
     var unspotlitFraming: PhoneFraming = .centered
-    /// Cocut's icon, small and faint, in a corner of the clips, and "Made with Cocut" at the
+    /// The Cocut logo, faint, in a corner of the clips, and "Made with Cocut" at the
     /// bottom of the end card.
     var madeWithCocut = true
 
@@ -911,7 +911,7 @@ enum ReelComposer {
         return AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: video, in: parent)
     }
 
-    /// The mark over clips: Cocut's icon, small and faint, bottom right (bottom center in phone
+    /// The mark over clips: the Cocut logo, faint, bottom right (bottom center in phone
     /// shapes, where the right edge is covered by the social app's buttons).
     private static func madeWithCocutLayer(renderSize: CGSize, scale: CGFloat, phone: Bool, mark: CGImage) -> CALayer {
         let width = CGFloat(mark.width), height = CGFloat(mark.height)
@@ -948,32 +948,34 @@ enum ReelComposer {
         return context.makeImage()
     }
 
-    /// The mark's picture at the reel's scale: just Cocut's icon, faint, with a soft shadow (the
-    /// words are on the end card). Nil where the icon isn't bundled.
+    /// The mark's picture at the reel's scale: the Cocut logo (layers and wordmark, on a clear
+    /// background), a little see-through, with a soft shadow. Nil where it isn't bundled.
     private static func madeWithCocutImage(scale: CGFloat, logo: CGImage?) -> CGImage? {
-        guard let logo else { return nil }
-        let icon = 88 * scale
-        let pad = 12 * scale   // room for the shadow
-        let side = Int((icon + pad * 2).rounded(.up))
-        guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+        guard let logo, logo.height > 0 else { return nil }
+        let height = 130 * scale
+        let width = height * CGFloat(logo.width) / CGFloat(logo.height)
+        let pad = 10 * scale   // room for the shadow
+        guard let context = CGContext(data: nil, width: Int((width + pad * 2).rounded(.up)),
+                                      height: Int((height + pad * 2).rounded(.up)), bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        context.setAlpha(0.7)
+        context.setAlpha(0.75)
         context.setShadow(offset: CGSize(width: 0, height: -1.5 * scale), blur: 6 * scale,
                           color: CGColor(gray: 0, alpha: 0.5))
         context.interpolationQuality = .high
-        context.draw(logo, in: CGRect(x: pad, y: pad, width: icon, height: icon))
+        context.draw(logo, in: CGRect(x: pad, y: pad, width: width, height: height))
         return context.makeImage()
     }
 
-    /// Cocut's app icon (the Logo image), small enough to draw quickly; nil where it isn't bundled.
+    /// The watermark logo (the Watermark image: docs/brand/cocut-logo.png at 512 px tall); nil
+    /// where it isn't bundled.
     private static func cocutLogo() -> CGImage? {
         #if os(macOS)
-        guard let image = PlatformImage(named: "Logo") else { return nil }
-        var rect = CGRect(x: 0, y: 0, width: 256, height: 256)
+        guard let image = PlatformImage(named: "Watermark") else { return nil }
+        var rect = CGRect(origin: .zero, size: image.size)
         return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
         #else
-        return PlatformImage(named: "Logo")?.cgImage
+        return PlatformImage(named: "Watermark")?.cgImage
         #endif
     }
 

@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.48.4
+- The mark over the clips is the full Cocut logo (layers and the CoCut wordmark) on a clear background, instead of the app icon's dark square. The end card's "Made with Cocut" line uses the clear layers icon too.
+
 ## 0.48.3
 - The Cocut icon over the clips and the "Made with Cocut" line on the end card are twice the size.
 
