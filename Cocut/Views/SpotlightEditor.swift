@@ -165,8 +165,19 @@ struct SpotlightEditor: View {
                 var dim = Path(CGRect(origin: .zero, size: size))
                 dim.addEllipse(in: CGRect(x: c.x - rx * 1.15, y: c.y - r * 1.15, width: rx * 2.3, height: r * 2.3))
                 context.fill(dim, with: .color(.black.opacity(placed ? 0.5 : 0.25)), style: FillStyle(eoFill: true))
-                context.stroke(Path(ellipseIn: CGRect(x: c.x - rx, y: c.y - r, width: rx * 2, height: r * 2)),
-                               with: .color(accent), lineWidth: max(3, picture.height / 180))
+                // The ring as the reel draws it (at this picture's scale).
+                let ring = options.spotlightRing
+                let width = max(1.5, ring.width * picture.height / 1080)
+                switch ring {
+                case .none:
+                    break
+                case .painted:
+                    context.fill(Path(SpotlightRing.paintedStroke(center: c, rx: rx * 1.05, ry: r * 1.05, width: width)),
+                                 with: .color(accent))
+                default:
+                    context.stroke(Path(ellipseIn: CGRect(x: c.x - rx, y: c.y - r, width: rx * 2, height: r * 2)),
+                                   with: .color(accent), lineWidth: width)
+                }
             }
             .allowsHitTesting(false)
         }
@@ -195,6 +206,13 @@ struct SpotlightStyleControls: View {
             .labelsHidden()
             .frame(width: 80)
             .help("Oval fits a standing player; circle is classic")
+
+            Picker("Ring", selection: $exporter.options.spotlightRing) {
+                ForEach(SpotlightRing.allCases) { Text($0.title).tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .help("The ring around the athlete: none (just the lit area), thin, standard, thick, or painted by hand")
 
             ColorPicker("Color", selection: Binding(
                 get: { exporter.options.spotlightColor.flatMap { Color(hex: $0) } ?? model.profile.profile.accentColor },

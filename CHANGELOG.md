@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.50.0
+- **Spotlight ring styles**: **No Ring** (just the lit area around the athlete), **Thin**, **Standard**, **Thick**, or **Painted**, a hand-drawn brush stroke that paints itself on around the athlete. Choose it next to the shape and color in the spotlight editor or Export; the editor shows it as the reel will.
+
 ## 0.49.1
 - Phone Frame › Custom: steering while the clip plays works like holding the camera. The frame stays exactly where you hold it (even when the mouse is still), replaces the old path there, and when you let go it stays put for a second before gliding on, instead of snapping back to the path that was there. Steered moves are smoothed so hand wobble doesn't show.
 

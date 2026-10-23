@@ -55,6 +55,9 @@ struct ExportScreen: View {
                         Picker("Shape", selection: $exporter.options.spotlightShape) {
                             ForEach(SpotlightShape.allCases) { Text($0.title).tag($0) }
                         }
+                        Picker("Ring", selection: $exporter.options.spotlightRing) {
+                            ForEach(SpotlightRing.allCases) { Text($0.title).tag($0) }
+                        }
                     }
                 }
 

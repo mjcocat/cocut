@@ -19,6 +19,64 @@ enum SpotlightShape: String, Codable, CaseIterable, Identifiable {
     var aspect: CGFloat { self == .oval ? 0.6 : 1 }
 }
 
+/// How the spotlight's ring is drawn: none (just the lit area around the athlete), a thin,
+/// standard or thick line, or a hand-painted brush stroke.
+enum SpotlightRing: String, Codable, CaseIterable, Identifiable {
+    case none, thin, standard, thick, painted
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .none: return "No Ring"
+        case .thin: return "Thin"
+        case .standard: return "Standard"
+        case .thick: return "Thick"
+        case .painted: return "Painted"
+        }
+    }
+    /// Line width at 1080p (a painted stroke's widest point).
+    var width: CGFloat {
+        switch self {
+        case .none: return 0
+        case .thin: return 4
+        case .standard: return 8
+        case .thick: return 16
+        case .painted: return 18
+        }
+    }
+
+    /// A painted ring around the ellipse at `center` (radii `rx`, `ry`), as a filled outline: one
+    /// loose brush stroke that wobbles a little, tapers at both ends and overlaps where it ends.
+    /// `progress` (0...1) is how much of it has been painted so far.
+    static func paintedStroke(center: CGPoint, rx: CGFloat, ry: CGFloat, width: CGFloat, progress: Double = 1) -> CGPath {
+        let steps = 180
+        let shown = max(2, Int((Double(steps) * min(1, max(0, progress))).rounded()))
+        let start = -0.62 * Double.pi, sweep = 2.18 * Double.pi
+        var middle: [CGPoint] = [], widths: [CGFloat] = []
+        for i in 0...shown {
+            let u = Double(i) / Double(steps)
+            let a = start + sweep * u
+            // A hand doesn't draw a perfect ellipse, and the end lands a little outside the start.
+            let k = 1 + 0.035 * sin(3 * a + 0.7) + 0.02 * sin(7 * a + 1.9) + 0.07 * (u - 0.5)
+            middle.append(CGPoint(x: center.x + rx * CGFloat(k * cos(a)), y: center.y + ry * CGFloat(k * sin(a))))
+            let taper = min(1, u / 0.1, (1 - u) / 0.22)
+            widths.append(width * CGFloat((0.25 + 0.75 * max(0, taper)) * (1 + 0.15 * sin(5 * a))))
+        }
+        var left: [CGPoint] = [], right: [CGPoint] = []
+        for i in middle.indices {
+            let a = middle[max(0, i - 1)], b = middle[min(middle.count - 1, i + 1)]
+            let dx = b.x - a.x, dy = b.y - a.y
+            let length = max(0.0001, (dx * dx + dy * dy).squareRoot())
+            let nx = -dy / length * widths[i] / 2, ny = dx / length * widths[i] / 2
+            left.append(CGPoint(x: middle[i].x + nx, y: middle[i].y + ny))
+            right.append(CGPoint(x: middle[i].x - nx, y: middle[i].y - ny))
+        }
+        let path = CGMutablePath()
+        path.addLines(between: left + right.reversed())
+        path.closeSubpath()
+        return path
+    }
+}
+
 enum ReelResolution: String, Codable, CaseIterable, Identifiable {
     case hd720, hd1080, uhd4k
     var id: String { rawValue }
@@ -53,6 +111,7 @@ struct ExportOptions: Codable, Equatable {
     /// Freeze on the first frame and ring the athlete, for clips with a spotlight.
     var showSpotlights = true
     var spotlightShape: SpotlightShape = .oval
+    var spotlightRing: SpotlightRing = .standard
     /// The ring's color as "#RRGGBB"; nil uses the team color.
     var spotlightColor: String? = nil
     /// A bar along the bottom of the intro card that fills while it's on screen.
@@ -102,6 +161,7 @@ struct ExportOptions: Codable, Equatable {
         fillFrame = (try? c.decodeIfPresent(Bool.self, forKey: .fillFrame)) ?? d.fillFrame
         showSpotlights = (try? c.decodeIfPresent(Bool.self, forKey: .showSpotlights)) ?? d.showSpotlights
         spotlightShape = (try? c.decodeIfPresent(SpotlightShape.self, forKey: .spotlightShape)) ?? d.spotlightShape
+        spotlightRing = (try? c.decodeIfPresent(SpotlightRing.self, forKey: .spotlightRing)) ?? d.spotlightRing
         spotlightColor = try? c.decodeIfPresent(String.self, forKey: .spotlightColor)
         introProgressBar = (try? c.decodeIfPresent(Bool.self, forKey: .introProgressBar)) ?? d.introProgressBar
         shape = (try? c.decodeIfPresent(ReelShape.self, forKey: .shape)) ?? d.shape
@@ -393,22 +453,23 @@ final class ReelExporter {
                     moved.y = (spot.y * fh - rect.minY) / rect.height
                     moved.radius = spot.radius * fh / rect.height
                     frame = cropped
-                    return await writeSpotlight(frame: frame, clip: clip, spot: moved, accent: accent, shape: options.spotlightShape,
+                    return await writeSpotlight(frame: frame, clip: clip, spot: moved, accent: accent, shape: options.spotlightShape, ring: options.spotlightRing,
                                                 fill: options.fillFrame, size: size, fps: fps, work: work)
                 }
             }
         }
-        return await writeSpotlight(frame: frame, clip: clip, spot: spot, accent: accent, shape: options.spotlightShape,
+        return await writeSpotlight(frame: frame, clip: clip, spot: spot, accent: accent, shape: options.spotlightShape, ring: options.spotlightRing,
                                     fill: options.fillFrame, size: size, fps: fps, work: work)
     }
 
-    private static func writeSpotlight(frame: CGImage, clip: Clip, spot: Spotlight, accent: CGColor, shape: SpotlightShape, fill: Bool,
+    private static func writeSpotlight(frame: CGImage, clip: Clip, spot: Spotlight, accent: CGColor, shape: SpotlightShape,
+                                       ring: SpotlightRing, fill: Bool,
                                        size: CGSize, fps: Int32, work: URL) async -> ReelSegment? {
         let movie = work.appending(path: "spotlight-\(UUID().uuidString).mov")
         let seconds = ExportOptions.spotlightSeconds
         do {
             try await Task.detached(priority: .userInitiated) {
-                try SpotlightMovieWriter.write(frame: frame, spot: spot, accent: accent, shape: shape, fill: fill,
+                try SpotlightMovieWriter.write(frame: frame, spot: spot, accent: accent, shape: shape, ring: ring, fill: fill,
                                                size: size, seconds: seconds, fps: fps, to: movie)
             }.value
         } catch {
@@ -1014,8 +1075,8 @@ enum CardMovieWriter {
 /// A clip's first frame held for a moment: the picture dims around the athlete and a ring
 /// snaps in. Drawn frame by frame, like the cards.
 enum SpotlightMovieWriter {
-    static func write(frame: CGImage, spot: Spotlight, accent: CGColor, shape: SpotlightShape, fill: Bool,
-                      size: CGSize, seconds: Double, fps: Int32, to url: URL) throws {
+    static func write(frame: CGImage, spot: Spotlight, accent: CGColor, shape: SpotlightShape, ring: SpotlightRing = .standard,
+                      fill: Bool, size: CGSize, seconds: Double, fps: Int32, to url: URL) throws {
         let width = Int(size.width), height = Int(size.height)
         try? FileManager.default.removeItem(at: url)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
@@ -1043,7 +1104,7 @@ enum SpotlightMovieWriter {
         // Spotlight in Core Graphics coordinates (origin bottom-left).
         let center = CGPoint(x: pic.minX + spot.x * pic.width, y: size.height - (pic.minY + spot.y * pic.height))
         let radius = max(spot.radius * pic.height, 20 * size.height / 1080)
-        let line = 8 * size.height / 1080
+        let line = ring.width * size.height / 1080
 
         let total = max(1, Int(seconds * Double(fps)))
         for i in 0..<total {
@@ -1066,13 +1127,22 @@ enum SpotlightMovieWriter {
                 ctx.addEllipse(in: hole)
                 ctx.setFillColor(CGColor(gray: 0, alpha: dim))
                 ctx.fillPath(using: .evenOdd)
-                // The ring.
-                let r = radius * scale, rxs = rx * scale
+                // The ring: snaps in from bigger, or a painted one is brushed on.
+                guard ring != .none else { return }
                 ctx.saveGState()
-                ctx.setShadow(offset: .zero, blur: 10 * size.height / 1080, color: CGColor(gray: 0, alpha: 0.6 * ringAlpha))
-                ctx.setStrokeColor(accent.copy(alpha: ringAlpha) ?? accent)
-                ctx.setLineWidth(line)
-                ctx.strokeEllipse(in: CGRect(x: center.x - rxs, y: center.y - r, width: rxs * 2, height: r * 2))
+                if ring == .painted {
+                    ctx.setShadow(offset: .zero, blur: 10 * size.height / 1080, color: CGColor(gray: 0, alpha: 0.5))
+                    ctx.setFillColor(accent)
+                    ctx.addPath(SpotlightRing.paintedStroke(center: center, rx: rx * 1.05, ry: radius * 1.05, width: line,
+                                                            progress: ease(t / 0.45)))
+                    ctx.fillPath()
+                } else {
+                    let r = radius * scale, rxs = rx * scale
+                    ctx.setShadow(offset: .zero, blur: 10 * size.height / 1080, color: CGColor(gray: 0, alpha: 0.6 * ringAlpha))
+                    ctx.setStrokeColor(accent.copy(alpha: ringAlpha) ?? accent)
+                    ctx.setLineWidth(line)
+                    ctx.strokeEllipse(in: CGRect(x: center.x - rxs, y: center.y - r, width: rxs * 2, height: r * 2))
+                }
                 ctx.restoreGState()
             }) else { throw ExportError.cardFailed }
             while !input.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.002) }
