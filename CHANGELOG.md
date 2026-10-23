@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.47.0
+- Exports carry a small, faint **Made with Cocut** mark (the Cocut icon and the words) in the corner of the clips: bottom right in widescreen, bottom center in phone shapes. It isn't on the intro or end cards. On by default; turn it off in Export › Clips › “Made with Cocut” mark. (Preview doesn't show it.)
+
 ## 0.46.0
 - **Free Up Space** (File › Free Up Space…, or in Find Rallies): lists the big files Cocut made with their sizes: full matches downloaded from YouTube and Hudl, exported reels, and temporary files left by stopped downloads or exports. Each download says which match uses it and whether its rallies are already in Clips; those are ticked for you. Move to Trash puts them in the Trash (you can still put them back). Your clips and projects are never touched.
 

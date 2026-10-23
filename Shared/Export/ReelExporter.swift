@@ -62,6 +62,8 @@ struct ExportOptions: Codable, Equatable {
     var followSpotlight = true
     /// Phone shapes: clips without a spotlight (or not followed) are centered, or shown whole.
     var unspotlitFraming: PhoneFraming = .centered
+    /// A small, faint "Made with Cocut" mark in a corner of the clips (not on the cards).
+    var madeWithCocut = true
 
     /// The size to draw at: phone shapes are 1080 wide; previews are two-thirds size.
     func renderSize(preview: Bool = false) -> CGSize {
@@ -103,6 +105,7 @@ struct ExportOptions: Codable, Equatable {
         shape = (try? c.decodeIfPresent(ReelShape.self, forKey: .shape)) ?? d.shape
         followSpotlight = (try? c.decodeIfPresent(Bool.self, forKey: .followSpotlight)) ?? d.followSpotlight
         unspotlitFraming = (try? c.decodeIfPresent(PhoneFraming.self, forKey: .unspotlitFraming)) ?? d.unspotlitFraming
+        madeWithCocut = (try? c.decodeIfPresent(Bool.self, forKey: .madeWithCocut)) ?? d.madeWithCocut
     }
 }
 
@@ -592,13 +595,14 @@ enum ReelComposer {
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(options.frameRate))
-        let captions = options.showClipNames && !forPlayback
+        // Drawn over the video by Core Animation, which only works when exporting.
+        let overlays = (options.showClipNames || options.madeWithCocut) && !forPlayback
 
         if options.shape.isPhone {
             videoComposition.customVideoCompositorClass = PhoneCompositor.self
             videoComposition.instructions = phoneInstructions(loaded: loaded, starts: starts, overlaps: overlaps,
                                                               tracks: videoTracks.map(\.trackID), total: composition.duration,
-                                                              postProcessing: captions)
+                                                              postProcessing: overlays)
         } else {
         // Video instructions: a solo stretch for each piece, then a blend into the next.
         var instructions: [AVMutableVideoCompositionInstruction] = []
@@ -647,9 +651,11 @@ enum ReelComposer {
         videoComposition.instructions = instructions
         }
 
-        if captions {
-            videoComposition.animationTool = captionTool(loaded: loaded, starts: starts, overlaps: overlaps,
-                                                         renderSize: renderSize, accent: accent)
+        if overlays {
+            videoComposition.animationTool = overlayTool(loaded: loaded, starts: starts, overlaps: overlaps,
+                                                         renderSize: renderSize, accent: accent,
+                                                         captions: options.showClipNames, mark: options.madeWithCocut,
+                                                         phone: options.shape.isPhone)
         }
 
         // Audio: duck each clip out/in across crossfades.
@@ -801,10 +807,11 @@ enum ReelComposer {
             .concatenating(CGAffineTransform(translationX: (render.width - w * s) / 2, y: (render.height - h * s) / 2))
     }
 
-    /// Lower-third captions with each clip's name, faded in and out near the start of the clip.
-    /// Clip-name captions, drawn over the video when exporting.
-    private static func captionTool(loaded: [Loaded], starts: [Double], overlaps: [Double],
-                                    renderSize: CGSize, accent: CGColor) -> AVVideoCompositionCoreAnimationTool {
+    /// What's drawn over the video when exporting: lower-third captions with each clip's name
+    /// (faded in and out near the start of the clip), and the "Made with Cocut" mark on every clip.
+    private static func overlayTool(loaded: [Loaded], starts: [Double], overlaps: [Double],
+                                    renderSize: CGSize, accent: CGColor, captions: Bool, mark: Bool,
+                                    phone: Bool) -> AVVideoCompositionCoreAnimationTool {
         let scale = min(renderSize.width, renderSize.height) / 1080
         let parent = CALayer()
         parent.frame = CGRect(origin: .zero, size: renderSize)
@@ -812,7 +819,28 @@ enum ReelComposer {
         video.frame = parent.frame
         parent.addSublayer(video)
 
-        for (i, item) in loaded.enumerated() where !item.segment.isCard {
+        if mark {
+            let logo = cocutLogo()
+            for (i, item) in loaded.enumerated() where !item.segment.isCard {
+                // While the clip is on screen, fading with it across transitions.
+                let from = starts[i] + (i > 0 ? overlaps[i - 1] : 0) / 2
+                let to = starts[i] + item.length - (i < loaded.count - 1 ? overlaps[i] : 0) / 2
+                guard to - from > 0.2 else { continue }
+                let layer = madeWithCocutLayer(renderSize: renderSize, scale: scale, phone: phone, logo: logo)
+                let edge = min(0.25, (to - from) / 4) / (to - from)
+                let fade = CAKeyframeAnimation(keyPath: "opacity")
+                fade.values = [0, 1, 1, 0]
+                fade.keyTimes = [0, NSNumber(value: edge), NSNumber(value: 1 - edge), 1]
+                fade.beginTime = AVCoreAnimationBeginTimeAtZero + from
+                fade.duration = to - from
+                fade.isRemovedOnCompletion = false
+                fade.fillMode = .both
+                layer.add(fade, forKey: "fade")
+                parent.addSublayer(layer)
+            }
+        }
+
+        for (i, item) in loaded.enumerated() where captions && !item.segment.isCard {
             guard let title = item.segment.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty else { continue }
             let timing = captionTiming(visibleStart: starts[i] + (i > 0 ? overlaps[i - 1] : 0),
                                        duration: item.segment.duration)
@@ -860,6 +888,66 @@ enum ReelComposer {
             parent.addSublayer(box)
         }
         return AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: video, in: parent)
+    }
+
+    /// The mark: Cocut's icon and "Made with Cocut", small and faint, bottom right (bottom
+    /// center in phone shapes, where the right edge is covered by the social app's buttons).
+    private static func madeWithCocutLayer(renderSize: CGSize, scale: CGFloat, phone: Bool, logo: CGImage?) -> CALayer {
+        let text = "Made with Cocut"
+        let fontSize = 22 * scale
+        let font = PlatformFont.systemFont(ofSize: fontSize, weight: .semibold)
+        let textSize = (text as NSString).size(withAttributes: [.font: font])
+        let icon = logo == nil ? 0 : 30 * scale
+        let gap = logo == nil ? 0 : 9 * scale
+        let width = icon + gap + textSize.width.rounded(.up) + 2 * scale
+        let height = max(icon, textSize.height)
+        let margin = 36 * scale
+        let x = phone ? (renderSize.width - width) / 2 : renderSize.width - margin - width
+        let y = phone ? renderSize.height * 0.035 : margin
+
+        let box = CALayer()
+        box.frame = CGRect(x: x, y: y, width: width, height: height)
+        box.opacity = 0
+        // Faint, with a soft shadow so it reads on bright sand and white walls alike.
+        let content = CALayer()
+        content.frame = box.bounds
+        content.opacity = 0.7
+        content.shadowColor = CGColor(gray: 0, alpha: 1)
+        content.shadowOpacity = 0.45
+        content.shadowRadius = 3 * scale
+        content.shadowOffset = CGSize(width: 0, height: -1 * scale)
+        box.addSublayer(content)
+
+        if let logo {
+            let image = CALayer()
+            image.frame = CGRect(x: 0, y: (height - icon) / 2, width: icon, height: icon)
+            image.contents = logo
+            image.contentsGravity = .resizeAspect
+            image.minificationFilter = .trilinear
+            content.addSublayer(image)
+        }
+        let label = CATextLayer()
+        label.string = text
+        label.font = font
+        label.fontSize = fontSize
+        label.foregroundColor = CGColor(gray: 1, alpha: 1)
+        label.alignmentMode = .left
+        label.contentsScale = 2
+        label.frame = CGRect(x: icon + gap, y: (height - textSize.height) / 2 - 1 * scale,
+                             width: width - icon - gap, height: textSize.height + 2 * scale)
+        content.addSublayer(label)
+        return box
+    }
+
+    /// Cocut's app icon (the Logo image), small enough to draw quickly; nil where it isn't bundled.
+    private static func cocutLogo() -> CGImage? {
+        #if os(macOS)
+        guard let image = PlatformImage(named: "Logo") else { return nil }
+        var rect = CGRect(x: 0, y: 0, width: 128, height: 128)
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+        #else
+        return PlatformImage(named: "Logo")?.cgImage
+        #endif
     }
 
 }

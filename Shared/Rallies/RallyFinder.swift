@@ -1481,6 +1481,7 @@ final class RallyFinder {
         var options = ExportOptions()
         options.transition = .cut
         options.showClipNames = false
+        options.madeWithCocut = false
         options.includeSound = true
         options.removeBlackBars = false
         options.fillFrame = false

@@ -37,6 +37,7 @@ struct ExportScreen: View {
                     Toggle("Sound", isOn: $exporter.options.includeSound)
                     Toggle("Clip names as captions", isOn: $exporter.options.showClipNames)
                     Toggle("Fill the frame (crop edges)", isOn: $exporter.options.fillFrame)
+                    Toggle("“Made with Cocut” mark", isOn: $exporter.options.madeWithCocut)
                 }
 
                 Section("Cards") {
