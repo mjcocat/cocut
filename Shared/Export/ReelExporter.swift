@@ -952,8 +952,8 @@ enum ReelComposer {
     /// words are on the end card). Nil where the icon isn't bundled.
     private static func madeWithCocutImage(scale: CGFloat, logo: CGImage?) -> CGImage? {
         guard let logo else { return nil }
-        let icon = 44 * scale
-        let pad = 8 * scale   // room for the shadow
+        let icon = 88 * scale
+        let pad = 12 * scale   // room for the shadow
         let side = Int((icon + pad * 2).rounded(.up))
         guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,

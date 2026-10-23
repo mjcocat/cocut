@@ -158,13 +158,13 @@ struct PlayerCardView: View {
 
     /// Cocut's icon and "Made with Cocut", small and quiet.
     private var madeWithCocutLine: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 24) {
             Image("Logo")
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 40, height: 40)
+                .frame(width: 80, height: 80)
             Text("Made with Cocut")
-                .font(.system(size: 26, weight: .semibold))
+                .font(.system(size: 52, weight: .semibold))
                 .foregroundStyle(palette.secondary)
         }
         .opacity(0.7)
