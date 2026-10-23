@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.47.3
+- Add Videos says up front what you're adding: **Full Match** (from your Mac, from YouTube or Hudl, or a match you've analyzed) goes to Find Rallies, and **Clips Only** (from your Mac, or from YouTube or Hudl) goes straight into Clips. The YouTube or Hudl window then doesn't ask "full match or clip?" again.
+
 ## 0.47.2
 - Find Rallies no longer gets stuck at 98–99%. If one rally stops responding while its jersey numbers are read (it waits on macOS's video or text reading), Cocut leaves that rally's numbers out after 90 seconds and finishes; the log says which rally. The number reader also starts up once before the work begins, instead of four times at once, which is when it got stuck.
 

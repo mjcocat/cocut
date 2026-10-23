@@ -36,6 +36,9 @@ final class AppModel {
     var showingSetupGuide = false
     /// Add from Other Projects is open (shown over Clips).
     var showingAddFromProjects = false
+    /// What the YouTube or Hudl window is opened for, when a menu already said (a full match or
+    /// a clip); nil lets the user choose in the window.
+    var importKind: YouTubeKind?
 
     private(set) var phase: RecordingPhase = .idle {
         // An update found mid-recording is offered once Cocut is idle again.

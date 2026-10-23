@@ -477,6 +477,8 @@ struct YouTubeImportView: View {
     @State private var importer = YouTubeImporter()
     @State private var link = ""
     @State private var kind: YouTubeKind = .match
+    /// Chosen in the menu that opened the window, so the window doesn't ask again.
+    @State private var chosenKind: YouTubeKind?
     /// The Hudl page to sign in on and find the video, while that window is up.
     @State private var hudlPage: String?
 
@@ -494,7 +496,8 @@ struct YouTubeImportView: View {
                     .foregroundStyle(Design.record)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: Design.Space.xs) {
-                    Text("Import from YouTube or Hudl").font(.title2.weight(.semibold))
+                    Text(chosenKind == .match ? "Import a Full Match" : chosenKind == .clip ? "Import a Clip" : "Import from YouTube or Hudl")
+                        .font(.title2.weight(.semibold))
                     Text("Downloads the whole video in its original quality: cleaner than recording the screen. Only for film you have the right to use, like your own uploads or your team's.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -507,12 +510,19 @@ struct YouTubeImportView: View {
                 .disabled(importer.isRunning)
                 .onSubmit(start)
 
-            Picker("It's", selection: $kind) {
-                Text("A full match: open it in Find Rallies").tag(YouTubeKind.match)
-                Text("A clip: add it to Clips").tag(YouTubeKind.clip)
+            if let chosenKind {
+                Text(chosenKind == .match ? "From YouTube or Hudl. It opens in Find Rallies when it's downloaded."
+                                          : "From YouTube or Hudl. It's added to Clips when it's downloaded.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("It's", selection: $kind) {
+                    Text("A full match: open it in Find Rallies").tag(YouTubeKind.match)
+                    Text("A clip: add it to Clips").tag(YouTubeKind.clip)
+                }
+                .pickerStyle(.radioGroup)
+                .disabled(importer.isRunning)
             }
-            .pickerStyle(.radioGroup)
-            .disabled(importer.isRunning)
 
             status
 
@@ -534,7 +544,11 @@ struct YouTubeImportView: View {
         }
         .padding(Design.Space.xl)
         .frame(width: 540)
-        .onAppear(perform: pasteLinkIfCopied)
+        .onAppear {
+            takeChosenKind()
+            pasteLinkIfCopied()
+        }
+        .onChange(of: model.importKind) { takeChosenKind() }
         .sheet(item: Binding(get: { hudlPage.map(HudlPage.init) }, set: { hudlPage = $0?.link })) { page in
             HudlBrowser(link: page.link) { video in
                 hudlPage = nil
@@ -605,6 +619,14 @@ struct YouTubeImportView: View {
                 hudlPage = page
             }
         }
+    }
+
+    /// Uses the kind the opening menu chose (the window may already be open).
+    private func takeChosenKind() {
+        guard let chosen = model.importKind, !importer.isRunning else { return }
+        kind = chosen
+        chosenKind = chosen
+        model.importKind = nil
     }
 
     /// A link already on the clipboard fills the field, so it's paste-free.

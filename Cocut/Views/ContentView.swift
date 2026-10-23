@@ -67,7 +67,8 @@ struct ContentView: View {
                 }
             }
 
-            // Every way film gets in, in one menu (the same four as Get Started). Recording is also
+            // Every way film gets in, in one menu (the same four as Get Started): a full match goes
+            // to Find Rallies, clips straight into Clips. Recording is also
             // in the menu bar, Find Rallies in the Window menu (⇧⌘M) and Preview in Export (⌘Y).
             ToolbarItemGroup(placement: .primaryAction) {
                 Menu {
@@ -78,7 +79,8 @@ struct ContentView: View {
                             Label("From Your Mac…", systemImage: "internaldrive")
                         }
                         Button {
-                            startFilm(.youtube, model: model, openWindow: openWindow)
+                            model.importKind = .match
+                            openWindow(id: "youtube")
                         } label: {
                             Label("From YouTube or Hudl…", systemImage: FilmSource.youtube.icon)
                         }
@@ -91,12 +93,22 @@ struct ContentView: View {
                     } label: {
                         Label("Full Match", systemImage: FilmSource.fullMatch.icon)
                     }
-                    Button {
-                        startFilm(.clips, model: model, openWindow: openWindow)
+                    Menu {
+                        Button {
+                            startFilm(.clips, model: model, openWindow: openWindow)
+                        } label: {
+                            Label("From Your Mac…", systemImage: "internaldrive")
+                        }
+                        .disabled(model.isBusy)
+                        Button {
+                            model.importKind = .clip
+                            openWindow(id: "youtube")
+                        } label: {
+                            Label("From YouTube or Hudl…", systemImage: FilmSource.youtube.icon)
+                        }
                     } label: {
-                        Label("Clips on Your Mac…", systemImage: FilmSource.clips.icon)
+                        Label("Clips Only", systemImage: FilmSource.clips.icon)
                     }
-                    .disabled(model.isBusy)
                     Menu {
                         Button {
                             Task { await model.recordNewRegion() }

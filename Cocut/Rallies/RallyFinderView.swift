@@ -158,6 +158,7 @@ struct RallyFinderView: View {
 
             HStack(spacing: Design.Space.m) {
                 Button {
+                    model.importKind = .match
                     openWindow(id: "youtube")
                 } label: {
                     Label("Import from YouTube or Hudl…", systemImage: "play.rectangle")
