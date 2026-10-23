@@ -79,6 +79,11 @@ struct PlayerProfile: Codable, Equatable {
     /// A team color picked with the color picker (sRGB hex like "#1E90FF"); overrides `accent`.
     var customAccent: String?
     var showEndCard = true
+    /// Which part of the headshot the cards center on (fractions of the photo, top-left origin),
+    /// and how far in they zoom (1 just fills the frame).
+    var photoX = 0.5
+    var photoY = 0.5
+    var photoZoom = 1.0
 
     /// The card's accent: the custom color when one is set, else the preset.
     var accentColor: Color {
@@ -150,6 +155,9 @@ struct PlayerProfile: Codable, Equatable {
         accent = (try? c.decodeIfPresent(CardAccent.self, forKey: .accent)) ?? .blue
         showEndCard = (try? c.decodeIfPresent(Bool.self, forKey: .showEndCard)) ?? true
         customAccent = try? c.decodeIfPresent(String.self, forKey: .customAccent)
+        photoX = (try? c.decodeIfPresent(Double.self, forKey: .photoX)) ?? 0.5
+        photoY = (try? c.decodeIfPresent(Double.self, forKey: .photoY)) ?? 0.5
+        photoZoom = (try? c.decodeIfPresent(Double.self, forKey: .photoZoom)) ?? 1
     }
 }
 
@@ -197,6 +205,10 @@ final class ProfileStore {
         do {
             try png.write(to: headshotURL, options: .atomic)
             headshot = Platform.image(from: png)
+            // A new photo starts centered.
+            profile.photoX = 0.5
+            profile.photoY = 0.5
+            profile.photoZoom = 1
         } catch {
             Log.error("Couldn't save headshot: \(error.localizedDescription)")
         }

@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.49.0
+- **Position the headshot**: Player Card › **Position…** next to Choose Photo. Drag the photo to choose what's in the middle and zoom in with the slider; the card preview updates as you go. Every card layout (round and square photos, widescreen and phone) uses it. A new photo starts centered.
+
 ## 0.48.6
 - Phone reels follow players who are small in the picture better (wide shots, 720p Hudl highlights). When Cocut finds only a few people in a frame, it looks again at each half of the picture, where players are nearly twice the size to it. On a Hudl highlight it was finding about 2 of the 10 players a frame and lost the athlete after 3 seconds. Clips are followed again the next time you export.
 

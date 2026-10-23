@@ -7,6 +7,7 @@ struct PlayerCardEditor: View {
     @State private var previewKind: CardKind = .intro
     /// Which reel shape the preview shows; starts on the export's shape.
     @State private var previewShape: ReelShape?
+    @State private var positioningPhoto = false
 
     private var store: ProfileStore { model.profile }
 
@@ -16,6 +17,9 @@ struct PlayerCardEditor: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     headshotSection
+                        .sheet(isPresented: $positioningPhoto) {
+                            PhotoPositioner(store: store)
+                        }
                     section("Player") {
                         row {
                             field("First name", $store.profile.firstName)
@@ -182,9 +186,7 @@ struct PlayerCardEditor: View {
         HStack(spacing: 16) {
             ZStack {
                 if let image = store.headshot {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFill()
+                    PositionedPhoto(image: image, x: store.profile.photoX, y: store.profile.photoY, zoom: store.profile.photoZoom)
                 } else {
                     Rectangle().fill(.quaternary)
                     Image(systemName: "person.crop.square")
@@ -210,6 +212,8 @@ struct PlayerCardEditor: View {
                 HStack {
                     Button("Choose Photo…") { choosePhoto() }
                     if store.headshot != nil {
+                        Button("Position…") { positioningPhoto = true }
+                            .help("Move and zoom the photo so it sits well in the cards")
                         Button("Remove", role: .destructive) { store.removeHeadshot() }
                             .buttonStyle(.borderless)
                     }
@@ -318,4 +322,70 @@ struct PlayerCardEditor: View {
             store.setHeadshot(from: url)
         }
     }
+}
+
+/// Move and zoom the headshot: drag it, use the slider (or scroll), and watch the card update.
+struct PhotoPositioner: View {
+    @Bindable var store: ProfileStore
+    @Environment(\.dismiss) private var dismiss
+    /// Where the drag started (the photo's point then).
+    @State private var dragStart: (x: Double, y: Double)?
+
+    private let frame = CGSize(width: 320, height: 400)
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Position the Photo").font(.title3.weight(.semibold))
+            Text("Drag the photo to choose what's in the middle. Zoom in to fill more of the frame with the athlete.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            if let image = store.headshot {
+                ZStack {
+                    PositionedPhoto(image: image, x: store.profile.photoX, y: store.profile.photoY, zoom: store.profile.photoZoom)
+                    // Where round photos (some card styles) cut it off.
+                    Circle()
+                        .stroke(.white.opacity(0.7), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                        .frame(width: frame.width, height: frame.width)
+                        .allowsHitTesting(false)
+                }
+                .frame(width: frame.width, height: frame.height)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .contentShape(Rectangle())
+                .gesture(DragGesture().onChanged { value in
+                    let start = dragStart ?? (store.profile.photoX, store.profile.photoY)
+                    if dragStart == nil { dragStart = start }
+                    let placed = PositionedPhoto.placement(image: image.size, frame: frame, x: start.x, y: start.y,
+                                                           zoom: store.profile.photoZoom)
+                    // Dragging the photo right brings what's to its left into the middle.
+                    store.profile.photoX = clamp(start.x - value.translation.width / placed.width)
+                    store.profile.photoY = clamp(start.y - value.translation.height / placed.height)
+                }.onEnded { _ in dragStart = nil })
+                .help("Drag to move the photo")
+
+                HStack {
+                    Image(systemName: "minus.magnifyingglass").foregroundStyle(.secondary)
+                    Slider(value: $store.profile.photoZoom, in: 1...3)
+                    Image(systemName: "plus.magnifyingglass").foregroundStyle(.secondary)
+                }
+                .frame(width: frame.width)
+            }
+            HStack {
+                Button("Reset") {
+                    store.profile.photoX = 0.5
+                    store.profile.photoY = 0.5
+                    store.profile.photoZoom = 1
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .frame(width: frame.width)
+        }
+        .padding(24)
+    }
+
+    private func clamp(_ v: Double) -> Double { min(1, max(0, v)) }
 }

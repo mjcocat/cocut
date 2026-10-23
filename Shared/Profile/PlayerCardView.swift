@@ -245,10 +245,7 @@ struct PlayerCardView: View {
     @ViewBuilder
     private func photoContent(fontSize: CGFloat) -> some View {
         if let headshot {
-            Image(platformImage: headshot)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFill()
+            PositionedPhoto(image: headshot, x: profile.photoX, y: profile.photoY, zoom: profile.photoZoom)
         } else {
             ZStack {
                 LinearGradient(colors: [accent.opacity(0.6), accent.opacity(0.25)], startPoint: .top, endPoint: .bottom)
@@ -908,5 +905,36 @@ extension PlayerCardView {
         renderer.scale = pixelSize.width / canvas.width
         renderer.isOpaque = true
         return renderer.cgImage
+    }
+}
+
+/// A photo filling its frame, centered on the point the user chose (`x`, `y`: fractions of the
+/// photo, top-left origin) and zoomed in by `zoom`, without ever leaving a gap at an edge.
+struct PositionedPhoto: View {
+    let image: PlatformImage
+    var x = 0.5
+    var y = 0.5
+    var zoom = 1.0
+
+    var body: some View {
+        GeometryReader { geo in
+            let placed = Self.placement(image: image.size, frame: geo.size, x: x, y: y, zoom: zoom)
+            Image(platformImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: placed.width, height: placed.height)
+                .offset(x: placed.minX, y: placed.minY)
+        }
+        .clipped()
+    }
+
+    /// Where the photo goes in `frame` (its size and top-left corner).
+    static func placement(image: CGSize, frame: CGSize, x: Double, y: Double, zoom: Double) -> CGRect {
+        guard image.width > 0, image.height > 0 else { return CGRect(origin: .zero, size: frame) }
+        let scale = max(frame.width / image.width, frame.height / image.height) * max(1, zoom)
+        let w = image.width * scale, h = image.height * scale
+        let left = min(0, max(frame.width - w, frame.width / 2 - x * w))
+        let top = min(0, max(frame.height - h, frame.height / 2 - y * h))
+        return CGRect(x: left, y: top, width: w, height: h)
     }
 }
