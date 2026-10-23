@@ -24,6 +24,8 @@ struct PhoneFrameEditor: View {
     /// Following the spotlighted player, for Automatic.
     @State private var followPath: CameraPath?
     @State private var following = false
+    /// How far following has got (0...1), while it runs.
+    @State private var followProgress: Double = 0
     @State private var drag: DragState?
     @State private var scrubbing = false
     /// Clicks on the player's head, where following them starts over.
@@ -251,10 +253,12 @@ struct PhoneFrameEditor: View {
     private func follow() async {
         guard canFollow else { followPath = nil; return }
         following = true
+        followProgress = 0
         let path = await ReelExporter.followPath(
             clip: clip, url: url, spot: clip.spotlight, marks: marks, renderSize: shape.phoneSize,
             number: Int(model.profile.profile.featuredNumber.trimmingCharacters(in: .whitespaces)),
-            cacheDirectory: library.rootDirectory.appending(path: "Framing", directoryHint: .isDirectory))
+            cacheDirectory: library.rootDirectory.appending(path: "Framing", directoryHint: .isDirectory),
+            progress: { p in Task { @MainActor in followProgress = p } })
         // A newer run (the shape changed) takes over.
         guard !Task.isCancelled else { return }
         followPath = path
@@ -359,7 +363,12 @@ struct PhoneFrameEditor: View {
 
     private var hint: String {
         if marking { return "Click your player's head. Following starts over from there." }
-        if following { return "Following the player…" }
+        if following {
+            return "Following the player… \(Int((followProgress * 100).rounded()))% (only the first time; the frame moves when it's done)"
+        }
+        if canFollow, framing == .automatic, model.profile.profile.featuredNumber.trimmingCharacters(in: .whitespaces).isEmpty {
+            return "Tip: put your player's number on the Player Card. It helps tell them from teammates."
+        }
         if showsWhole { return "Whole picture: drag to frame it instead" }
         if playing { return "Drag while it plays to steer the frame" }
         return "Drag the frame, or click where it should look"
@@ -533,19 +542,9 @@ struct PhoneFrameEditor: View {
 
     private var controls: some View {
         HStack(spacing: 14) {
-            Toggle(isOn: $marking) {
-                Label("Click Head", systemImage: "person.crop.circle.badge.plus")
-            }
-            .toggleStyle(.button)
-            .help("Turn on, then click your player's head in the picture. Following starts over on them from that moment: do it at the start, and wherever the frame loses them.")
-
-            if markAtPlayhead != nil {
-                Button("Remove Click", systemImage: "person.crop.circle.badge.minus", action: removeMark)
-                    .help("Remove the head click at the playhead")
-            } else if !marks.isEmpty {
-                Text("\(marks.count) head \(marks.count == 1 ? "click" : "clicks")")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+            if !marks.isEmpty {
+                Button("Clear Head Clicks", action: { marks = [] })
+                    .help("Remove the head clicks made in an earlier version; following then starts from the spotlight alone")
             }
 
             Picker("Framing", selection: Binding(

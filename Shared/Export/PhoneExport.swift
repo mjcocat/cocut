@@ -113,11 +113,11 @@ extension ReelExporter {
     /// The frame following the player from the spotlight and any clicks on their head (tracked
     /// once, then remembered in the project); a still frame on them if tracking fails.
     static func followPath(clip: Clip, url: URL, spot: Spotlight?, marks: [PlayerMark], renderSize: CGSize, number: Int?,
-                           cacheDirectory: URL) async -> CameraPath {
+                           cacheDirectory: URL, progress: (@Sendable (Double) -> Void)? = nil) async -> CameraPath {
         // Without tracking: where the spotlight is, or a little below the first head clicked.
         let fallback = spot.map { ($0.x, $0.y) } ?? marks.first.map { ($0.x, min(1, $0.y + 0.12)) } ?? (0.5, 0.5)
         guard let tracked = await trackedPlayer(clip: clip, url: url, spot: spot, marks: marks, number: number,
-                                                cacheDirectory: cacheDirectory) else {
+                                                cacheDirectory: cacheDirectory, progress: progress) else {
             return .fixed(x: fallback.0, y: fallback.1)
         }
         let window = CameraPlanner.window(picture: (Double(tracked.width), Double(tracked.height)),
@@ -140,7 +140,7 @@ extension ReelExporter {
 
     /// Where the spotlighted player is through the clip, from the project's cache or tracked now.
     private static func trackedPlayer(clip: Clip, url: URL, spot: Spotlight?, marks: [PlayerMark], number: Int?,
-                                      cacheDirectory: URL) async -> TrackedPlayer? {
+                                      cacheDirectory: URL, progress: (@Sendable (Double) -> Void)? = nil) async -> TrackedPlayer? {
         let crop = clip.unitCrop
         let key = ([clip.trimStartSeconds, clip.trimEndSeconds, spot?.x ?? -1, spot?.y ?? -1, spot?.radius ?? -1,
                     Double(crop?.minX ?? 0), Double(crop?.minY ?? 0), Double(crop?.width ?? 1), Double(crop?.height ?? 1)]
@@ -159,7 +159,8 @@ extension ReelExporter {
             let upright = CGRect(origin: .zero, size: natural).applying(preferred).size
             let cropFraction = crop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
             let sightings = try await PlayerTracker.follow(url: url, start: clip.trimStartSeconds, end: clip.trimEndSeconds,
-                                                           unitCrop: crop, spot: spot, marks: marks, number: number)
+                                                           unitCrop: crop, spot: spot, marks: marks, number: number,
+                                                           progress: progress)
             let tracked = TrackedPlayer(key: key, width: abs(upright.width) * cropFraction.width,
                                         height: abs(upright.height) * cropFraction.height, sightings: sightings)
             try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)

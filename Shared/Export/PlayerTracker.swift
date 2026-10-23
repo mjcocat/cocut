@@ -20,10 +20,12 @@ enum PlayerTracker {
     /// placed on: the upright frame, cropped to `unitCrop` (fractions of it) when the clip has one.
     /// `number` is the jersey number they're expected to wear (from the player card), if known.
     static func follow(url: URL, start: Double, end: Double, unitCrop: CGRect?, spot: Spotlight?,
-                       marks: [PlayerMark] = [], number: Int?) async throws -> [CameraPlanner.Sighting] {
+                       marks: [PlayerMark] = [], number: Int?,
+                       progress: (@Sendable (Double) -> Void)? = nil) async throws -> [CameraPlanner.Sighting] {
         let clicks = marks.filter { $0.time >= start - 0.2 && $0.time <= end }
         guard spot != nil || !clicks.isEmpty else { return [] }
-        guard let found = try await detect(url: url, start: start, end: end, unitCrop: unitCrop) else { return [] }
+        guard let found = try await detect(url: url, start: start, end: end, unitCrop: unitCrop,
+                                           progress: progress) else { return [] }
         let anchors = Self.anchors(spot: spot, marks: clicks, start: start, unitCrop: unitCrop)
         let path = PlayerChain.follow(found.frames, anchors: anchors, number: number, aspect: found.aspect)
         record(url: url, detections: found, anchors: anchors, number: number, path: path)
@@ -72,7 +74,7 @@ enum PlayerTracker {
     /// Find Rallies finds them) and, every fourth frame, the numbers read on them. Nil when the
     /// clip has no readable video.
     static func detect(url: URL, start: Double, end: Double, unitCrop: CGRect?,
-                       progress: ((Double) -> Void)? = nil) async throws -> Detections? {
+                       progress: (@Sendable (Double) -> Void)? = nil) async throws -> Detections? {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
         let natural = try await track.load(.naturalSize)

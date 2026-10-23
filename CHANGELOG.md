@@ -3,6 +3,11 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.44.3
+- Phone Frame editor: while Cocut follows the player for the first time it shows how far along it is ("Following the player… 40%"); the frame starts moving when it's done. Before, it looked like it wasn't trying.
+- Click Head is gone: the spotlight alone is enough now. (Head clicks from before can be cleared with Clear Head Clicks.)
+- A tip when the Player Card has no jersey number: the number helps tell your player from teammates.
+
 ## 0.44.2
 - Cocut Lab's splash stays up for a moment (at least a second and a half) and fades out, like Cocut's.
 
