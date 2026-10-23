@@ -616,72 +616,16 @@ enum ReelComposer {
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(options.frameRate))
-        // Drawn over the video by Core Animation, which only works when exporting.
-        let overlays = (options.showClipNames || options.madeWithCocut) && !forPlayback
-
-        if options.shape.isPhone {
-            videoComposition.customVideoCompositorClass = PhoneCompositor.self
-            videoComposition.instructions = phoneInstructions(loaded: loaded, starts: starts, overlaps: overlaps,
-                                                              tracks: videoTracks.map(\.trackID), total: composition.duration,
-                                                              postProcessing: overlays)
-        } else {
-        // Video instructions: a solo stretch for each piece, then a blend into the next.
-        var instructions: [AVMutableVideoCompositionInstruction] = []
-        func layer(_ i: Int, at start: Double) -> AVMutableVideoCompositionLayerInstruction {
-            let li = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTracks[i % 2])
-            li.setTransform(loaded[i].transform, at: time(start))
-            if let crop = loaded[i].crop {
-                li.setCropRectangle(crop, at: time(start))
-            }
-            // Cards and spotlight stills are drawn at the reel's size, so AVFoundation passes their
-            // frames through untouched, and with an overlay (the mark, captions) those frames came
-            // out white. A hair under full opacity makes it compose them like every other frame.
-            if overlays { li.setOpacity(0.999, at: time(start)) }
-            return li
-        }
-        func instruction(_ from: Double, _ to: Double, _ layers: [AVMutableVideoCompositionLayerInstruction]) {
-            guard to - from > 0.0005 else { return }
-            let ins = AVMutableVideoCompositionInstruction()
-            ins.timeRange = CMTimeRange(start: time(from), end: time(to))
-            ins.layerInstructions = layers
-            ins.backgroundColor = CGColor(gray: 0, alpha: 1)
-            instructions.append(ins)
-        }
-        for i in 0..<n {
-            let soloStart = starts[i] + (i > 0 ? overlaps[i - 1] : 0)
-            let soloEnd = starts[i] + loaded[i].length - (i < n - 1 ? overlaps[i] : 0)
-            instruction(soloStart, soloEnd, [layer(i, at: soloStart)])
-            if i < n - 1, overlaps[i] > 0 {
-                let from = soloEnd, to = soloEnd + overlaps[i]
-                let outgoing = layer(i, at: from)
-                outgoing.setOpacityRamp(fromStartOpacity: 1, toEndOpacity: 0,
-                                        timeRange: CMTimeRange(start: time(from), end: time(to)))
-                instruction(from, to, [outgoing, layer(i + 1, at: from)])
-            }
-        }
-        guard !instructions.isEmpty else { throw ExportError.composition("Nothing to show.") }
-        // Make the instructions tile the timeline exactly (rounding to the 1/600s grid can leave slivers).
-        for k in instructions.indices.dropFirst() {
-            let prevEnd = instructions[k - 1].timeRange.end
-            let cur = instructions[k].timeRange
-            instructions[k].timeRange = CMTimeRange(start: prevEnd, end: cur.end)
-        }
-        if let first = instructions.first {
-            first.timeRange = CMTimeRange(start: .zero, end: first.timeRange.end)
-        }
-        if let last = instructions.last {
-            last.timeRange = CMTimeRange(start: last.timeRange.start, end: composition.duration)
-        }
-
-        videoComposition.instructions = instructions
-        }
-
-        if overlays {
-            videoComposition.animationTool = overlayTool(loaded: loaded, starts: starts, overlaps: overlaps,
-                                                         renderSize: renderSize, accent: accent,
-                                                         captions: options.showClipNames, mark: options.madeWithCocut,
-                                                         phone: options.shape.isPhone)
-        }
+        // The preview draws captions itself (from `pieces`) and leaves the mark out.
+        let overlays = forPlayback ? [] : overlayPictures(loaded: loaded, starts: starts, overlaps: overlaps,
+                                                          renderSize: renderSize, accent: accent,
+                                                          captions: options.showClipNames, mark: options.madeWithCocut,
+                                                          phone: options.shape.isPhone)
+        videoComposition.customVideoCompositorClass = PhoneCompositor.self
+        videoComposition.instructions = instructions(loaded: loaded, starts: starts, overlaps: overlaps,
+                                                     tracks: videoTracks.map(\.trackID), total: composition.duration,
+                                                     wide: !options.shape.isPhone, overlays: overlays)
+        guard !videoComposition.instructions.isEmpty else { throw ExportError.composition("Nothing to show.") }
 
         // Audio: duck each clip out/in across crossfades.
         var audioMix: AVMutableAudioMix?
@@ -713,19 +657,21 @@ enum ReelComposer {
         return Built(composition: composition, videoComposition: videoComposition, audioMix: audioMix, pieces: pieces)
     }
 
-    /// The phone compositor's instructions: like the widescreen ones, a solo stretch per piece and
-    /// a blend into the next, tiling the timeline exactly.
-    private static func phoneInstructions(loaded: [Loaded], starts: [Double], overlaps: [Double],
-                                          tracks: [CMPersistentTrackID], total: CMTime,
-                                          postProcessing: Bool) -> [PhoneInstruction] {
+    /// The compositor's instructions: a solo stretch per piece and a blend into the next, tiling
+    /// the timeline exactly. `wide`: widescreen pieces placed by their crop and transform.
+    private static func instructions(loaded: [Loaded], starts: [Double], overlaps: [Double],
+                                     tracks: [CMPersistentTrackID], total: CMTime,
+                                     wide: Bool, overlays: [ReelOverlay]) -> [PhoneInstruction] {
         let timescale: CMTimeScale = 600
         func time(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: timescale) }
         func layer(_ i: Int) -> PhoneLayer {
             let item = loaded[i]
             let framing = item.segment.framing ?? (item.segment.isCard ? .whole : .window(.fixed(x: 0.5, y: 0.5)))
-            return PhoneLayer(trackID: tracks[i % 2], orientation: item.orientation, picture: item.crop,
-                              pathSpace: item.segment.crop, framing: framing, timelineStart: starts[i],
-                              sourceStart: item.source.start.seconds, fadeOut: nil)
+            var layer = PhoneLayer(trackID: tracks[i % 2], orientation: item.orientation, picture: item.crop,
+                                   pathSpace: item.segment.crop, framing: framing, timelineStart: starts[i],
+                                   sourceStart: item.source.start.seconds, fadeOut: nil)
+            if wide { layer.wide = (item.transform, item.crop) }
+            return layer
         }
         var spans: [(from: Double, to: Double, layers: [PhoneLayer])] = []
         let n = loaded.count
@@ -745,7 +691,7 @@ enum ReelComposer {
             ranges[0] = CMTimeRange(start: .zero, end: ranges[0].end)
             ranges[ranges.count - 1] = CMTimeRange(start: ranges[ranges.count - 1].start, end: total)
         }
-        return zip(ranges, spans).map { PhoneInstruction(timeRange: $0, layers: $1.layers, postProcessing: postProcessing) }
+        return zip(ranges, spans).map { PhoneInstruction(timeRange: $0, layers: $1.layers, overlays: overlays) }
     }
 
     /// Scales a source to fit the frame (letterboxed), honoring its rotation.
@@ -833,96 +779,63 @@ enum ReelComposer {
     }
 
     /// What's drawn over the video when exporting: lower-third captions with each clip's name
-    /// (faded in and out near the start of the clip), and the "Made with Cocut" mark on every clip.
-    private static func overlayTool(loaded: [Loaded], starts: [Double], overlaps: [Double],
-                                    renderSize: CGSize, accent: CGColor, captions: Bool, mark: Bool,
-                                    phone: Bool) -> AVVideoCompositionCoreAnimationTool {
+    /// (faded in and out near the start of the clip), and the Cocut logo on every clip.
+    private static func overlayPictures(loaded: [Loaded], starts: [Double], overlaps: [Double],
+                                        renderSize: CGSize, accent: CGColor, captions: Bool, mark: Bool,
+                                        phone: Bool) -> [ReelOverlay] {
         let scale = min(renderSize.width, renderSize.height) / 1080
-        let parent = CALayer()
-        parent.frame = CGRect(origin: .zero, size: renderSize)
-        let video = CALayer()
-        video.frame = parent.frame
-        parent.addSublayer(video)
+        var overlays: [ReelOverlay] = []
 
+        // The logo: bottom right, or bottom center in phone shapes (the right edge is covered by
+        // the social app's buttons), while each clip is on screen, fading with it across transitions.
         if mark, let picture = madeWithCocutImage(scale: scale, logo: cocutLogo()) {
+            let width = CGFloat(picture.width)
+            let margin = 36 * scale
+            let origin = CGPoint(x: (phone ? (renderSize.width - width) / 2 : renderSize.width - margin - width).rounded(),
+                                 y: (phone ? renderSize.height * 0.035 : margin).rounded())
             for (i, item) in loaded.enumerated() where !item.segment.isCard {
-                // While the clip is on screen, fading with it across transitions.
                 let from = starts[i] + (i > 0 ? overlaps[i - 1] : 0) / 2
                 let to = starts[i] + item.length - (i < loaded.count - 1 ? overlaps[i] : 0) / 2
                 guard to - from > 0.2 else { continue }
-                let layer = madeWithCocutLayer(renderSize: renderSize, scale: scale, phone: phone, mark: picture)
                 let edge = min(0.25, (to - from) / 4) / (to - from)
-                let fade = CAKeyframeAnimation(keyPath: "opacity")
-                fade.values = [0, 1, 1, 0]
-                fade.keyTimes = [0, NSNumber(value: edge), NSNumber(value: 1 - edge), 1]
-                fade.beginTime = AVCoreAnimationBeginTimeAtZero + from
-                fade.duration = to - from
-                fade.isRemovedOnCompletion = false
-                fade.fillMode = .both
-                layer.add(fade, forKey: "fade")
-                parent.addSublayer(layer)
+                overlays.append(ReelOverlay(image: picture, origin: origin, start: from, end: to, fadeIn: edge, fadeOut: edge))
             }
         }
 
         for (i, item) in loaded.enumerated() where captions && !item.segment.isCard {
-            guard let title = item.segment.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty else { continue }
+            guard let title = item.segment.title?.trimmingCharacters(in: .whitespaces), !title.isEmpty,
+                  let picture = captionImage(title, accent: accent, scale: scale, maxWidth: renderSize.width * 0.8) else { continue }
             let timing = captionTiming(visibleStart: starts[i] + (i > 0 ? overlaps[i - 1] : 0),
                                        duration: item.segment.duration)
-            let visibleStart = timing.start, visibleFor = timing.duration
-
-            let font = PlatformFont.systemFont(ofSize: 40 * scale, weight: .bold)
-            let textSize = (title as NSString).size(withAttributes: [.font: font])
-            let padX = 28 * scale, barW = 8 * scale
-            let height = 76 * scale
-            let width = min(renderSize.width * 0.8, textSize.width + padX * 2 + barW)
-
-            let box = CALayer()
-            box.frame = CGRect(x: 60 * scale, y: 70 * scale, width: width, height: height)
-            box.backgroundColor = CGColor(gray: 0, alpha: 0.62)
-            box.cornerRadius = 14 * scale
-            box.masksToBounds = true
-            box.opacity = 0
-
-            let bar = CALayer()
-            bar.frame = CGRect(x: 0, y: 0, width: barW, height: height)
-            bar.backgroundColor = accent
-            box.addSublayer(bar)
-
-            // The words as a picture: text layers don't render when exporting through the overlay tool.
-            let textFrame = CGRect(x: barW + padX, y: 0, width: width - barW - padX * 2, height: height)
-            if let words = textImage(title, size: 40 * scale, in: textFrame.size) {
-                let text = CALayer()
-                text.frame = textFrame
-                text.contents = words
-                box.addSublayer(text)
-            }
-
-            let fade = CAKeyframeAnimation(keyPath: "opacity")
-            fade.values = [0, 1, 1, 0]
-            fade.keyTimes = [0, 0.12, 0.85, 1]
-            fade.beginTime = AVCoreAnimationBeginTimeAtZero + visibleStart
-            fade.duration = visibleFor
-            fade.isRemovedOnCompletion = false
-            fade.fillMode = .both
-            box.add(fade, forKey: "fade")
-
-            parent.addSublayer(box)
+            overlays.append(ReelOverlay(image: picture, origin: CGPoint(x: 60 * scale, y: 70 * scale),
+                                        start: timing.start, end: timing.start + timing.duration, fadeIn: 0.12, fadeOut: 0.15))
         }
-        return AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: video, in: parent)
+        return overlays
     }
 
-    /// The mark over clips: the Cocut logo, faint, bottom right (bottom center in phone
-    /// shapes, where the right edge is covered by the social app's buttons).
-    private static func madeWithCocutLayer(renderSize: CGSize, scale: CGFloat, phone: Bool, mark: CGImage) -> CALayer {
-        let width = CGFloat(mark.width), height = CGFloat(mark.height)
-        let margin = 36 * scale
-        let x = phone ? (renderSize.width - width) / 2 : renderSize.width - margin - width
-        let y = phone ? renderSize.height * 0.035 : margin
-        let box = CALayer()
-        box.frame = CGRect(x: x.rounded(), y: y.rounded(), width: width, height: height)
-        box.contents = mark
-        box.opacity = 0
-        return box
+    /// A clip-name caption: the name in bold white on a dark rounded box with a bar in the team color.
+    private static func captionImage(_ title: String, accent: CGColor, scale: CGFloat, maxWidth: CGFloat) -> CGImage? {
+        let font = PlatformFont.systemFont(ofSize: 40 * scale, weight: .bold)
+        let textSize = (title as NSString).size(withAttributes: [.font: font])
+        let padX = 28 * scale, barW = 8 * scale
+        let height = (76 * scale).rounded()
+        let width = min(maxWidth, textSize.width + padX * 2 + barW).rounded(.up)
+        guard width >= 1, height >= 1,
+              let context = CGContext(data: nil, width: Int(width), height: Int(height), bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let box = CGRect(x: 0, y: 0, width: width, height: height)
+        context.addPath(CGPath(roundedRect: box, cornerWidth: 14 * scale, cornerHeight: 14 * scale, transform: nil))
+        context.clip()
+        context.setFillColor(CGColor(gray: 0, alpha: 0.62))
+        context.fill(box)
+        context.setFillColor(accent)
+        context.fill(CGRect(x: 0, y: 0, width: barW, height: height))
+        let textFrame = CGRect(x: barW + padX, y: 0, width: width - barW - padX * 2, height: height)
+        if let words = textImage(title, size: 40 * scale, in: textFrame.size) {
+            context.draw(words, in: CGRect(origin: textFrame.origin, size: CGSize(width: words.width, height: words.height)))
+        }
+        return context.makeImage()
     }
 
     /// One line of bold white text, vertically centered in `size` and cut short with "…" if it's too long.

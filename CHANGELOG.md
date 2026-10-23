@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.48.5
+- Fixed: phone exports came out completely white (and widescreen ones white during the cards) whenever the Cocut logo or clip names were on. Cocut now draws every frame of the reel itself, logo and captions included, instead of using macOS's overlay tool, which was blanking the picture.
+
 ## 0.48.4
 - The mark over the clips is the full Cocut logo (layers and the CoCut wordmark) on a clear background, instead of the app icon's dark square. The end card's "Made with Cocut" line uses the clear layers icon too.
 

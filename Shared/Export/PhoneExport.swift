@@ -226,6 +226,10 @@ struct PhoneLayer: @unchecked Sendable {
     let sourceStart: Double
     /// Fading out (a crossfade into the next piece): from and to on the reel.
     var fadeOut: (start: Double, end: Double)?
+    /// Widescreen reels: the stored frame's crop (natural pixels, top-left origin) and the
+    /// transform onto the reel (top-left origin), as AVFoundation layer instructions take them.
+    /// When set, `orientation`, `picture` and `framing` aren't used.
+    var wide: (transform: CGAffineTransform, crop: CGRect?)? = nil
 
     func opacity(at time: Double) -> CGFloat {
         guard let fadeOut, fadeOut.end > fadeOut.start else { return 1 }
@@ -237,22 +241,44 @@ struct PhoneLayer: @unchecked Sendable {
 /// A stretch of the reel and the pieces in it (bottom first).
 final class PhoneInstruction: NSObject, AVVideoCompositionInstructionProtocol, @unchecked Sendable {
     let timeRange: CMTimeRange
-    let enablePostProcessing: Bool
+    let enablePostProcessing = false
     let containsTweening = true
     let requiredSourceTrackIDs: [NSValue]?
     let passthroughTrackID = kCMPersistentTrackID_Invalid
     let layers: [PhoneLayer]
+    /// Pictures drawn over the video (the mark, clip-name captions), each when it's due.
+    let overlays: [ReelOverlay]
 
-    init(timeRange: CMTimeRange, layers: [PhoneLayer], postProcessing: Bool) {
+    init(timeRange: CMTimeRange, layers: [PhoneLayer], overlays: [ReelOverlay] = []) {
         self.timeRange = timeRange
         self.layers = layers
-        enablePostProcessing = postProcessing
+        self.overlays = overlays.filter { $0.end > timeRange.start.seconds && $0.start < timeRange.end.seconds }
         requiredSourceTrackIDs = Array(Set(layers.map(\.trackID))).map { NSNumber(value: $0) }
     }
 }
 
-/// Draws phone-shaped reel frames with Core Image: each clip through its moving window (or the
-/// whole picture on a blurred fill), crossfades between them.
+/// A picture over the reel (render pixels, bottom-left origin) from `start` to `end`, fading in
+/// over the first `fadeIn` and out over the last `fadeOut` (fractions of its time).
+struct ReelOverlay: @unchecked Sendable {
+    let image: CGImage
+    let origin: CGPoint
+    let start: Double
+    let end: Double
+    var fadeIn = 0.1
+    var fadeOut = 0.1
+
+    func opacity(at time: Double) -> CGFloat {
+        guard end > start, time >= start, time <= end else { return 0 }
+        let p = (time - start) / (end - start)
+        if fadeIn > 0, p < fadeIn { return CGFloat(p / fadeIn) }
+        if fadeOut > 0, p > 1 - fadeOut { return CGFloat((1 - p) / fadeOut) }
+        return 1
+    }
+}
+
+/// Draws every reel frame with Core Image: phone shapes through each clip's moving window (or the
+/// whole picture on a blurred fill), widescreen with each piece's crop and transform, crossfades
+/// between them, then the overlays. (AVFoundation's own overlay tool turned frames white.)
 final class PhoneCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     private let context = CIContext(options: [.cacheIntermediates: false])
     private let queue = DispatchQueue(label: "Cocut.PhoneCompositor", qos: .userInitiated)
@@ -281,12 +307,19 @@ final class PhoneCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             var image = CIImage(color: .black).cropped(to: bounds)
             for layer in instruction.layers {
                 guard let source = request.sourceFrame(byTrackID: layer.trackID) else { continue }
-                var frame = PhoneFrame.draw(layer, source: source, time: time, size: size)
+                var frame = layer.wide.map { PhoneFrame.drawWide(source: source, transform: $0.transform, crop: $0.crop, size: size) }
+                    ?? PhoneFrame.draw(layer, source: source, time: time, size: size)
                 let alpha = layer.opacity(at: time)
-                if alpha < 1 {
-                    frame = frame.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: alpha)])
-                }
+                if alpha < 1 { frame = Self.faded(frame, alpha) }
                 image = frame.composited(over: image)
+            }
+            for overlay in instruction.overlays {
+                let alpha = overlay.opacity(at: time)
+                guard alpha > 0.001 else { continue }
+                var picture = CIImage(cgImage: overlay.image)
+                    .transformed(by: CGAffineTransform(translationX: overlay.origin.x, y: overlay.origin.y))
+                if alpha < 1 { picture = Self.faded(picture, alpha) }
+                image = picture.composited(over: image)
             }
             context.render(image.cropped(to: bounds), to: output, bounds: bounds, colorSpace: colorSpace)
             request.finish(withComposedVideoFrame: output)
@@ -294,10 +327,28 @@ final class PhoneCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     }
 
     func cancelAllPendingVideoCompositionRequests() {}
+
+    private static func faded(_ image: CIImage, _ alpha: CGFloat) -> CIImage {
+        image.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: alpha)])
+    }
 }
 
 /// One source frame turned into a phone-shaped picture.
 enum PhoneFrame {
+    /// A widescreen piece: its crop, then its transform, both in AVFoundation's top-left
+    /// coordinates (stored pixels in, reel pixels out), turned into Core Image's bottom-left ones.
+    static func drawWide(source: CVPixelBuffer, transform: CGAffineTransform, crop: CGRect?, size: CGSize) -> CIImage {
+        var image = CIImage(cvPixelBuffer: source)
+        image = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+        let height = image.extent.height
+        if let crop {
+            image = image.cropped(to: CGRect(x: crop.minX, y: height - crop.maxY, width: crop.width, height: crop.height))
+        }
+        let flipIn = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: height)
+        let flipOut = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: size.height)
+        return image.transformed(by: flipIn.concatenating(transform).concatenating(flipOut))
+    }
+
     static func draw(_ layer: PhoneLayer, source: CVPixelBuffer, time: Double, size: CGSize) -> CIImage {
         var image = CIImage(cvPixelBuffer: source)
         if layer.orientation != .up { image = image.oriented(layer.orientation) }
