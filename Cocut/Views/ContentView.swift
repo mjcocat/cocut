@@ -71,78 +71,16 @@ struct ContentView: View {
             // to Find Rallies, clips straight into Clips. Recording is also
             // in the menu bar, Find Rallies in the Window menu (⇧⌘M) and Preview in Export (⌘Y).
             ToolbarItemGroup(placement: .primaryAction) {
-                Menu {
-                    Menu {
-                        Button {
-                            startFilm(.fullMatch, model: model, openWindow: openWindow)
-                        } label: {
-                            Label("From Your Mac…", systemImage: "internaldrive")
-                        }
-                        Button {
-                            model.importKind = .match
-                            openWindow(id: "youtube")
-                        } label: {
-                            Label("From YouTube or Hudl…", systemImage: FilmSource.youtube.icon)
-                        }
-                        Divider()
-                        Button {
-                            openWindow(id: "rallies")
-                        } label: {
-                            Label("Matches You've Analyzed…   ⇧⌘M", systemImage: "clock.arrow.circlepath")
-                        }
-                    } label: {
-                        Label("Full Match", systemImage: FilmSource.fullMatch.icon)
-                    }
-                    Menu {
-                        Button {
-                            startFilm(.clips, model: model, openWindow: openWindow)
-                        } label: {
-                            Label("From Your Mac…", systemImage: "internaldrive")
-                        }
-                        .disabled(model.isBusy)
-                        Button {
-                            model.importKind = .clip
-                            openWindow(id: "youtube")
-                        } label: {
-                            Label("From YouTube or Hudl…", systemImage: FilmSource.youtube.icon)
-                        }
-                    } label: {
-                        Label("Clips Only", systemImage: FilmSource.clips.icon)
-                    }
-                    Menu {
-                        Button {
-                            Task { await model.recordNewRegion() }
-                        } label: {
-                            Label("Drag Over a Region   ⇧⌘R", systemImage: "rectangle.dashed")
-                        }
-                        Button {
-                            Task { await model.recordFullScreen() }
-                        } label: {
-                            Label("Full Screen   ⇧⌘F", systemImage: "rectangle.dashed.badge.record")
-                        }
-                        Button {
-                            Task { await model.recordLastRegion() }
-                        } label: {
-                            Label("Same Region Again   ⇧⌘L", systemImage: "arrow.clockwise.circle")
-                        }
-                        .disabled(!model.canRecordLastRegion)
-                    } label: {
-                        Label("Record Your Screen", systemImage: FilmSource.online.icon)
-                    }
-                    .disabled(model.isBusy)
-                    Divider()
-                    Button {
-                        model.showingAddFromProjects = true
-                    } label: {
-                        Label("From Other Projects…", systemImage: "square.stack.3d.up")
-                    }
+                // A button rather than a SwiftUI Menu: the toolbar draws menus grey whatever their
+                // style, and this is the window's main action, so it's filled in the Cocut blue.
+                // Clicking it opens the menu (`showAddMenu`).
+                Button {
+                    showAddMenu()
                 } label: {
                     Label("Add Videos", systemImage: "plus")
                 }
                 .labelStyle(.titleAndIcon)
-                // Filled in the Cocut blue: the window's main action, where more film comes in.
-                .menuStyle(.button)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .tint(.accentColor)
                 .fixedSize()
                 .help("Add film: a full match, a YouTube or Hudl video, clips on your Mac, a screen recording, or clips from other projects")
@@ -189,6 +127,40 @@ struct ContentView: View {
             model.requestedSection = nil
         }
     }
+
+    /// The Add Videos menu, under the pointer: the same four ways in as Get Started, plus clips
+    /// from other projects.
+    private func showAddMenu() {
+        let menu = ActionMenu()
+        let match = menu.submenu("Full Match", icon: FilmSource.fullMatch.icon)
+        menu.item("From Your Mac…", icon: "internaldrive", in: match) { startFilm(.fullMatch, model: model, openWindow: openWindow) }
+        menu.item("From YouTube or Hudl…", icon: FilmSource.youtube.icon, in: match) {
+            model.importKind = .match
+            openWindow(id: "youtube")
+        }
+        match.addItem(.separator())
+        menu.item("Matches You've Analyzed…   ⇧⌘M", icon: "clock.arrow.circlepath", in: match) { openWindow(id: "rallies") }
+
+        let clips = menu.submenu("Clips Only", icon: FilmSource.clips.icon)
+        menu.item("From Your Mac…", icon: "internaldrive", enabled: !model.isBusy, in: clips) {
+            startFilm(.clips, model: model, openWindow: openWindow)
+        }
+        menu.item("From YouTube or Hudl…", icon: FilmSource.youtube.icon, in: clips) {
+            model.importKind = .clip
+            openWindow(id: "youtube")
+        }
+
+        let record = menu.submenu("Record Your Screen", icon: FilmSource.online.icon, enabled: !model.isBusy)
+        menu.item("Drag Over a Region   ⇧⌘R", icon: "rectangle.dashed", in: record) { Task { await model.recordNewRegion() } }
+        menu.item("Full Screen   ⇧⌘F", icon: "rectangle.dashed.badge.record", in: record) { Task { await model.recordFullScreen() } }
+        menu.item("Same Region Again   ⇧⌘L", icon: "arrow.clockwise.circle", enabled: model.canRecordLastRegion, in: record) {
+            Task { await model.recordLastRegion() }
+        }
+
+        menu.menu.addItem(.separator())
+        menu.item("From Other Projects…", icon: "square.stack.3d.up") { model.showingAddFromProjects = true }
+        menu.popUp()
+    }
 }
 
 /// The foot of the sidebar: the reel at a glance (clips in it, about how long it runs), with
@@ -229,5 +201,67 @@ private struct ReelSummary: View {
         .panel(padding: Design.Space.m - 2, radius: Design.Radius.medium)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Your reel")
+    }
+}
+
+/// An AppKit menu whose items run closures, for a menu opened from a button (`showAddMenu`).
+@MainActor
+final class ActionMenu: NSObject {
+    let menu = NSMenu()
+    private var actions: [() -> Void] = []
+    /// The menu being shown: kept alive until it closes (its items only hold it weakly).
+    private static var shown: ActionMenu?
+
+    override init() {
+        super.init()
+        menu.autoenablesItems = false
+    }
+
+    func item(_ title: String, icon: String, enabled: Bool = true, in parent: NSMenu? = nil, action: @escaping () -> Void) {
+        let item = NSMenuItem(title: title, action: #selector(run(_:)), keyEquivalent: "")
+        item.target = self
+        item.tag = actions.count
+        item.isEnabled = enabled
+        item.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
+        actions.append(action)
+        (parent ?? menu).addItem(item)
+    }
+
+    func submenu(_ title: String, icon: String, enabled: Bool = true) -> NSMenu {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
+        item.isEnabled = enabled
+        let sub = NSMenu(title: title)
+        sub.autoenablesItems = false
+        item.submenu = sub
+        menu.addItem(item)
+        return sub
+    }
+
+    /// Opens just under the toolbar button that was clicked (or at the pointer).
+    func popUp() {
+        Self.shown = self
+        defer { Self.shown = nil }
+        // The toolbar isn't in the window's content view but beside it, in the window's frame view.
+        if let event = NSApp.currentEvent, let frameView = event.window?.contentView?.superview {
+            let click = frameView.convert(event.locationInWindow, from: nil)
+            if let hit = frameView.hitTest(click),
+               let control = sequence(first: hit, next: { $0.superview }).first(where: { $0 is NSControl }) {
+                let frame = control.convert(control.bounds, to: frameView)
+                let below = NSPoint(x: frame.minX, y: frameView.isFlipped ? frame.maxY + 4 : frame.minY - 4)
+                menu.popUp(positioning: nil, at: below, in: frameView)
+            } else {
+                menu.popUp(positioning: nil, at: click, in: frameView)
+            }
+            return
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func run(_ sender: NSMenuItem) {
+        guard actions.indices.contains(sender.tag) else { return }
+        let action = actions[sender.tag]
+        // After the menu has closed, so windows and sheets it opens come up normally.
+        DispatchQueue.main.async { action() }
     }
 }

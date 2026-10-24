@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.53.2
+- **Add Videos** (top right) is really blue now. In 0.53.1 it stayed grey.
+
 ## 0.53.1
 - **Add Videos** (top right) is now a blue button, so it's easy to spot when you want to bring in more film.
 
