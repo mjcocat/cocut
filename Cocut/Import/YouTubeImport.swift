@@ -74,6 +74,17 @@ final class YouTubeImporter {
                 throw ImportError.download("Hudl videos need ffmpeg to put them together, and the one inside Cocut is missing. "
                                            + "Reinstall Cocut, or install ffmpeg (in Terminal: brew install ffmpeg), and try again.")
             }
+            // A moment: just its few seconds of the video's stream, cut by ffmpeg itself.
+            if let hudl, let section = hudl.section, let ffmpeg = Self.ffmpeg {
+                let file = try await downloadSection(of: hudl, section, ffmpeg: ffmpeg, to: work)
+                try Task.checkCancellation()
+                try FileManager.default.createDirectory(at: Self.downloadsFolder, withIntermediateDirectories: true)
+                let output = Self.uniqueURL(for: hudl.title ?? "Hudl moment")
+                try FileManager.default.moveItem(at: file, to: output)
+                await finish(output, offered: nil)
+                return
+            }
+
             state = .preparing("Getting the downloader…")
             let tool = try await YTDLP.ensure()
             try Task.checkCancellation()
@@ -190,6 +201,88 @@ final class YouTubeImporter {
         return [bundled, "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
             .first { FileManager.default.isExecutableFile(atPath: $0) }
             .map { URL(fileURLWithPath: $0) }
+    }
+
+    /// Part of a Hudl stream (`section`, seconds into it) as one .mp4, without re-encoding.
+    /// ffmpeg can't seek far into Hudl's streams made of several recordings, so Cocut writes a short
+    /// playlist of just the segments around the part (`Hudl.trimmed`), at H.264 up to 1080p
+    /// (`Hudl.variant`), and copies from the keyframe at or before its start, so nothing of the play
+    /// is lost (Hudl's keyframes are a couple of seconds apart).
+    private func downloadSection(of hudl: Hudl.Video, _ section: ClosedRange<Double>, ffmpeg: URL,
+                                 to work: URL) async throws -> URL {
+        state = .preparing("Finding the moment in the video…")
+        let cookie = hudl.cookies.isEmpty ? nil : HTTPCookie.requestHeaderFields(with: hudl.cookies)["Cookie"]
+        func text(_ url: URL) async throws -> String {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 20
+            request.setValue("https://www.hudl.com/", forHTTPHeaderField: "Referer")
+            if let cookie { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200, let text = String(data: data, encoding: .utf8) else {
+                throw ImportError.download("Hudl didn't send the video (\((response as? HTTPURLResponse)?.statusCode ?? 0)).")
+            }
+            return text
+        }
+        guard let master = URL(string: hudl.stream) else { throw ImportError.download("The Hudl video's link couldn't be read.") }
+        let out = work.appending(path: "video.mp4")
+        var input = master.absoluteString
+        var offset = section.lowerBound
+        /// Where the input starts in the stream: the first segment kept.
+        var origin = 0.0
+        if master.path.lowercased().hasSuffix(".m3u8") {
+            var playlistURL = master
+            var playlist = try await text(master)
+            if let variant = Hudl.variant(in: playlist, base: master) {
+                playlistURL = variant
+                playlist = try await text(variant)
+            }
+            guard let cut = Hudl.trimmed(playlist, base: playlistURL, from: section.lowerBound, to: section.upperBound) else {
+                throw ImportError.download("That moment isn't in the video Hudl sent.")
+            }
+            let list = work.appending(path: "moment.m3u8")
+            try cut.text.write(to: list, atomically: true, encoding: .utf8)
+            input = list.path(percentEncoded: false)
+            origin = cut.start
+            offset = section.lowerBound - cut.start
+            Log.info("Hudl import: moment \(String(format: "%.1f–%.1f s", section.lowerBound, section.upperBound)) from "
+                     + "\(playlistURL.lastPathComponent), \(cut.text.components(separatedBy: "#EXTINF").count - 1) segment(s)")
+        }
+        // Headers only for a link read directly: ffmpeg refuses them for a playlist file ("Option
+        // headers not found"), and the segments in it, like Hudl's streams, need no sign-in.
+        var reading = ["-protocol_whitelist", "file,http,https,tcp,tls,crypto"]
+        if input.hasPrefix("http") {
+            reading += ["-headers", "Referer: https://www.hudl.com/\r\n" + (cookie.map { "Cookie: \($0)\r\n" } ?? "")]
+        }
+        // Start on the keyframe at or before the moment (ffprobe sits next to ffmpeg).
+        let ffprobe = ffmpeg.deletingLastPathComponent().appending(path: "ffprobe")
+        if offset > 0, FileManager.default.isExecutableFile(atPath: ffprobe.path(percentEncoded: false)),
+           let probe = try? await ProcessRunner().run(ffprobe, ["-v", "error"] + reading
+               + ["-select_streams", "v:0", "-skip_frame", "nokey", "-show_entries", "frame=pts_time", "-of", "csv=p=0", input]),
+           probe.status == 0 {
+            let times = probe.output.split(whereSeparator: \.isNewline)
+                .compactMap { Double($0.trimmingCharacters(in: CharacterSet(charactersIn: ", "))) }
+            if let first = times.min(), let key = times.map({ $0 - first }).filter({ $0 <= offset + 0.01 }).max() {
+                offset = key
+            }
+        }
+        let length = section.upperBound - origin - max(0, offset)
+        state = .downloading("Downloading the moment…", nil)
+        let result = try await runner.run(ffmpeg, ["-hide_banner", "-nostdin", "-y"] + reading
+            + ["-i", input, "-ss", String(format: "%.3f", max(0, offset)), "-t", String(format: "%.3f", length),
+               "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", out.path(percentEncoded: false)]) { [weak self] line in
+            guard let done = Self.ffmpegProgress(in: line) else { return }
+            Task { @MainActor in
+                guard let self, case .downloading = self.state else { return }
+                self.state = .downloading("Downloading the moment… \(done)", nil)
+            }
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: out.path(percentEncoded: false))[.size] as? Int) ?? 0
+        guard result.status == 0, size > 0 else {
+            let reason = result.output.split(separator: "\n").last.map(String.init) ?? "ffmpeg stopped."
+            throw ImportError.download("The moment couldn't be downloaded. \(reason)")
+        }
+        Log.info("Hudl import: moment saved (\(size / 1000) KB)")
+        return out
     }
 
     /// One yt-dlp download into `folder`, reporting its progress as part of `range`.
@@ -593,6 +686,8 @@ struct YouTubeImportView: View {
         .sheet(item: Binding(get: { hudlPage.map(HudlPage.init) }, set: { hudlPage = $0?.link })) { page in
             HudlBrowser(link: page.link) { video in
                 hudlPage = nil
+                // A moment is a few seconds: a clip, whatever the window was opened for.
+                if video.section != nil { kind = .clip }
                 importer.start(page.link, hudl: video)
             } onCancel: {
                 hudlPage = nil
