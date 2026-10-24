@@ -239,7 +239,8 @@ struct HudlBrowser: View {
         let name = title.map { $0.replacingOccurrences(of: " - Hudl", with: "").replacingOccurrences(of: " | Hudl", with: "")
             .replacingOccurrences(of: " • Hudl", with: "") }
             .flatMap { $0.trimmingCharacters(in: .whitespaces).lowercased() == "hudl" ? nil : $0 }
-        Log.info("Hudl import: picked 1 of \(streams.count) stream(s) on the page, \(cookies.count) sign-in cookie(s)")
+        let picked = URL(string: chosen).map { "\($0.host ?? "")\($0.path)" } ?? chosen
+        Log.info("Hudl import: picked \(picked) (1 of \(streams.count) stream(s) on the page), \(cookies.count) sign-in cookie(s)")
         onChoose(Hudl.Video(stream: chosen, title: name, cookies: cookies))
     }
 }

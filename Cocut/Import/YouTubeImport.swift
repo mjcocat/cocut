@@ -198,6 +198,14 @@ final class YouTubeImporter {
         let template = folder.appending(path: "\(name).%(ext)s").path(percentEncoded: false)
         let result = try await runner.run(tool, ["--no-playlist", "--newline", "--no-part", "-f", format]
                                                  + extra + ["-o", template, link]) { [weak self] line in
+            if let done = Self.ffmpegProgress(in: line) {
+                // ffmpeg downloading: how much of the video is in so far (it doesn't know the total).
+                Task { @MainActor in
+                    guard let self, case .downloading = self.state else { return }
+                    self.state = .downloading("\(label) \(done)", nil)
+                }
+                return
+            }
             guard let percent = Self.percent(in: line) else { return }
             Task { @MainActor in
                 guard let self, case .downloading = self.state else { return }
@@ -226,6 +234,21 @@ final class YouTubeImporter {
         guard line.hasPrefix("[download]"), let r = line.range(of: #"[0-9.]+(?=%)"#, options: .regularExpression),
               let value = Double(line[r]) else { return nil }
         return min(1, value / 100)
+    }
+
+    /// ffmpeg's progress line ("frame=… size=   18176KiB time=00:00:35.17 …") → "0:35 of video, 19 MB".
+    nonisolated static func ffmpegProgress(in line: String) -> String? {
+        guard let t = line.range(of: #"time=\d+:\d{2}:\d{2}"#, options: .regularExpression) else { return nil }
+        let parts = line[t].dropFirst(5).split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        let clock = parts[0] > 0 ? String(format: "%d:%02d:%02d", parts[0], parts[1], parts[2])
+                                 : String(format: "%d:%02d", parts[1], parts[2])
+        var text = "\(clock) of video"
+        if let s = line.range(of: #"size=\s*\d+KiB"#, options: .regularExpression),
+           let kib = Double(line[s].filter(\.isNumber)) {
+            text += kib >= 1024 * 1024 ? String(format: ", %.1f GB", kib / 1024 / 1024) : String(format: ", %.0f MB", kib / 1024)
+        }
+        return text
     }
 
     /// yt-dlp's own explanation ("ERROR: … Private video …"), or its last line.
