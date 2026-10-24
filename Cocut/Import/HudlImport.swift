@@ -236,7 +236,8 @@ struct HudlBrowser: View {
         let cookies = await WKWebsiteDataStore.default().httpCookieStore.allCookies()
             .filter { $0.domain.lowercased().hasSuffix("hudl.com") }
         // "Hudl" alone, or "Video - Hudl", says nothing about the video.
-        let name = title.map { $0.replacingOccurrences(of: " - Hudl", with: "").replacingOccurrences(of: " | Hudl", with: "") }
+        let name = title.map { $0.replacingOccurrences(of: " - Hudl", with: "").replacingOccurrences(of: " | Hudl", with: "")
+            .replacingOccurrences(of: " • Hudl", with: "") }
             .flatMap { $0.trimmingCharacters(in: .whitespaces).lowercased() == "hudl" ? nil : $0 }
         Log.info("Hudl import: picked 1 of \(streams.count) stream(s) on the page, \(cookies.count) sign-in cookie(s)")
         onChoose(Hudl.Video(stream: chosen, title: name, cookies: cookies))

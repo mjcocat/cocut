@@ -111,10 +111,26 @@ final class YouTubeImporter {
                 state = .downloading("Downloading…", 0)
                 // Hudl's own streams may not say which codec they use; any up to 1080p then.
                 let format = "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[vcodec^=avc1]" + (hudl != nil ? "/b[height<=1080]/b" : "")
-                let file = try await download(tool, link, format: format,
-                                              extra: ["--merge-output-format", "mp4", "--ffmpeg-location", ffmpeg.path(percentEncoded: false)]
-                                                  + siteArguments,
+                let extra = ["--merge-output-format", "mp4", "--ffmpeg-location", ffmpeg.path(percentEncoded: false)] + siteArguments
+                var file: URL
+                do {
+                    file = try await download(tool, link, format: format, extra: extra,
                                               to: work, name: "video", label: "Downloading…", range: 0...0.95)
+                } catch let error as ImportError where hudl != nil {
+                    // Some Hudl film is several recordings in one stream, each starting with its own
+                    // header ("Initialization fragment found after media fragments"), which yt-dlp's
+                    // own downloader can't follow. ffmpeg can (it doesn't report a percentage).
+                    Log.info("Hudl import: yt-dlp couldn't download the stream (\(error.localizedDescription)); trying with ffmpeg")
+                    try Task.checkCancellation()
+                    // What the first try left behind would be taken as already downloaded.
+                    for leftover in (try? FileManager.default.contentsOfDirectory(at: work, includingPropertiesForKeys: nil)) ?? []
+                    where leftover.lastPathComponent.hasPrefix("video.") {
+                        try? FileManager.default.removeItem(at: leftover)
+                    }
+                    state = .downloading("Downloading with ffmpeg…", nil)
+                    file = try await download(tool, link, format: format, extra: extra + ["--downloader", "m3u8:ffmpeg"],
+                                              to: work, name: "video", label: "Downloading with ffmpeg…", range: 0...0.95)
+                }
                 try Task.checkCancellation()
                 try FileManager.default.createDirectory(at: Self.downloadsFolder, withIntermediateDirectories: true)
                 let output = Self.uniqueURL(for: title)

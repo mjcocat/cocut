@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.51.2
+- Hudl: team film made of several recordings in one video downloads now. It failed with "Initialization fragment found after media fragments"; Cocut now tries again with ffmpeg, which can follow it (the progress bar doesn't show a percentage then). Downloads also lose the " • Hudl" from their names.
+
 ## 0.51.1
 - Phone reels: no more jump between the spotlight hold and the clip. The hold is now cut from exactly the part of the picture the clip shows at that moment (where it's following the player), so the clip carries on from the same frame. Before, the hold was zoomed out and centered on the ring, then jumped.
 - The spotlight editor's **Play** plays the whole clip as the reel will: up to the spotlight, the hold with the ring (or brush stroke), then the rest. **Stop** ends it.
