@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.53.1
+- **Add Videos** (top right) is now a blue button, so it's easy to spot when you want to bring in more film.
+
 ## 0.53.0
 - Hudl team film: the Hudl window now lists what the page actually has, by name. **Whole video** ("GBS · 42:55") and each **moment** the page lists, as Hudl shows it ("Set 1 · Rally 16 · 8–7 · Attack"), including after its filters, like one athlete's contacts. Before, it offered "Video 1–16", which were pieces of the same film.
 - Choosing a moment downloads just those seconds of the film, in a second or two, and adds it to Clips. Turn on **Whole rally** to get the rally around it instead.

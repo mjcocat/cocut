@@ -140,6 +140,10 @@ struct ContentView: View {
                     Label("Add Videos", systemImage: "plus")
                 }
                 .labelStyle(.titleAndIcon)
+                // Filled in the Cocut blue: the window's main action, where more film comes in.
+                .menuStyle(.button)
+                .buttonStyle(.borderedProminent)
+                .tint(.accentColor)
                 .fixedSize()
                 .help("Add film: a full match, a YouTube or Hudl video, clips on your Mac, a screen recording, or clips from other projects")
             }
