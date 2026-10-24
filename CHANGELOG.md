@@ -3,6 +3,9 @@
 Each version's changes, newest first. The update window shows the entries for every version newer
 than the one you have. Keep each line short and about what you'll notice.
 
+## 0.52.0
+- Cocut now includes its own ffmpeg, so YouTube and Hudl downloads work on any Mac without installing anything (before, a new Mac needed `brew install ffmpeg`). It's a small build made just for joining and downloading video. Homebrew's ffmpeg is still used if Cocut's is ever missing.
+
 ## 0.51.2
 - Hudl: team film made of several recordings in one video downloads now. It failed with "Initialization fragment found after media fragments"; Cocut now tries again with ffmpeg, which can follow it (the progress bar doesn't show a percentage then). Downloads also lose the " • Hudl" from their names.
 

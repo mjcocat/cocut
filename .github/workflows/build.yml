@@ -46,6 +46,19 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen
 
+      # The small ffmpeg Cocut carries for YouTube and Hudl downloads (scripts/build-ffmpeg.sh),
+      # built once and kept until the script changes.
+      - name: Cache ffmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: .ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+
+      - name: Build ffmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: scripts/build-ffmpeg.sh .ffmpeg
+
       - name: Build (Release, universal)
         run: |
           set -o pipefail
@@ -79,6 +92,16 @@ jobs:
           APP="build/Build/Products/Release/Cocut.app"
           test -d "$APP/Contents/Resources/PersonReID.mlmodelc" || { echo "::error::PersonReID.mlmodelc missing from the app"; ls "$APP/Contents/Resources"; exit 1; }
 
+      - name: Add ffmpeg to the app
+        run: |
+          APP="build/Build/Products/Release/Cocut.app"
+          mkdir -p "$APP/Contents/Helpers"
+          cp .ffmpeg/ffmpeg .ffmpeg/ffprobe "$APP/Contents/Helpers/"
+          for tool in ffmpeg ffprobe; do
+            lipo -archs "$APP/Contents/Helpers/$tool"
+            "$APP/Contents/Helpers/$tool" -hide_banner -version | head -1
+          done
+
       - name: Import signing certificate
         if: env.HAS_CERT == 'true'
         env:
@@ -103,6 +126,10 @@ jobs:
           APP="build/Build/Products/Release/Cocut.app"
           IDENTITY="${SIGN_IDENTITY:--}"
           [[ "$IDENTITY" == "-" ]] && echo "::notice::No COCUT_CERT_P12 secret; signing ad-hoc. Run scripts/setup-signing.sh once to keep Screen Recording permission across updates."
+          # Helpers first: the app's signature covers them as they are.
+          for tool in "$APP/Contents/Helpers/"*; do
+            codesign --force --options runtime --timestamp=none --sign "$IDENTITY" "$tool"
+          done
           codesign --force --options runtime --timestamp=none \
             --entitlements Cocut/Cocut.entitlements \
             --sign "$IDENTITY" "$APP"

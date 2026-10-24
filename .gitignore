@@ -15,3 +15,6 @@ xcuserdata/
 *.xcuserstate
 
 .DS_Store
+
+# The ffmpeg built for the app (scripts/build-ffmpeg.sh)
+.ffmpeg/

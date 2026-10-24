@@ -71,8 +71,8 @@ final class YouTubeImporter {
             // Hudl streams come in pieces that only ffmpeg turns into a movie macOS can play
             // (a highlight's plain .mp4 file doesn't need it).
             if let hudl, hudl.stream.lowercased().contains(".m3u8"), Self.ffmpeg == nil {
-                throw ImportError.download("Hudl videos need ffmpeg to put them together. Install it (in Terminal: "
-                                           + "brew install ffmpeg) and try again.")
+                throw ImportError.download("Hudl videos need ffmpeg to put them together, and the one inside Cocut is missing. "
+                                           + "Reinstall Cocut, or install ffmpeg (in Terminal: brew install ffmpeg), and try again.")
             }
             state = .preparing("Getting the downloader…")
             let tool = try await YTDLP.ensure()
@@ -183,9 +183,11 @@ final class YouTubeImporter {
         }
     }
 
-    /// ffmpeg, if it's installed (Homebrew puts it in one of these).
+    /// ffmpeg: the one inside Cocut (Contents/Helpers, built by scripts/build-ffmpeg.sh), or
+    /// Homebrew's if that's missing. ffprobe sits next to it, where yt-dlp looks for it.
     static var ffmpeg: URL? {
-        ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
+        let bundled = Bundle.main.bundleURL.appending(path: "Contents/Helpers/ffmpeg").path(percentEncoded: false)
+        return [bundled, "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
             .first { FileManager.default.isExecutableFile(atPath: $0) }
             .map { URL(fileURLWithPath: $0) }
     }
@@ -242,8 +244,8 @@ final class YouTubeImporter {
         } catch {
             // AVFoundation can't read some of YouTube's files at all (e.g. OSStatus -12780).
             Log.error("YouTube import: couldn't open the download: \(describe(error))")
-            throw ImportError.download("macOS couldn't read the file YouTube sent. Install ffmpeg (in Terminal: brew install ffmpeg) "
-                                       + "and try again: Cocut then has the downloader put the video together itself.")
+            throw ImportError.download("macOS couldn't read the file YouTube sent, and the ffmpeg inside Cocut is missing. "
+                                       + "Reinstall Cocut, or install ffmpeg (in Terminal: brew install ffmpeg), and try again.")
         }
     }
 
